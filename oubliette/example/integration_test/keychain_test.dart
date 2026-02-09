@@ -91,4 +91,67 @@ void main() {
       expect(exists, isFalse);
     });
   });
+
+  group('$Keychain with service (iOS / macOS) ${Platform.localeName}', () {
+    late Keychain facadeA;
+    late Keychain facadeB;
+    late Keychain facadeNoService;
+    const alias = 'service_test_item';
+    final dataA = Uint8List.fromList(utf8.encode('service_a_value'));
+    final dataB = Uint8List.fromList(utf8.encode('service_b_value'));
+
+    setUpAll(() {
+      facadeA = Keychain(service: 'com.test.serviceA');
+      facadeB = Keychain(service: 'com.test.serviceB');
+      facadeNoService = Keychain();
+    });
+
+    tearDown(() async {
+      await facadeA.secItemDelete(alias);
+      await facadeB.secItemDelete(alias);
+      await facadeNoService.secItemDelete(alias);
+    });
+
+    testWidgets('same alias in different services are independent', (
+      tester,
+    ) async {
+      await facadeA.secItemAdd(alias, dataA);
+      await facadeB.secItemAdd(alias, dataB);
+
+      final fetchedA = await facadeA.secItemCopyMatching(alias);
+      final fetchedB = await facadeB.secItemCopyMatching(alias);
+
+      expect(fetchedA, equals(dataA));
+      expect(fetchedB, equals(dataB));
+    });
+
+    testWidgets('contains is scoped to service', (tester) async {
+      await facadeA.secItemAdd(alias, dataA);
+
+      expect(await facadeA.contains(alias), isTrue);
+      expect(await facadeB.contains(alias), isFalse);
+    });
+
+    testWidgets('delete in one service does not affect another', (
+      tester,
+    ) async {
+      await facadeA.secItemAdd(alias, dataA);
+      await facadeB.secItemAdd(alias, dataB);
+
+      await facadeA.secItemDelete(alias);
+
+      expect(await facadeA.contains(alias), isFalse);
+      expect(await facadeB.contains(alias), isTrue);
+      expect(await facadeB.secItemCopyMatching(alias), equals(dataB));
+    });
+
+    testWidgets('no-service query matches items regardless of service', (
+      tester,
+    ) async {
+      await facadeA.secItemAdd(alias, dataA);
+
+      final fetched = await facadeNoService.secItemCopyMatching(alias);
+      expect(fetched, isNotNull);
+    });
+  });
 }

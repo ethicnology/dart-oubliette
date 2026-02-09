@@ -19,7 +19,7 @@ class AndroidOubliette extends Oubliette {
     if (!exists) {
       await _keystore.generateKey(
         alias: options.keyAlias,
-        unlockedDeviceRequired: false,
+        unlockedDeviceRequired: options.unlockedDeviceRequired,
       );
     }
     final ep = await _keystore.encrypt(
