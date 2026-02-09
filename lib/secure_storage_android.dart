@@ -6,54 +6,56 @@ import 'package:secure_storage/secure_storage_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AndroidSecureStorage extends SecureStorage {
-  static const String _defaultKeyAlias = 'secure_storage_default';
+  AndroidSecureStorage({required this.options}) : super.internal();
 
   final KeystoreFacade _keystore = KeystoreFacade();
-  final String keyAlias;
+  final AndroidOptions options;
 
-  AndroidSecureStorage({this.keyAlias = _defaultKeyAlias}) : super.internal();
+  String _storedKey(String key) => options.prefix + key;
 
   @override
   Future<void> store(String key, Uint8List value) async {
-    final exists = await _keystore.containsAlias(keyAlias);
+    final storedKey = _storedKey(key);
+    final exists = await _keystore.containsAlias(options.keyAlias);
     if (!exists) {
       await _keystore.generateKey(
-        alias: keyAlias,
+        alias: options.keyAlias,
         unlockedDeviceRequired: false,
       );
     }
     final ep = await _keystore.encrypt(
-      alias: keyAlias,
+      alias: options.keyAlias,
       plaintext: value,
-      aad: key,
+      aad: storedKey,
     );
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(key, ep.toJson());
+    await prefs.setString(storedKey, ep.toJson());
   }
 
   @override
   Future<Uint8List?> fetch(String key) async {
+    final storedKey = _storedKey(key);
     final prefs = await SharedPreferences.getInstance();
-    final payload = prefs.getString(key);
+    final payload = prefs.getString(storedKey);
     if (payload == null) return null;
     final ep = EncryptedPayloadMapper.fromJson(payload);
     return _keystore.decrypt(
-      alias: keyAlias,
+      alias: options.keyAlias,
       ciphertext: ep.ciphertext,
       nonce: ep.nonce,
-      aad: key,
+      aad: storedKey,
     );
   }
 
   @override
   Future<void> trash(String key) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(key);
+    await prefs.remove(_storedKey(key));
   }
 
   @override
   Future<bool> exists(String key) async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.containsKey(key);
+    return prefs.containsKey(_storedKey(key));
   }
 }

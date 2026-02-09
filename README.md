@@ -19,7 +19,7 @@ Values are **bytes** (`Uint8List`). Keys are strings.
 | `storeString(key, value)` | Convenience: store a UTF-8 string (same as `store(key, utf8.encode(value))`). |
 | `fetchString(key)` | Convenience: fetch and decode as UTF-8 string, or `null`. |
 
-For Android, a single Keystore key is used for all entries (default alias: `secure_storage_default`). You can pass a custom `keyAlias` to `createSecureStorage()` if needed.
+Stored keys are namespaced with a `prefix` (default: `secure_storage`), so the stored key is `prefix + key`. The prefix is per platform: set `IosOptions(prefix: '...')` for iOS/macOS and `AndroidOptions(prefix: '...', keyAlias: '...')` for Android. On Android, a single Keystore key is used for all entries (default alias: `default_key`).
 
 ## Usage
 

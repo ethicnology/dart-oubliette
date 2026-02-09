@@ -1,5 +1,22 @@
 import 'dart:typed_data';
 
+const String defaultPrefix = 'secure_storage';
+const String defaultKeyAlias = 'default_key';
+
+class AndroidOptions {
+  const AndroidOptions({
+    this.prefix = defaultPrefix,
+    this.keyAlias = defaultKeyAlias,
+  });
+  final String prefix;
+  final String keyAlias;
+}
+
+class IosOptions {
+  const IosOptions({this.prefix = defaultPrefix});
+  final String prefix;
+}
+
 abstract class SecureStorage {
   SecureStorage.internal();
 

@@ -24,13 +24,16 @@ SecureStoragePlatform get _currentPlatform {
 }
 
 SecureStorage createSecureStorage({
-  String keyAlias = 'secure_storage_default',
+  AndroidOptions? androidOptions,
+  IosOptions? iosOptions,
 }) {
   switch (_currentPlatform) {
     case SecureStoragePlatform.ios:
     case SecureStoragePlatform.macos:
-      return IosSecureStorage();
+      return IosSecureStorage(options: iosOptions ?? const IosOptions());
     case SecureStoragePlatform.android:
-      return AndroidSecureStorage(keyAlias: keyAlias);
+      return AndroidSecureStorage(
+        options: androidOptions ?? const AndroidOptions(),
+      );
   }
 }
