@@ -2,16 +2,12 @@ package com.example.secure_storage
 
 import android.content.Context
 import android.content.pm.PackageManager
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
-import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import java.security.KeyStore
-import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 
 class SecureStoragePlugin : FlutterPlugin, MethodCallHandler {
@@ -55,6 +51,8 @@ class SecureStoragePlugin : FlutterPlugin, MethodCallHandler {
 
   private fun handleGenerateKey(call: MethodCall, result: Result) {
     try {
+      val versionRaw = call.argument<Number>("version") ?: call.argument<Int>("version")
+      val version = versionRaw?.toInt() ?: SchemeRegistry.CURRENT_VERSION
       val alias = call.argument<String>("alias")
         ?: run {
           result.error("bad_args", "Missing alias.", null)
@@ -65,32 +63,12 @@ class SecureStoragePlugin : FlutterPlugin, MethodCallHandler {
           result.error("bad_args", "Missing unlockedDeviceRequired.", null)
           return
         }
-      val keyStore = KeyStore.getInstance(keyStoreType)
-      keyStore.load(null)
-      if (keyStore.containsAlias(alias)) {
-        result.success(null)
+      val scheme = SchemeRegistry.schemeFor(version)
+      if (scheme == null) {
+        result.error("generate_key_failed", "Unsupported version.", null)
         return
       }
-      val keyGenerator = KeyGenerator.getInstance(
-        KeyProperties.KEY_ALGORITHM_AES,
-        keyStoreType
-      )
-      val specBuilder = KeyGenParameterSpec.Builder(
-        alias,
-        KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-      )
-        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-        .setKeySize(256)
-        .setRandomizedEncryptionRequired(true)
-        .setUnlockedDeviceRequired(unlockedDeviceRequired)
-      try {
-        specBuilder.setIsStrongBoxBacked(true)
-      } catch (e: Exception) {
-        Log.i(tag, "StrongBox not available", e)
-      }
-      keyGenerator.init(specBuilder.build())
-      keyGenerator.generateKey()
+      scheme.generateKey(alias, unlockedDeviceRequired)
       result.success(null)
     } catch (e: Exception) {
       result.error("generate_key_failed", e.message ?: e.toString(), null)

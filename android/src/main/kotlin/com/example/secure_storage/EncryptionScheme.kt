@@ -3,6 +3,8 @@ package com.example.secure_storage
 interface EncryptionScheme {
   val version: Int
 
+  fun generateKey(alias: String, unlockedDeviceRequired: Boolean)
+
   fun encrypt(
     alias: String,
     plaintext: ByteArray,
