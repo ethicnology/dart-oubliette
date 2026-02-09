@@ -23,11 +23,19 @@ class Uint8ListBase64Hook extends MappingHook {
 
 @MappableClass()
 class EncryptedPayload with EncryptedPayloadMappable {
+  final int version;
   @MappableField(hook: Uint8ListBase64Hook())
   final Uint8List nonce;
-
   @MappableField(hook: Uint8ListBase64Hook())
   final Uint8List ciphertext;
+  final String aad;
+  final String alias;
 
-  const EncryptedPayload({required this.nonce, required this.ciphertext});
+  const EncryptedPayload({
+    required this.version,
+    required this.nonce,
+    required this.ciphertext,
+    required this.aad,
+    required this.alias,
+  });
 }

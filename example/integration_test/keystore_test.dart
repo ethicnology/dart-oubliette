@@ -23,6 +23,7 @@ void main() {
       utf8.encode('plaintext for keystore facade'),
     );
     const aad = 'test_aad';
+    const expectedEncryptionVersion = 1;
 
     setUpAll(() {
       facade = KeystoreFacade();
@@ -44,7 +45,9 @@ void main() {
       expect(exists, isTrue);
     });
 
-    testWidgets('encrypt returns nonce and ciphertext', (tester) async {
+    testWidgets('encrypt returns nonce, ciphertext, version, aad, alias', (
+      tester,
+    ) async {
       await facade.generateKey(alias: alias, unlockedDeviceRequired: false);
       final payload = await facade.encrypt(
         alias: alias,
@@ -53,9 +56,13 @@ void main() {
       );
       expect(payload.nonce.length, 12);
       expect(payload.ciphertext.length, greaterThan(0));
+      expect(payload.version, expectedEncryptionVersion);
+      expect(payload.aad, aad);
+      expect(payload.alias, alias);
     });
 
-    testWidgets('decrypt recovers plaintext after encrypt', (tester) async {
+    testWidgets('decrypt recovers plaintext using payload version, aad, alias',
+        (tester) async {
       await facade.generateKey(alias: alias, unlockedDeviceRequired: false);
       final encrypted = await facade.encrypt(
         alias: alias,
@@ -63,10 +70,11 @@ void main() {
         aad: aad,
       );
       final decrypted = await facade.decrypt(
-        alias: alias,
+        version: encrypted.version,
+        alias: encrypted.alias,
         ciphertext: encrypted.ciphertext,
         nonce: encrypted.nonce,
-        aad: aad,
+        aad: encrypted.aad,
       );
       expect(decrypted, equals(plaintext));
     });

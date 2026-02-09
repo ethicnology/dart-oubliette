@@ -55,29 +55,38 @@ class KeystoreFacade {
       );
     }
 
+    final version = response['version'] as int?;
     final nonce = response['nonce'] as Uint8List?;
     final ciphertext = response['ciphertext'] as Uint8List?;
 
-    if (nonce == null || ciphertext == null) {
+    if (version == null || nonce == null || ciphertext == null) {
       throw PlatformException(
         code: 'encrypt_failed',
         message: 'Native encryption returned invalid fields.',
       );
     }
 
-    return EncryptedPayload(nonce: nonce, ciphertext: ciphertext);
+    return EncryptedPayload(
+      version: version,
+      nonce: nonce,
+      ciphertext: ciphertext,
+      aad: aad,
+      alias: alias,
+    );
   }
 
   /// Decrypts [ciphertext] with the key for [alias] using the given [nonce] and [aad] (Cipher in DECRYPT_MODE).
   ///
   /// See: https://developer.android.com/reference/javax/crypto/Cipher
   Future<Uint8List> decrypt({
+    required int version,
     required String alias,
     required Uint8List ciphertext,
     required Uint8List nonce,
     required String aad,
   }) async {
     final plaintext = await _channel.invokeMethod<Uint8List>('decrypt', {
+      'version': version,
       'ciphertext': ciphertext,
       'nonce': nonce,
       'aad': aad,

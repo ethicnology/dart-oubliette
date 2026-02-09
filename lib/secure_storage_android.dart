@@ -40,10 +40,11 @@ class AndroidSecureStorage extends SecureStorage {
     if (payload == null) return null;
     final ep = EncryptedPayloadMapper.fromJson(payload);
     return _keystore.decrypt(
-      alias: options.keyAlias,
+      version: ep.version,
+      alias: ep.alias,
       ciphertext: ep.ciphertext,
       nonce: ep.nonce,
-      aad: storedKey,
+      aad: ep.aad,
     );
   }
 
