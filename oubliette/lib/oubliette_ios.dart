@@ -4,30 +4,29 @@ import 'package:keychain/keychain.dart';
 import 'package:oubliette/oubliette_interface.dart';
 
 class IosOubliette extends Oubliette {
-  IosOubliette({IosOptions? options})
+  IosOubliette({KeychainOptions? options})
       : options = options ?? const IosOptions(),
         _keychain = Keychain(
-          service: (options ?? const IosOptions()).service,
-          useDataProtection: (options ?? const IosOptions()).useDataProtection,
+          config: _configFrom(options ?? const IosOptions()),
         ),
         super.internal();
 
-  final IosOptions options;
+  final KeychainOptions options;
   final Keychain _keychain;
 
-  KeychainAccessibility get _accessibility => options.unlockedDeviceRequired
-      ? KeychainAccessibility.whenUnlockedThisDeviceOnly
-      : KeychainAccessibility.afterFirstUnlockThisDeviceOnly;
+  static KeychainConfig _configFrom(KeychainOptions options) => KeychainConfig(
+        service: options.service,
+        accessibility: options.unlockedDeviceRequired
+            ? KeychainAccessibility.whenUnlockedThisDeviceOnly
+            : KeychainAccessibility.afterFirstUnlockThisDeviceOnly,
+        useDataProtection: options.useDataProtection,
+      );
 
   String _storedKey(String key) => options.prefix + key;
 
   @override
   Future<void> store(String key, Uint8List value) async {
-    await _keychain.secItemAdd(
-      _storedKey(key),
-      value,
-      accessibility: _accessibility,
-    );
+    await _keychain.secItemAdd(_storedKey(key), value);
   }
 
   @override

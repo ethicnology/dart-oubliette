@@ -26,11 +26,13 @@ OubliettePlatform get _currentPlatform {
 Oubliette createOubliette({
   AndroidOptions? androidOptions,
   IosOptions? iosOptions,
+  MacosOptions? macosOptions,
 }) {
   switch (_currentPlatform) {
     case OubliettePlatform.ios:
-    case OubliettePlatform.macos:
       return IosOubliette(options: iosOptions ?? const IosOptions());
+    case OubliettePlatform.macos:
+      return IosOubliette(options: macosOptions ?? const MacosOptions());
     case OubliettePlatform.android:
       return AndroidOubliette(
         options: androidOptions ?? const AndroidOptions(),

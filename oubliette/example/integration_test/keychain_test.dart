@@ -54,31 +54,9 @@ void main() {
     testWidgets('secItemCopyMatching returns null when alias does not exist', (
       tester,
     ) async {
-      final fetched = await facade.secItemCopyMatching('nonexistent_alias_xyz');
+      final fetched =
+          await facade.secItemCopyMatching('nonexistent_alias_xyz');
       expect(fetched, isNull);
-    });
-
-    testWidgets('secItemAdd with explicit accessibility', (tester) async {
-      await facade.secItemAdd(
-        alias,
-        data,
-        accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
-      );
-      final exists = await facade.contains(alias);
-      expect(exists, isTrue);
-    });
-
-    testWidgets('secItemAdd accepts every KeychainAccessibility value', (
-      tester,
-    ) async {
-      for (final accessibility in KeychainAccessibility.values) {
-        final itemAlias = '${alias}_${accessibility.name}';
-        addTearDown(() => facade.secItemDelete(itemAlias));
-        await facade.secItemAdd(itemAlias, data, accessibility: accessibility);
-        expect(await facade.contains(itemAlias), isTrue);
-        final fetched = await facade.secItemCopyMatching(itemAlias);
-        expect(fetched, equals(data));
-      }
     });
 
     testWidgets('secItemDelete removes item and contains returns false', (
@@ -92,7 +70,47 @@ void main() {
     });
   });
 
-  group('$Keychain with service (iOS / macOS) ${Platform.localeName}', () {
+  group('$Keychain with KeychainConfig (iOS / macOS) ${Platform.localeName}',
+      () {
+    const alias = 'config_test_item';
+    final data = Uint8List.fromList(utf8.encode('config test value'));
+
+    testWidgets('explicit accessibility in config is respected', (
+      tester,
+    ) async {
+      final facade = Keychain(
+        config: const KeychainConfig(
+          accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
+        ),
+      );
+      addTearDown(() => facade.secItemDelete(alias));
+
+      await facade.secItemAdd(alias, data);
+      final exists = await facade.contains(alias);
+      expect(exists, isTrue);
+    });
+
+    testWidgets('every KeychainAccessibility value works via config', (
+      tester,
+    ) async {
+      for (final accessibility in KeychainAccessibility.values) {
+        final itemAlias = '${alias}_${accessibility.name}';
+        final facade = Keychain(
+          config: KeychainConfig(accessibility: accessibility),
+        );
+        addTearDown(() => facade.secItemDelete(itemAlias));
+
+        await facade.secItemAdd(itemAlias, data);
+        expect(await facade.contains(itemAlias), isTrue);
+        final fetched = await facade.secItemCopyMatching(itemAlias);
+        expect(fetched, equals(data));
+      }
+    });
+  });
+
+  group(
+      '$Keychain with service config (iOS / macOS) ${Platform.localeName}',
+      () {
     late Keychain facadeA;
     late Keychain facadeB;
     late Keychain facadeNoService;
@@ -101,8 +119,12 @@ void main() {
     final dataB = Uint8List.fromList(utf8.encode('service_b_value'));
 
     setUpAll(() {
-      facadeA = Keychain(service: 'com.test.serviceA');
-      facadeB = Keychain(service: 'com.test.serviceB');
+      facadeA = Keychain(
+        config: const KeychainConfig(service: 'com.test.serviceA'),
+      );
+      facadeB = Keychain(
+        config: const KeychainConfig(service: 'com.test.serviceB'),
+      );
       facadeNoService = Keychain();
     });
 

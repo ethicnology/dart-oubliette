@@ -20,14 +20,15 @@ class AndroidOptions {
   /// device is unlocked. Maps to `setUnlockedDeviceRequired` on the
   /// `KeyGenParameterSpec`.
   final bool unlockedDeviceRequired;
+
 }
 
-class IosOptions {
-  const IosOptions({
+/// Common keychain options shared by iOS and macOS.
+sealed class KeychainOptions {
+  const KeychainOptions({
     this.prefix = defaultPrefix,
     this.service,
     this.unlockedDeviceRequired = true,
-    this.useDataProtection = false,
   });
 
   /// Prefix prepended to every storage key.
@@ -43,10 +44,35 @@ class IosOptions {
   /// in memory until reboot).
   final bool unlockedDeviceRequired;
 
-  /// macOS only — opts into the data protection keychain
-  /// (`kSecUseDataProtectionKeychain`). Requires the `keychain-access-groups`
+  /// macOS only — opts into the data protection keychain.
+  /// Override in [MacosOptions] to enable. Always `false` on iOS.
+  bool get useDataProtection => false;
+}
+
+class IosOptions extends KeychainOptions {
+  const IosOptions({
+    super.prefix,
+    super.service,
+    super.unlockedDeviceRequired,
+  });
+
+}
+
+class MacosOptions extends KeychainOptions {
+  /// [useDataProtection] enables `kSecUseDataProtectionKeychain` on macOS
+  /// 10.15+, which uses the iOS-style data protection keychain instead of
+  /// the legacy file-based keychain. Requires the `keychain-access-groups`
   /// entitlement and a valid code-signing identity.
+  const MacosOptions({
+    super.prefix,
+    super.service,
+    super.unlockedDeviceRequired,
+    this.useDataProtection = false,
+  });
+
+  @override
   final bool useDataProtection;
+
 }
 
 abstract class Oubliette {
