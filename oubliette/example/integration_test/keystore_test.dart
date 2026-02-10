@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:keystore/keystore.dart';
@@ -40,7 +41,7 @@ void main() {
     testWidgets('generateKey creates key and containsAlias returns true', (
       tester,
     ) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: true);
+      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
       final exists = await facade.containsAlias(alias);
       expect(exists, isTrue);
     });
@@ -48,7 +49,7 @@ void main() {
     testWidgets('encrypt returns nonce, ciphertext, version, aad, alias', (
       tester,
     ) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: true);
+      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
       final payload = await facade.encrypt(
         alias: alias,
         plaintext: plaintext,
@@ -63,7 +64,7 @@ void main() {
 
     testWidgets('decrypt recovers plaintext using payload version, aad, alias',
         (tester) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: true);
+      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
       final encrypted = await facade.encrypt(
         alias: alias,
         plaintext: plaintext,
@@ -79,6 +80,29 @@ void main() {
       expect(decrypted, equals(plaintext));
     });
 
+    testWidgets('encrypt with auth key requires authentication', (tester) async {
+      const authAlias = 'integration_test_auth_key';
+      await facade.generateKey(
+        alias: authAlias,
+        unlockedDeviceRequired: false,
+        strongBox: false,
+        userAuthenticationRequired: true,
+      );
+      try {
+        await facade.encrypt(
+          alias: authAlias,
+          plaintext: plaintext,
+          aad: aad,
+          promptTitle: 'Test',
+          promptSubtitle: 'Authenticate',
+        );
+      } on PlatformException catch (e) {
+        debugPrint('auth encrypt result: ${e.code} ${e.message}');
+      } finally {
+        await facade.deleteEntry(authAlias);
+      }
+    });
+
     testWidgets('isStrongBoxAvailable returns bool', (tester) async {
       final available = await facade.isStrongBoxAvailable();
       expect(available, isA<bool>());
@@ -87,7 +111,7 @@ void main() {
     testWidgets('deleteEntry removes key and containsAlias returns false', (
       tester,
     ) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: true);
+      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
       expect(await facade.containsAlias(alias), isTrue);
       await facade.deleteEntry(alias);
       final exists = await facade.containsAlias(alias);

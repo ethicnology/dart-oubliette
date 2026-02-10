@@ -16,11 +16,13 @@ class Keystore {
     required String alias,
     required bool unlockedDeviceRequired,
     required bool strongBox,
+    bool userAuthenticationRequired = false,
   }) async {
     await _channel.invokeMethod<void>('generateKey', {
       'alias': alias,
       'unlockedDeviceRequired': unlockedDeviceRequired,
       'strongBox': strongBox,
+      'userAuthenticationRequired': userAuthenticationRequired,
     });
   }
 
@@ -32,37 +34,24 @@ class Keystore {
     required String alias,
     required Uint8List plaintext,
     required String aad,
+    String? promptTitle,
+    String? promptSubtitle,
   }) async {
-    final response = await _channel.invokeMethod<Map>('encrypt', {
+    final authenticate = promptTitle != null;
+    final args = <String, dynamic>{
       'plaintext': plaintext,
       'aad': aad,
       'alias': alias,
-    });
-
-    if (response == null) {
-      throw PlatformException(
-        code: 'encrypt_failed',
-        message: 'Native encryption returned null response.',
-      );
-    }
-
-    final version = response['version'] as int?;
-    final nonce = response['nonce'] as Uint8List?;
-    final ciphertext = response['ciphertext'] as Uint8List?;
-
-    if (version == null || nonce == null || ciphertext == null) {
-      throw PlatformException(
-        code: 'encrypt_failed',
-        message: 'Native encryption returned invalid fields.',
-      );
-    }
-
-    return EncryptedPayload(
-      version: version,
-      nonce: nonce,
-      ciphertext: ciphertext,
-      aad: aad,
-      alias: alias,
+      if (authenticate) 'promptTitle': promptTitle,
+      if (authenticate) 'promptSubtitle': promptSubtitle ?? 'Confirm your identity',
+    };
+    return _parseEncryptResponse(
+      await _channel.invokeMethod<Map>(
+        authenticate ? 'authenticateEncrypt' : 'encrypt',
+        args,
+      ),
+      aad,
+      alias,
     );
   }
 
@@ -72,14 +61,23 @@ class Keystore {
     required Uint8List ciphertext,
     required Uint8List nonce,
     required String aad,
+    String? promptTitle,
+    String? promptSubtitle,
   }) async {
-    final plaintext = await _channel.invokeMethod<Uint8List>('decrypt', {
+    final authenticate = promptTitle != null;
+    final args = <String, dynamic>{
       'version': version,
       'ciphertext': ciphertext,
       'nonce': nonce,
       'aad': aad,
       'alias': alias,
-    });
+      if (authenticate) 'promptTitle': promptTitle,
+      if (authenticate) 'promptSubtitle': promptSubtitle ?? 'Confirm your identity',
+    };
+    final plaintext = await _channel.invokeMethod<Uint8List>(
+      authenticate ? 'authenticateDecrypt' : 'decrypt',
+      args,
+    );
     if (plaintext != null) return plaintext;
 
     throw PlatformException(
@@ -94,6 +92,35 @@ class Keystore {
     throw PlatformException(
       code: 'is_strongbox_available_failed',
       message: 'Native StrongBox availability returned null.',
+    );
+  }
+
+  EncryptedPayload _parseEncryptResponse(
+    Map<dynamic, dynamic>? response,
+    String aad,
+    String alias,
+  ) {
+    if (response == null) {
+      throw PlatformException(
+        code: 'encrypt_failed',
+        message: 'Native encryption returned null response.',
+      );
+    }
+    final version = response['version'] as int?;
+    final nonce = response['nonce'] as Uint8List?;
+    final ciphertext = response['ciphertext'] as Uint8List?;
+    if (version == null || nonce == null || ciphertext == null) {
+      throw PlatformException(
+        code: 'encrypt_failed',
+        message: 'Native encryption returned invalid fields.',
+      );
+    }
+    return EncryptedPayload(
+      version: version,
+      nonce: nonce,
+      ciphertext: ciphertext,
+      aad: aad,
+      alias: alias,
     );
   }
 }

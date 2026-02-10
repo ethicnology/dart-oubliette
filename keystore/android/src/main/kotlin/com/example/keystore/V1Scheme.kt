@@ -2,6 +2,10 @@ package com.example.keystore
 
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
+import java.security.ProviderException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
@@ -10,13 +14,31 @@ class V1Scheme(
   private val keyStoreType: String = "AndroidKeyStore",
   private val aesMode: String = "AES/GCM/NoPadding",
   private val ivSizeBytes: Int = 12,
-  private val tagSizeBits: Int = 128
+  private val tagSizeBits: Int = 128,
+  private val cipherInitTimeoutSeconds: Long = 5
 ) : EncryptionScheme {
 
   override val version: Int get() = 1
 
-  override fun generateKey(alias: String, unlockedDeviceRequired: Boolean, strongBox: Boolean) {
-    Aes256GcmKeyGenerator.generateKey(alias, unlockedDeviceRequired, strongBox)
+  private fun initCipherWithTimeout(block: () -> Unit) {
+    val executor = Executors.newSingleThreadExecutor()
+    try {
+      val future = executor.submit(block)
+      try {
+        future.get(cipherInitTimeoutSeconds, TimeUnit.SECONDS)
+      } catch (e: TimeoutException) {
+        future.cancel(true)
+        throw ProviderException("timed out after ${cipherInitTimeoutSeconds}s — hardware backend may be busy")
+      } catch (e: java.util.concurrent.ExecutionException) {
+        throw e.cause ?: e
+      }
+    } finally {
+      executor.shutdown()
+    }
+  }
+
+  override fun generateKey(alias: String, unlockedDeviceRequired: Boolean, strongBox: Boolean, userAuthenticationRequired: Boolean) {
+    Aes256GcmKeyGenerator.generateKey(alias, unlockedDeviceRequired, strongBox, userAuthenticationRequired)
   }
 
   override fun encrypt(
@@ -24,10 +46,40 @@ class V1Scheme(
     plaintext: ByteArray,
     aad: String
   ): EncryptResult {
+    val cipher = initEncryptCipher(alias)
+    return encryptWithCipher(cipher, plaintext, aad)
+  }
+
+  override fun decrypt(
+    alias: String,
+    ciphertext: ByteArray,
+    nonce: ByteArray,
+    aad: String
+  ): ByteArray {
+    val cipher = initDecryptCipher(alias, nonce)
+    return decryptWithCipher(cipher, ciphertext, aad)
+  }
+
+  fun initEncryptCipher(alias: String): Cipher {
     val key = getKey(alias)
       ?: throw IllegalArgumentException("Key not found for alias.")
     val cipher = Cipher.getInstance(aesMode)
-    cipher.init(Cipher.ENCRYPT_MODE, key)
+    initCipherWithTimeout { cipher.init(Cipher.ENCRYPT_MODE, key) }
+    return cipher
+  }
+
+  fun initDecryptCipher(alias: String, nonce: ByteArray): Cipher {
+    if (nonce.size != ivSizeBytes) {
+      throw IllegalArgumentException("Invalid nonce size.")
+    }
+    val key = getKey(alias)
+      ?: throw IllegalArgumentException("Key not found for alias.")
+    val cipher = Cipher.getInstance(aesMode)
+    initCipherWithTimeout { cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(tagSizeBits, nonce)) }
+    return cipher
+  }
+
+  fun encryptWithCipher(cipher: Cipher, plaintext: ByteArray, aad: String): EncryptResult {
     cipher.updateAAD(aad.toByteArray(StandardCharsets.UTF_8))
     val ciphertext = cipher.doFinal(plaintext)
     val nonce = cipher.iv
@@ -38,19 +90,7 @@ class V1Scheme(
     return EncryptResult(version, nonce, ciphertext)
   }
 
-  override fun decrypt(
-    alias: String,
-    ciphertext: ByteArray,
-    nonce: ByteArray,
-    aad: String
-  ): ByteArray {
-    if (nonce.size != ivSizeBytes) {
-      throw IllegalArgumentException("Invalid nonce size.")
-    }
-    val key = getKey(alias)
-      ?: throw IllegalArgumentException("Key not found for alias.")
-    val cipher = Cipher.getInstance(aesMode)
-    cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(tagSizeBits, nonce))
+  fun decryptWithCipher(cipher: Cipher, ciphertext: ByteArray, aad: String): ByteArray {
     cipher.updateAAD(aad.toByteArray(StandardCharsets.UTF_8))
     return cipher.doFinal(ciphertext)
   }

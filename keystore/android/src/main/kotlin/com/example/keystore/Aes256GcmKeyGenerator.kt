@@ -1,5 +1,6 @@
 package com.example.keystore
 
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.security.KeyStore
@@ -11,7 +12,8 @@ object Aes256GcmKeyGenerator {
   fun generateKey(
     alias: String,
     unlockedDeviceRequired: Boolean,
-    strongBox: Boolean
+    strongBox: Boolean,
+    userAuthenticationRequired: Boolean
   ) {
     val keyStore = KeyStore.getInstance(keyStoreType)
     keyStore.load(null)
@@ -31,6 +33,14 @@ object Aes256GcmKeyGenerator {
       .setUnlockedDeviceRequired(unlockedDeviceRequired)
     if (strongBox) {
       specBuilder.setIsStrongBoxBacked(true)
+    }
+    if (userAuthenticationRequired && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      specBuilder.setUserAuthenticationRequired(true)
+      specBuilder.setInvalidatedByBiometricEnrollment(true)
+      specBuilder.setUserAuthenticationParameters(
+        0,
+        KeyProperties.AUTH_DEVICE_CREDENTIAL or KeyProperties.AUTH_BIOMETRIC_STRONG
+      )
     }
     keyGenerator.init(specBuilder.build())
     keyGenerator.generateKey()
