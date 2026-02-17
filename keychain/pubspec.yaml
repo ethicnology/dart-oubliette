@@ -1,6 +1,7 @@
 name: keychain
 description: Flutter plugin exposing the iOS/macOS Keychain (SecItem API) via a typed Dart facade.
 version: 0.0.1
+publish_to: 'none'
 homepage:
 
 environment:
