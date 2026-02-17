@@ -2,13 +2,13 @@ import Security
 
 let enclaveAlgorithm = SecKeyAlgorithm.eciesEncryptionCofactorX963SHA256AESGCM
 
-func enclaveKeyTag(service: String?) -> Data {
+func enclaveKeyTag(service: String?) -> Data? {
   let tag = "com.oubliette.se.\(service ?? "default")"
-  return tag.data(using: .utf8)!
+  return tag.data(using: .utf8)
 }
 
 func ensureEnclaveKeyPair(service: String?) -> (SecKey, SecKey)? {
-  let tag = enclaveKeyTag(service: service)
+  guard let tag = enclaveKeyTag(service: service) else { return nil }
 
   let fetchQuery: [String: Any] = [
     kSecClass as String: kSecClassKey,
@@ -19,7 +19,8 @@ func ensureEnclaveKeyPair(service: String?) -> (SecKey, SecKey)? {
   ]
   var item: CFTypeRef?
   let fetchStatus = SecItemCopyMatching(fetchQuery as CFDictionary, &item)
-  if fetchStatus == errSecSuccess, let privateKey = item as! SecKey? {
+  if fetchStatus == errSecSuccess, let ref = item {
+    let privateKey = ref as! SecKey
     guard let publicKey = SecKeyCopyPublicKey(privateKey) else { return nil }
     return (privateKey, publicKey)
   }

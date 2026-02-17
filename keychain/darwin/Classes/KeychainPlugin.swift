@@ -3,6 +3,7 @@ import Flutter
 #else
 import FlutterMacOS
 #endif
+import LocalAuthentication
 import Security
 
 public class KeychainPlugin: NSObject, FlutterPlugin {
@@ -27,7 +28,7 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
     case "keychainContains":
       handleKeychainContains(call, result: result)
     default:
-      result(FlutterMethodNotImplemented)
+      result(FlutterError(code: "not_implemented", message: "\(call.method) is not implemented.", details: nil))
     }
   }
 
@@ -42,7 +43,11 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       let status = secItemAdd(params: params, data: data.data)
       DispatchQueue.main.async {
         guard status == errSecSuccess else {
-          result(FlutterError(code: "sec_item_add_failed", message: String(status), details: nil))
+          if status == errSecDuplicateItem {
+            result(FlutterError(code: "already_exists", message: "A value already exists for this key.", details: nil))
+          } else {
+            result(FlutterError(code: "sec_item_add_failed", message: String(status), details: nil))
+          }
           return
         }
         result(nil)
@@ -73,56 +78,69 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
     serialQueue.async {
       var query = keychainReadQuery(params: params, returnData: true)
       if let prompt = params.authenticationPrompt {
-        query[kSecUseOperationPrompt as String] = prompt
+        let context = LAContext()
+        context.localizedReason = prompt
+        query[kSecUseAuthenticationContext as String] = context
       }
       var item: CFTypeRef?
       let status = Security.SecItemCopyMatching(query as CFDictionary, &item)
-      DispatchQueue.main.async {
-        switch status {
-        case errSecSuccess:
-          guard var rawData = item as? Data else {
-            result(nil)
+
+      switch status {
+      case errSecSuccess:
+        guard var rawData = item as? Data else {
+          DispatchQueue.main.async { result(nil) }
+          return
+        }
+        if params.secureEnclave {
+          guard let (privateKey, _) = ensureEnclaveKeyPair(service: params.service),
+                var plaintext = enclaveDecrypt(data: rawData, privateKey: privateKey) else {
+            rawData.withUnsafeMutableBytes { ptr in
+              if let base = ptr.baseAddress {
+                base.initializeMemory(as: UInt8.self, repeating: 0, count: ptr.count)
+              }
+            }
+            DispatchQueue.main.async {
+              result(FlutterError(code: "se_decrypt_failed", message: "Secure Enclave decryption failed.", details: nil))
+            }
             return
           }
-          if params.secureEnclave {
-            guard let (privateKey, _) = ensureEnclaveKeyPair(service: params.service),
-                  var plaintext = enclaveDecrypt(data: rawData, privateKey: privateKey) else {
-              rawData.withUnsafeMutableBytes { ptr in
-                if let base = ptr.baseAddress {
-                  base.initializeMemory(as: UInt8.self, repeating: 0, count: ptr.count)
-                }
-              }
-              result(FlutterError(code: "se_decrypt_failed", message: "Secure Enclave decryption failed.", details: nil))
-              return
-            }
-            rawData.withUnsafeMutableBytes { ptr in
-              if let base = ptr.baseAddress {
-                base.initializeMemory(as: UInt8.self, repeating: 0, count: ptr.count)
-              }
-            }
-            result(FlutterStandardTypedData(bytes: plaintext))
-            plaintext.withUnsafeMutableBytes { ptr in
-              if let base = ptr.baseAddress {
-                base.initializeMemory(as: UInt8.self, repeating: 0, count: ptr.count)
-              }
-            }
-          } else {
-            result(FlutterStandardTypedData(bytes: rawData))
-            rawData.withUnsafeMutableBytes { ptr in
-              if let base = ptr.baseAddress {
-                base.initializeMemory(as: UInt8.self, repeating: 0, count: ptr.count)
-              }
+          rawData.withUnsafeMutableBytes { ptr in
+            if let base = ptr.baseAddress {
+              base.initializeMemory(as: UInt8.self, repeating: 0, count: ptr.count)
             }
           }
-        case errSecItemNotFound:
-          result(nil)
-        case errSecUserCanceled:
+          let typedData = FlutterStandardTypedData(bytes: plaintext)
+          plaintext.withUnsafeMutableBytes { ptr in
+            if let base = ptr.baseAddress {
+              base.initializeMemory(as: UInt8.self, repeating: 0, count: ptr.count)
+            }
+          }
+          DispatchQueue.main.async { result(typedData) }
+        } else {
+          let typedData = FlutterStandardTypedData(bytes: rawData)
+          rawData.withUnsafeMutableBytes { ptr in
+            if let base = ptr.baseAddress {
+              base.initializeMemory(as: UInt8.self, repeating: 0, count: ptr.count)
+            }
+          }
+          DispatchQueue.main.async { result(typedData) }
+        }
+      case errSecItemNotFound:
+        DispatchQueue.main.async { result(nil) }
+      case errSecUserCanceled:
+        DispatchQueue.main.async {
           result(FlutterError(code: "auth_cancelled", message: "User cancelled authentication.", details: nil))
-        case errSecAuthFailed:
+        }
+      case errSecAuthFailed:
+        DispatchQueue.main.async {
           result(FlutterError(code: "auth_failed", message: "Authentication failed.", details: nil))
-        case errSecInteractionNotAllowed:
+        }
+      case errSecInteractionNotAllowed:
+        DispatchQueue.main.async {
           result(FlutterError(code: "interaction_not_allowed", message: "Keychain interaction not allowed (device locked?).", details: nil))
-        default:
+        }
+      default:
+        DispatchQueue.main.async {
           result(FlutterError(code: "sec_item_copy_failed", message: String(status), details: nil))
         }
       }

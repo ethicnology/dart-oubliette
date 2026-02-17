@@ -5,9 +5,9 @@ Pod::Spec.new do |s|
   s.description      = <<-DESC
 Flutter plugin that provides typed access to the iOS and macOS Keychain via the Security framework.
                        DESC
-  s.homepage         = 'http://example.com'
+  s.homepage         = 'https://ethicnology.com'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Your Company' => 'email@example.com' }
+  s.author           = { 'ethicnology' => 'contact@ethicnology.com' }
   s.source           = { :path => '.' }
   s.source_files = 'Classes/**/*'
 
@@ -18,5 +18,5 @@ Flutter plugin that provides typed access to the iOS and macOS Keychain via the 
   s.osx.deployment_target = '10.15'
 
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }
-  s.swift_version = '5.0'
+  s.swift_version = '6.0'
 end
