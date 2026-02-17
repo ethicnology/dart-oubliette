@@ -22,7 +22,7 @@ class Uint8ListBase64Hook extends MappingHook {
 }
 
 @MappableClass()
-class EncryptedPayload with EncryptedPayloadMappable {
+final class EncryptedPayload with EncryptedPayloadMappable {
   final int version;
   @MappableField(hook: Uint8ListBase64Hook())
   final Uint8List nonce;

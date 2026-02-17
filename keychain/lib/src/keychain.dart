@@ -89,7 +89,7 @@ class KeychainConfig {
       };
 }
 
-class Keychain {
+final class Keychain {
   Keychain({required this.config});
 
   final KeychainConfig config;
@@ -121,7 +121,7 @@ class Keychain {
   }
 
   Future<Uint8List?> secItemCopyMatching(String alias) async {
-    final result = await _channel.invokeMethod<Uint8List?>(
+    final result = await _channel.invokeMethod<Uint8List>(
       'secItemCopyMatching',
       _args(alias),
     );

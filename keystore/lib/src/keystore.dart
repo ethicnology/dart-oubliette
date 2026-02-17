@@ -2,7 +2,7 @@ import 'package:flutter/services.dart';
 
 import 'package:keystore/src/encrypted_payload.dart';
 
-class Keystore {
+final class Keystore {
   final MethodChannel _channel = const MethodChannel('keystore');
 
   Future<bool> containsAlias(String alias) async {
