@@ -10,9 +10,13 @@ class AndroidOubliette extends Oubliette {
   final Keystore _keystore = Keystore();
   final AndroidSecretAccess access;
 
+  Future<void>? _ensureKeyFuture;
+
   String _storedKey(String key) => access.prefix + key;
 
-  Future<void> _ensureKey() async {
+  Future<void> _ensureKey() => _ensureKeyFuture ??= _doEnsureKey();
+
+  Future<void> _doEnsureKey() async {
     final exists = await _keystore.containsAlias(access.keyAlias);
     if (!exists) {
       await _keystore.generateKey(

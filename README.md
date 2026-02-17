@@ -15,7 +15,7 @@ An [oubliette](https://en.wikipedia.org/wiki/Oubliette) is a secret dungeon whos
 |----------|--------------|
 | iOS | [Keychain Services](https://developer.apple.com/documentation/security/keychain_services) |
 | macOS | System Keychain (traditional file-based, no entitlements required) |
-| Android | [Android Keystore](https://developer.android.com/training/articles/keystore) (AES-256-GCM) + SharedPreferences |
+| Android | [Android Keystore](https://developer.android.com/training/articles/keystore) (AES-256-GCM) + `SharedPreferences` |
 
 ## Packages
 
@@ -23,7 +23,7 @@ This repository is a monorepo with three packages:
 
 | Package | Description |
 |---------|-------------|
-| [`oubliette/`](oubliette/) | Main plugin — platform-agnostic `store`/`fetch`/`trash`/`exists` API over `Uint8List` values. Delegates to `keychain` and `keystore` via `default_package`. |
+| [`oubliette/`](oubliette/) | Main plugin — platform-agnostic `store`/`useAndForget`/`trash`/`exists` API over `Uint8List` values. Delegates to `keychain` and `keystore` via `default_package`. |
 | [`keychain/`](keychain/) | Standalone Flutter plugin wrapping the iOS/macOS Keychain (`SecItem` API). Shared Swift source for both platforms. |
 | [`keystore/`](keystore/) | Standalone Flutter plugin wrapping the Android Keystore. Versioned encryption schemes (currently AES-256-GCM v1) with `EncryptedPayload` serialisation. |
 
@@ -34,10 +34,13 @@ This repository is a monorepo with three packages:
 ```dart
 import 'package:oubliette/oubliette.dart';
 
-final storage = createOubliette();
+final storage = Oubliette(
+  android: const AndroidSecretAccess.onlyUnlocked(strongBox: false),
+  darwin: const DarwinSecretAccess.onlyUnlocked(),
+);
 
 await storage.storeString('api_token', 'eyJ...');
-final token = await storage.fetchString('api_token');
+final token = await storage.useStringAndForget<String>('api_token', (v) async => v);
 await storage.trash('api_token');
 ```
 
