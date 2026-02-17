@@ -7,8 +7,6 @@ extension OublietteStringExtension on Oubliette {
   Future<void> storeString(String key, String value) =>
       store(key, Uint8List.fromList(utf8.encode(value)));
 
-  Future<String?> fetchString(String key) async {
-    final bytes = await fetch(key);
-    return bytes != null ? utf8.decode(bytes) : null;
-  }
+  Future<T?> useStringAndForget<T>(String key, Future<T> Function(String value) action) =>
+      useAndForget(key, (bytes) => action(utf8.decode(bytes)));
 }

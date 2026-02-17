@@ -37,12 +37,14 @@ class KeychainConfig {
   /// [authenticationPrompt] reason string shown in the system authentication
   /// dialog when reading an authentication-protected item.
   const KeychainConfig({
-    this.service,
-    this.accessibility = KeychainAccessibility.whenUnlockedThisDeviceOnly,
-    this.useDataProtection = false,
-    this.authenticationRequired = false,
-    this.biometryCurrentSetOnly = false,
-    this.authenticationPrompt,
+    required this.service,
+    required this.accessibility,
+    required this.useDataProtection,
+    required this.authenticationRequired,
+    required this.biometryCurrentSetOnly,
+    required this.authenticationPrompt,
+    required this.secureEnclave,
+    required this.accessGroup,
   });
 
   /// `kSecAttrService` — namespaces keychain items by service identifier.
@@ -65,6 +67,15 @@ class KeychainConfig {
   /// Reason displayed in the system authentication dialog on read.
   final String? authenticationPrompt;
 
+  /// When `true`, data is encrypted/decrypted using a Secure Enclave
+  /// P-256 key via `eciesEncryptionCofactorX963SHA256AESGCM`. The
+  /// ciphertext blob is stored in the Keychain; the private key never
+  /// leaves the SE chip.
+  final bool secureEnclave;
+
+  /// `kSecAttrAccessGroup` — restricts which apps can access the item.
+  final String? accessGroup;
+
   Map<String, dynamic> toMap() => {
         if (service != null) 'service': service,
         'accessibility': accessibility.value,
@@ -73,12 +84,13 @@ class KeychainConfig {
         if (biometryCurrentSetOnly) 'biometryCurrentSetOnly': true,
         if (authenticationPrompt != null)
           'authenticationPrompt': authenticationPrompt,
+        if (secureEnclave) 'secureEnclave': true,
+        if (accessGroup != null) 'accessGroup': accessGroup,
       };
 }
 
 class Keychain {
-  Keychain({KeychainConfig? config})
-      : config = config ?? const KeychainConfig();
+  Keychain({required this.config});
 
   final KeychainConfig config;
   final MethodChannel _channel = const MethodChannel('keychain');

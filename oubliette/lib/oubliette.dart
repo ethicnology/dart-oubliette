@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
 import 'package:oubliette/android_oubliette.dart' show AndroidOubliette;
 import 'package:oubliette/android_secret_access.dart';
 import 'package:oubliette/darwin_oubliette.dart' show DarwinOubliette;
@@ -29,7 +30,10 @@ abstract class Oubliette {
   Oubliette.internal();
 
   Future<void> store(String key, Uint8List value);
+
+  @protected
   Future<Uint8List?> fetch(String key);
+
   Future<void> trash(String key);
   Future<bool> exists(String key);
 
