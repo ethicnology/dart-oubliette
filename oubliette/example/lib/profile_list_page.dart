@@ -20,9 +20,10 @@ enum SecurityProfile {
     subtitle: 'Requires biometric/passcode — survives enrollment changes',
     icon: Icons.fingerprint,
   ),
-  biometricStrict(
-    label: 'Biometric Strict',
-    subtitle: 'Requires biometric — invalidated on enrollment change',
+  biometricFatal(
+    label: 'Biometric Fatal',
+    subtitle:
+        'Requires biometric — invalidated on enrollment change, destroyed if passcode removed',
     icon: Icons.front_hand,
   );
 
@@ -45,31 +46,41 @@ enum SecurityProfile {
         );
       case SecurityProfile.onlyUnlocked:
         return Oubliette(
-          android: const AndroidSecretAccess.onlyUnlocked(prefix: 'demo_ou_'),
-          darwin: const DarwinSecretAccess.onlyUnlocked(prefix: 'demo_ou_'),
+          android: const AndroidSecretAccess.onlyUnlocked(
+            prefix: 'demo_ou_',
+            strongBox: false,
+          ),
+          darwin: const DarwinSecretAccess.onlyUnlocked(
+            prefix: 'demo_ou_',
+            secureEnclave: false,
+          ),
         );
       case SecurityProfile.biometric:
         return Oubliette(
           android: const AndroidSecretAccess.biometric(
             prefix: 'demo_bio_',
+            strongBox: false,
             promptTitle: 'Oubliette',
             promptSubtitle: 'Authenticate to access your secret',
           ),
           darwin: const DarwinSecretAccess.biometric(
             prefix: 'demo_bio_',
             promptReason: 'Authenticate to access your secret',
+            secureEnclave: true,
           ),
         );
-      case SecurityProfile.biometricStrict:
+      case SecurityProfile.biometricFatal:
         return Oubliette(
-          android: const AndroidSecretAccess.biometricStrict(
+          android: const AndroidSecretAccess.biometricFatal(
             prefix: 'demo_bs_',
+            strongBox: false,
             promptTitle: 'Oubliette',
             promptSubtitle: 'Authenticate to access your secret',
           ),
-          darwin: const DarwinSecretAccess.biometricStrict(
+          darwin: const DarwinSecretAccess.biometricFatal(
             prefix: 'demo_bs_',
             promptReason: 'Authenticate to access your secret',
+            secureEnclave: true,
           ),
         );
     }
@@ -89,22 +100,24 @@ class ProfileListPage extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.symmetric(vertical: 16),
         children: [
-          ...SecurityProfile.values.map((profile) => ListTile(
-            leading: Icon(profile.icon),
-            title: Text(profile.label),
-            subtitle: Text(profile.subtitle),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => StorageTestPage(
-                  storage: profile.createStorage(),
-                  title: profile.label,
-                  subtitle: profile.subtitle,
-                  icon: profile.icon,
+          ...SecurityProfile.values.map(
+            (profile) => ListTile(
+              leading: Icon(profile.icon),
+              title: Text(profile.label),
+              subtitle: Text(profile.subtitle),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => StorageTestPage(
+                    storage: profile.createStorage(),
+                    title: profile.label,
+                    subtitle: profile.subtitle,
+                    icon: profile.icon,
+                  ),
                 ),
               ),
             ),
-          )),
+          ),
           const Divider(),
           ListTile(
             leading: const Icon(Icons.tune),

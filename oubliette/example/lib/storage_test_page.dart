@@ -61,13 +61,20 @@ class _StorageTestPageState extends State<StorageTestPage> {
     if (key.isEmpty) { _setMessage('Enter a key.', error: true); return; }
     setState(() { _loading = true; _message = null; _fetchedValue = null; });
     try {
-      final value = await widget.storage.fetchString(key);
-      if (!mounted) return;
-      setState(() {
-        _fetchedValue = value;
-        _message = value == null ? 'No value for this key.' : null;
-        _isError = value == null;
+      await widget.storage.useStringAndForget<void>(key, (value) async {
+        if (!mounted) return;
+        setState(() {
+          _fetchedValue = value;
+          _message = null;
+          _isError = false;
+        });
       });
+      if (_fetchedValue == null && mounted) {
+        setState(() {
+          _message = 'No value for this key.';
+          _isError = true;
+        });
+      }
     } on PlatformException catch (e) {
       _setMessage('${e.code}: ${e.message ?? "unknown"}', error: true);
     } catch (e) {

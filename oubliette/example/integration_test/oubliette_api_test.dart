@@ -13,30 +13,31 @@ void main() {
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.onlyUnlocked(),
-        darwin: const DarwinSecretAccess.onlyUnlocked(),
+        android: const AndroidSecretAccess.onlyUnlocked(strongBox: false),
+        darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
       );
     });
 
-    testWidgets('store/fetch/trash bytes round-trip', (WidgetTester tester) async {
+    testWidgets('store/useAndForget/trash bytes round-trip', (WidgetTester tester) async {
       const key = 'api_test_bytes';
       final value = Uint8List.fromList(utf8.encode('secret bytes'));
       await storage.store(key, value);
-      final fetched = await storage.fetch(key);
-      expect(fetched, isNotNull);
-      expect(utf8.decode(fetched!), 'secret bytes');
+      final decoded = await storage.useAndForget<String>(key, (bytes) async => utf8.decode(bytes));
+      expect(decoded, 'secret bytes');
       await storage.trash(key);
-      expect(await storage.fetch(key), isNull);
+      final missing = await storage.useAndForget<String>(key, (bytes) async => utf8.decode(bytes));
+      expect(missing, isNull);
     });
 
-    testWidgets('storeString/fetchString/trash round-trip', (WidgetTester tester) async {
+    testWidgets('storeString/useStringAndForget/trash round-trip', (WidgetTester tester) async {
       const key = 'api_test_string';
       const value = 'secret string';
       await storage.storeString(key, value);
-      final fetched = await storage.fetchString(key);
+      final fetched = await storage.useStringAndForget<String>(key, (v) async => v);
       expect(fetched, value);
       await storage.trash(key);
-      expect(await storage.fetchString(key), isNull);
+      final missing = await storage.useStringAndForget<String>(key, (v) async => v);
+      expect(missing, isNull);
     });
 
     testWidgets('exists returns true after store, false after trash', (WidgetTester tester) async {
@@ -48,12 +49,13 @@ void main() {
       expect(await storage.exists(key), false);
     });
 
-    testWidgets('store overwrites existing value', (WidgetTester tester) async {
-      const key = 'api_test_overwrite';
+    testWidgets('store fails if key already exists', (WidgetTester tester) async {
+      const key = 'api_test_dup';
       await storage.store(key, Uint8List.fromList(utf8.encode('first')));
-      await storage.store(key, Uint8List.fromList(utf8.encode('second')));
-      final fetched = await storage.fetchString(key);
-      expect(fetched, 'second');
+      try {
+        await storage.store(key, Uint8List.fromList(utf8.encode('second')));
+        fail('Expected store to fail on duplicate key');
+      } catch (_) {}
       await storage.trash(key);
     });
   });

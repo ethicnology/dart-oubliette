@@ -23,10 +23,12 @@ class _CustomProfilePageState extends State<CustomProfilePage> {
   final _promptSubtitleController = TextEditingController();
 
   final _serviceController = TextEditingController();
-  KeychainAccessibility _accessibility = KeychainAccessibility.whenUnlockedThisDeviceOnly;
+  KeychainAccessibility _accessibility =
+      KeychainAccessibility.whenUnlockedThisDeviceOnly;
   bool _useDataProtection = false;
   bool _authenticationRequired = false;
   bool _biometryCurrentSetOnly = false;
+  bool _secureEnclave = false;
   final _authenticationPromptController = TextEditingController();
 
   @override
@@ -49,8 +51,12 @@ class _CustomProfilePageState extends State<CustomProfilePage> {
           strongBox: _strongBox,
           unlockedDeviceRequired: _unlockedDeviceRequired,
           invalidatedByBiometricEnrollment: _invalidatedByBiometricEnrollment,
-          promptTitle: _promptTitleController.text.isEmpty ? null : _promptTitleController.text,
-          promptSubtitle: _promptSubtitleController.text.isEmpty ? null : _promptSubtitleController.text,
+          promptTitle: _promptTitleController.text.isEmpty
+              ? null
+              : _promptTitleController.text,
+          promptSubtitle: _promptSubtitleController.text.isEmpty
+              ? null
+              : _promptSubtitleController.text,
         ),
         darwin: const DarwinSecretAccess.evenLocked(),
       );
@@ -59,35 +65,46 @@ class _CustomProfilePageState extends State<CustomProfilePage> {
       android: const AndroidSecretAccess.evenLocked(),
       darwin: DarwinSecretAccess.custom(
         prefix: _prefixController.text,
-        service: _serviceController.text.isEmpty ? null : _serviceController.text,
+        service: _serviceController.text.isEmpty
+            ? null
+            : _serviceController.text,
         accessibility: _accessibility,
         useDataProtection: _useDataProtection,
         authenticationRequired: _authenticationRequired,
         biometryCurrentSetOnly: _biometryCurrentSetOnly,
-        authenticationPrompt: _authenticationPromptController.text.isEmpty ? null : _authenticationPromptController.text,
+        authenticationPrompt: _authenticationPromptController.text.isEmpty
+            ? null
+            : _authenticationPromptController.text,
+        secureEnclave: _secureEnclave,
+        accessGroup: null,
       ),
     );
   }
 
   void _launch() {
     if (Platform.isAndroid) {
-      debugPrint('CustomProfile [Android] '
-          'prefix=${_prefixController.text}, '
-          'keyAlias=${_keyAliasController.text}, '
-          'strongBox=$_strongBox, '
-          'unlockedDeviceRequired=$_unlockedDeviceRequired, '
-          'invalidatedByBiometricEnrollment=$_invalidatedByBiometricEnrollment, '
-          'promptTitle=${_promptTitleController.text.isEmpty ? 'null' : _promptTitleController.text}, '
-          'promptSubtitle=${_promptSubtitleController.text.isEmpty ? 'null' : _promptSubtitleController.text}');
+      debugPrint(
+        'CustomProfile [Android] '
+        'prefix=${_prefixController.text}, '
+        'keyAlias=${_keyAliasController.text}, '
+        'strongBox=$_strongBox, '
+        'unlockedDeviceRequired=$_unlockedDeviceRequired, '
+        'invalidatedByBiometricEnrollment=$_invalidatedByBiometricEnrollment, '
+        'promptTitle=${_promptTitleController.text.isEmpty ? 'null' : _promptTitleController.text}, '
+        'promptSubtitle=${_promptSubtitleController.text.isEmpty ? 'null' : _promptSubtitleController.text}',
+      );
     } else {
-      debugPrint('CustomProfile [Darwin] '
-          'prefix=${_prefixController.text}, '
-          'service=${_serviceController.text.isEmpty ? 'null' : _serviceController.text}, '
-          'accessibility=${_accessibility.name}, '
-          'useDataProtection=$_useDataProtection, '
-          'authenticationRequired=$_authenticationRequired, '
-          'biometryCurrentSetOnly=$_biometryCurrentSetOnly, '
-          'authenticationPrompt=${_authenticationPromptController.text.isEmpty ? 'null' : _authenticationPromptController.text}');
+      debugPrint(
+        'CustomProfile [Darwin] '
+        'prefix=${_prefixController.text}, '
+        'service=${_serviceController.text.isEmpty ? 'null' : _serviceController.text}, '
+        'accessibility=${_accessibility.name}, '
+        'useDataProtection=$_useDataProtection, '
+        'authenticationRequired=$_authenticationRequired, '
+        'biometryCurrentSetOnly=$_biometryCurrentSetOnly, '
+        'secureEnclave=$_secureEnclave, '
+        'authenticationPrompt=${_authenticationPromptController.text.isEmpty ? 'null' : _authenticationPromptController.text}',
+      );
     }
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -210,11 +227,17 @@ class _CustomProfilePageState extends State<CustomProfilePage> {
           labelText: 'accessibility',
           border: OutlineInputBorder(),
         ),
-        items: KeychainAccessibility.values.map((a) => DropdownMenuItem(
-          value: a,
-          child: Text(a.name, style: const TextStyle(fontSize: 13)),
-        )).toList(),
-        onChanged: (v) { if (v != null) setState(() => _accessibility = v); },
+        items: KeychainAccessibility.values
+            .map(
+              (a) => DropdownMenuItem(
+                value: a,
+                child: Text(a.name, style: const TextStyle(fontSize: 13)),
+              ),
+            )
+            .toList(),
+        onChanged: (v) {
+          if (v != null) setState(() => _accessibility = v);
+        },
       ),
       const SizedBox(height: 4),
       SwitchListTile(
@@ -234,6 +257,12 @@ class _CustomProfilePageState extends State<CustomProfilePage> {
         subtitle: const Text('Invalidate if biometrics change'),
         value: _biometryCurrentSetOnly,
         onChanged: (v) => setState(() => _biometryCurrentSetOnly = v),
+      ),
+      SwitchListTile(
+        title: const Text('secureEnclave'),
+        subtitle: const Text('Encrypt/decrypt via Secure Enclave P-256 key'),
+        value: _secureEnclave,
+        onChanged: (v) => setState(() => _secureEnclave = v),
       ),
       const SizedBox(height: 8),
       TextField(
@@ -257,8 +286,8 @@ class _SectionHeader extends StatelessWidget {
     return Text(
       text,
       style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            color: Theme.of(context).colorScheme.primary,
-          ),
+        color: Theme.of(context).colorScheme.primary,
+      ),
     );
   }
 }

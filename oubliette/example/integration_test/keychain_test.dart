@@ -24,7 +24,18 @@ void main() {
     );
 
     setUpAll(() {
-      facade = Keychain();
+      facade = Keychain(
+        config: const KeychainConfig(
+          service: null,
+          accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
+          useDataProtection: false,
+          authenticationRequired: false,
+          biometryCurrentSetOnly: false,
+          authenticationPrompt: null,
+          secureEnclave: false,
+          accessGroup: null,
+        ),
+      );
     });
 
     tearDown(() => facade.secItemDelete(alias));
@@ -80,7 +91,14 @@ void main() {
     ) async {
       final facade = Keychain(
         config: const KeychainConfig(
+          service: null,
           accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
+          useDataProtection: false,
+          authenticationRequired: false,
+          biometryCurrentSetOnly: false,
+          authenticationPrompt: null,
+          secureEnclave: false,
+          accessGroup: null,
         ),
       );
       addTearDown(() => facade.secItemDelete(alias));
@@ -96,7 +114,16 @@ void main() {
       for (final accessibility in KeychainAccessibility.values) {
         final itemAlias = '${alias}_${accessibility.name}';
         final facade = Keychain(
-          config: KeychainConfig(accessibility: accessibility),
+          config: KeychainConfig(
+            service: null,
+            accessibility: accessibility,
+            useDataProtection: false,
+            authenticationRequired: false,
+            biometryCurrentSetOnly: false,
+            authenticationPrompt: null,
+            secureEnclave: false,
+            accessGroup: null,
+          ),
         );
         addTearDown(() => facade.secItemDelete(itemAlias));
 
@@ -120,12 +147,41 @@ void main() {
 
     setUpAll(() {
       facadeA = Keychain(
-        config: const KeychainConfig(service: 'com.test.serviceA'),
+        config: const KeychainConfig(
+          service: 'com.test.serviceA',
+          accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
+          useDataProtection: false,
+          authenticationRequired: false,
+          biometryCurrentSetOnly: false,
+          authenticationPrompt: null,
+          secureEnclave: false,
+          accessGroup: null,
+        ),
       );
       facadeB = Keychain(
-        config: const KeychainConfig(service: 'com.test.serviceB'),
+        config: const KeychainConfig(
+          service: 'com.test.serviceB',
+          accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
+          useDataProtection: false,
+          authenticationRequired: false,
+          biometryCurrentSetOnly: false,
+          authenticationPrompt: null,
+          secureEnclave: false,
+          accessGroup: null,
+        ),
       );
-      facadeNoService = Keychain();
+      facadeNoService = Keychain(
+        config: const KeychainConfig(
+          service: null,
+          accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
+          useDataProtection: false,
+          authenticationRequired: false,
+          biometryCurrentSetOnly: false,
+          authenticationPrompt: null,
+          secureEnclave: false,
+          accessGroup: null,
+        ),
+      );
     });
 
     tearDown(() async {
