@@ -1,6 +1,6 @@
 # Oubliette
 
-An [oubliette](https://en.wikipedia.org/wiki/Oubliette) is a secret dungeon whose only entrance is a trapdoor in the ceiling. Once something goes in, it's meant to be forgotten. A fitting name for a vault that locks secrets away in hardware-backed storage. Don't leave it open.
+An [oubliette](https://en.wikipedia.org/wiki/Oubliette) is a secret dungeon whose only entrance is a trapdoor in the ceiling. Once something goes in, it's meant to be forgotten. A fitting name for a storage that locks secrets away in hardware-backed storage.
 
 <img src="oubliette.png" alt="Oubliette definition" width="300">
 
@@ -28,8 +28,15 @@ final storage = Oubliette(
 
 final mnemonic = Uint8List.fromList(utf8.encode('zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong'));
 await storage.store('mnemonic', mnemonic);
-final phrase = await storage.useAndForget<String>('mnemonic', (bytes) async => utf8.decode(bytes));
-await storage.trash('mnemonic');
+
+final transaction = [1, 2, 3, 4, 5]; // some bitcoin transaction bytes
+
+final signature = await storage.useAndForget('mnemonic', (bytes) async {
+  final mnemonicWords = utf8.decode(bytes);
+  final mnemonic = Mnemonic.fromSentence(mnemonicWords);
+  final signature = sign(transaction, mnemonic);
+  return signature;
+} );
 ```
 
 > **Recommended defaults:** Use `secureEnclave: true` on Darwin and
@@ -39,10 +46,6 @@ await storage.trash('mnemonic');
 > Call `Keystore().isStrongBoxAvailable()` to check at runtime.
 
 ## Key Design Decisions
-
-### Bytes, Not Strings
-
-The API operates exclusively on `Uint8List`. Encoding is the caller's concern. Strings are immutable in Dart and cannot be zeroed from memory, so there are no string convenience methods — callers must encode to bytes themselves.
 
 ### Use-and-Forget, Not Read
 
@@ -104,12 +107,6 @@ Sensitive buffers are zeroed in Swift (`Data`), Kotlin (`ByteArray`), and Dart (
 - **Compiler dead-store elimination**: in theory the JIT/AOT compiler could optimise away the `fillRange(0)` call, though this is unlikely in practice for `Uint8List`.
 
 These limitations are inherent to managed runtimes. If you need guaranteed memory erasure, a native-only implementation with `mlock` / `SecureZeroMemory` is required.
-
-### Naming as Documentation
-
-`store`, not `write`. `trash`, not `delete`. `useAndForget`, not `read`. `secItemAdd`/`secItemCopyMatching`/`secItemDelete` — Apple's vocabulary, not ours.
-
-For a deep dive into every design decision, see [PHILOSOPHY.md](PHILOSOPHY.md).
 
 ## Platform requirements
 
