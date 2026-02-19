@@ -41,8 +41,8 @@ enum SecurityProfile {
     switch (this) {
       case SecurityProfile.evenLocked:
         return Oubliette(
-          android: const AndroidSecretAccess.evenLocked(prefix: 'demo_el_'),
-          darwin: const DarwinSecretAccess.evenLocked(prefix: 'demo_el_'),
+          android: const AndroidSecretAccess.evenLocked(prefix: 'demo_el_', strongBox: false),
+          darwin: const DarwinSecretAccess.evenLocked(prefix: 'demo_el_', secureEnclave: false),
         );
       case SecurityProfile.onlyUnlocked:
         return Oubliette(

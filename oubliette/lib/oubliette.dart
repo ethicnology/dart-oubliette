@@ -1,7 +1,4 @@
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
-import 'package:meta/meta.dart';
 import 'package:oubliette/android_oubliette.dart' show AndroidOubliette;
 import 'package:oubliette/android_secret_access.dart';
 import 'package:oubliette/darwin_oubliette.dart' show DarwinOubliette;
@@ -37,40 +34,45 @@ abstract class Oubliette {
   Future<void> trash(String key);
   Future<bool> exists(String key);
 
-  /// Fetches the secret for [key], passes it to [action], then zeroes the
-  /// buffer before returning — regardless of whether [action] succeeds or
-  /// throws.
+  /// Fetches the secret for [key], passes it to [action], then attempts to
+  /// zero the buffer before returning — regardless of whether [action]
+  /// succeeds or throws.
   ///
   /// Returns `null` if the key does not exist, otherwise returns the value
   /// produced by [action].
   ///
   /// ### What this covers
-  /// - The original `Uint8List` buffer is zeroed (`fillRange(0)`) as soon as
+  /// - If the buffer is modifiable, it is zeroed (`fillRange(0)`) as soon as
   ///   [action] completes, so the plaintext bytes no longer sit in the Dart
   ///   heap at that address.
   /// - The caller cannot forget to clean up — zeroing happens in a `finally`
   ///   block even if [action] throws.
   ///
   /// ### What this does NOT cover
+  /// - **Unmodifiable method channel buffers**: Flutter's
+  ///   `FlutterStandardTypedData` may return an unmodifiable `Uint8List`.
+  ///   When that happens the buffer cannot be zeroed. We do not create a
+  ///   redundant copy just to zero it — that would leave *two* unzeroed
+  ///   buffers instead of one.
   /// - **GC copies**: the Dart VM may relocate objects during garbage
   ///   collection (compaction). Previous memory locations keep stale bytes
   ///   until overwritten by something else.
-  /// - **Method Channel buffers**: `FlutterStandardTypedData` creates
-  ///   intermediate copies during native → Dart serialisation that are not
-  ///   zeroed.
   /// - **OS-level leaks**: swap, memory-mapped files, and core dumps may
   ///   persist the plaintext on disk.
   /// - **Compiler dead-store elimination**: in theory the JIT/AOT could
   ///   optimise away the `fillRange` call, though this is unlikely in
   ///   practice for `Uint8List`.
   Future<T?> useAndForget<T>(String key, Future<T> Function(Uint8List bytes) action) async {
-    final raw = await fetch(key);
-    if (raw == null) return null;
-    final bytes = Uint8List.fromList(raw);
+    final bytes = await fetch(key);
+    if (bytes == null) return null;
     try {
       return await action(bytes);
     } finally {
-      bytes.fillRange(0, bytes.length, 0);
+      try {
+        bytes.fillRange(0, bytes.length, 0);
+      } on UnsupportedError {
+        // Method channel returned an unmodifiable buffer — cannot zero it.
+      }
     }
   }
 }

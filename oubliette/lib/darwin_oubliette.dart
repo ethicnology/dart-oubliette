@@ -23,9 +23,7 @@ class DarwinOubliette extends Oubliette {
 
   @override
   Future<Uint8List?> fetch(String key) async {
-    final data = await _keychain.secItemCopyMatching(_storedKey(key));
-    if (data == null) return null;
-    return Uint8List.fromList(data);
+    return _keychain.secItemCopyMatching(_storedKey(key));
   }
 
   @override

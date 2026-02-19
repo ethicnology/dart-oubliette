@@ -23,7 +23,10 @@ class EncryptedPayloadMapper extends ClassMapperBase<EncryptedPayload> {
   final String id = 'EncryptedPayload';
 
   static int _$version(EncryptedPayload v) => v.version;
-  static const Field<EncryptedPayload, int> _f$version = Field('version', _$version);
+  static const Field<EncryptedPayload, int> _f$version = Field(
+    'version',
+    _$version,
+  );
   static Uint8List _$nonce(EncryptedPayload v) => v.nonce;
   static const Field<EncryptedPayload, Uint8List> _f$nonce = Field(
     'nonce',
@@ -38,8 +41,12 @@ class EncryptedPayloadMapper extends ClassMapperBase<EncryptedPayload> {
   );
   static String _$aad(EncryptedPayload v) => v.aad;
   static const Field<EncryptedPayload, String> _f$aad = Field('aad', _$aad);
-  static String _$alias(EncryptedPayload v) => v.alias;
-  static const Field<EncryptedPayload, String> _f$alias = Field('alias', _$alias);
+  static String _$keyAlias(EncryptedPayload v) => v.keyAlias;
+  static const Field<EncryptedPayload, String> _f$keyAlias = Field(
+    'keyAlias',
+    _$keyAlias,
+    key: r'key_alias',
+  );
 
   @override
   final MappableFields<EncryptedPayload> fields = const {
@@ -47,7 +54,7 @@ class EncryptedPayloadMapper extends ClassMapperBase<EncryptedPayload> {
     #nonce: _f$nonce,
     #ciphertext: _f$ciphertext,
     #aad: _f$aad,
-    #alias: _f$alias,
+    #keyAlias: _f$keyAlias,
   };
 
   static EncryptedPayload _instantiate(DecodingData data) {
@@ -56,7 +63,7 @@ class EncryptedPayloadMapper extends ClassMapperBase<EncryptedPayload> {
       nonce: data.dec(_f$nonce),
       ciphertext: data.dec(_f$ciphertext),
       aad: data.dec(_f$aad),
-      alias: data.dec(_f$alias),
+      keyAlias: data.dec(_f$keyAlias),
     );
   }
 
@@ -122,7 +129,13 @@ extension EncryptedPayloadValueCopy<$R, $Out>
 
 abstract class EncryptedPayloadCopyWith<$R, $In extends EncryptedPayload, $Out>
     implements ClassCopyWith<$R, $In, $Out> {
-  $R call({int? version, Uint8List? nonce, Uint8List? ciphertext, String? aad, String? alias});
+  $R call({
+    int? version,
+    Uint8List? nonce,
+    Uint8List? ciphertext,
+    String? aad,
+    String? keyAlias,
+  });
   EncryptedPayloadCopyWith<$R2, $In, $Out2> $chain<$R2, $Out2>(
     Then<$Out2, $R2> t,
   );
@@ -137,13 +150,19 @@ class _EncryptedPayloadCopyWithImpl<$R, $Out>
   late final ClassMapperBase<EncryptedPayload> $mapper =
       EncryptedPayloadMapper.ensureInitialized();
   @override
-  $R call({int? version, Uint8List? nonce, Uint8List? ciphertext, String? aad, String? alias}) => $apply(
+  $R call({
+    int? version,
+    Uint8List? nonce,
+    Uint8List? ciphertext,
+    String? aad,
+    String? keyAlias,
+  }) => $apply(
     FieldCopyWithData({
       if (version != null) #version: version,
       if (nonce != null) #nonce: nonce,
       if (ciphertext != null) #ciphertext: ciphertext,
       if (aad != null) #aad: aad,
-      if (alias != null) #alias: alias,
+      if (keyAlias != null) #keyAlias: keyAlias,
     }),
   );
   @override
@@ -152,7 +171,7 @@ class _EncryptedPayloadCopyWithImpl<$R, $Out>
     nonce: data.get(#nonce, or: $value.nonce),
     ciphertext: data.get(#ciphertext, or: $value.ciphertext),
     aad: data.get(#aad, or: $value.aad),
-    alias: data.get(#alias, or: $value.alias),
+    keyAlias: data.get(#keyAlias, or: $value.keyAlias),
   );
 
   @override
@@ -160,3 +179,4 @@ class _EncryptedPayloadCopyWithImpl<$R, $Out>
     Then<$Out2, $R2> t,
   ) => _EncryptedPayloadCopyWithImpl<$R2, $Out2>($value, $cast, t);
 }
+

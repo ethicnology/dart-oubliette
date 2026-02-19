@@ -29,13 +29,14 @@ final class EncryptedPayload with EncryptedPayloadMappable {
   @MappableField(hook: Uint8ListBase64Hook())
   final Uint8List ciphertext;
   final String aad;
-  final String alias;
+  @MappableField(key: 'key_alias')
+  final String keyAlias;
 
   const EncryptedPayload({
     required this.version,
     required this.nonce,
     required this.ciphertext,
     required this.aad,
-    required this.alias,
+    required this.keyAlias,
   });
 }

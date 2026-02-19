@@ -19,8 +19,8 @@ void main() {
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.evenLocked(prefix: 'test_el_'),
-        darwin: const DarwinSecretAccess.evenLocked(),
+        android: const AndroidSecretAccess.evenLocked(prefix: 'test_el_', strongBox: false),
+        darwin: const DarwinSecretAccess.evenLocked(secureEnclave: false),
       );
     });
 
@@ -106,7 +106,7 @@ void main() {
           promptTitle: 'Oubliette Test',
           promptSubtitle: 'Authenticate for biometric test',
         ),
-        darwin: const DarwinSecretAccess.evenLocked(),
+        darwin: const DarwinSecretAccess.evenLocked(secureEnclave: false),
       );
     });
 
@@ -136,7 +136,7 @@ void main() {
           promptTitle: 'Oubliette Test',
           promptSubtitle: 'Authenticate for biometricFatal test',
         ),
-        darwin: const DarwinSecretAccess.evenLocked(),
+        darwin: const DarwinSecretAccess.evenLocked(secureEnclave: false),
       );
     });
 

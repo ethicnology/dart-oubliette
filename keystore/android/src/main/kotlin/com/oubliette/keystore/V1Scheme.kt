@@ -1,5 +1,6 @@
 package com.oubliette.keystore
 
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import java.security.ProviderException
@@ -59,9 +60,13 @@ class V1Scheme(
 
   override fun initEncryptCipher(alias: String): Cipher {
     val key = getKey(alias)
-      ?: throw IllegalArgumentException("Key not found for alias.")
+      ?: throw KeyNotFoundException(alias)
     val cipher = Cipher.getInstance(aesMode)
-    initCipherWithTimeout { cipher.init(Cipher.ENCRYPT_MODE, key) }
+    try {
+      initCipherWithTimeout { cipher.init(Cipher.ENCRYPT_MODE, key) }
+    } catch (e: KeyPermanentlyInvalidatedException) {
+      throw KeyInvalidatedException(alias, e)
+    }
     return cipher
   }
 
@@ -70,9 +75,13 @@ class V1Scheme(
       throw IllegalArgumentException("Invalid nonce size.")
     }
     val key = getKey(alias)
-      ?: throw IllegalArgumentException("Key not found for alias.")
+      ?: throw KeyNotFoundException(alias)
     val cipher = Cipher.getInstance(aesMode)
-    initCipherWithTimeout { cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(tagSizeBits, nonce)) }
+    try {
+      initCipherWithTimeout { cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(tagSizeBits, nonce)) }
+    } catch (e: KeyPermanentlyInvalidatedException) {
+      throw KeyInvalidatedException(alias, e)
+    }
     return cipher
   }
 
@@ -90,6 +99,10 @@ class V1Scheme(
   override fun decryptWithCipher(cipher: Cipher, ciphertext: ByteArray, aad: String): ByteArray {
     cipher.updateAAD(aad.toByteArray(StandardCharsets.UTF_8))
     return cipher.doFinal(ciphertext)
+  }
+
+  override fun shutdown() {
+    timeoutExecutor.shutdownNow()
   }
 
   private fun getKey(alias: String): SecretKey? {

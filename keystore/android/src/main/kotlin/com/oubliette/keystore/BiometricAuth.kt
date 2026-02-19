@@ -44,6 +44,10 @@ internal fun KeystorePlugin.handleAuthenticateEncrypt(call: MethodCall, result: 
         }
       }
     )
+  } catch (e: KeyNotFoundException) {
+    result.error("key_not_found", e.message ?: e.toString(), null)
+  } catch (e: KeyInvalidatedException) {
+    result.error("key_invalidated", e.message ?: e.toString(), null)
   } catch (e: Exception) {
     result.error("encrypt_failed", e.message ?: e.toString(), null)
   }
@@ -80,6 +84,10 @@ internal fun KeystorePlugin.handleAuthenticateDecrypt(call: MethodCall, result: 
         }
       }
     )
+  } catch (e: KeyNotFoundException) {
+    result.error("key_not_found", e.message ?: e.toString(), null)
+  } catch (e: KeyInvalidatedException) {
+    result.error("key_invalidated", e.message ?: e.toString(), null)
   } catch (e: Exception) {
     result.error("decrypt_failed", e.message ?: e.toString(), null)
   }

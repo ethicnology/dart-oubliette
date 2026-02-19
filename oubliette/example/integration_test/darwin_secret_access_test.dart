@@ -20,8 +20,8 @@ void main() {
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.evenLocked(),
-        darwin: const DarwinSecretAccess.evenLocked(prefix: prefix),
+        android: const AndroidSecretAccess.evenLocked(strongBox: false),
+        darwin: const DarwinSecretAccess.evenLocked(prefix: prefix, secureEnclave: false),
       );
     });
 
@@ -103,7 +103,7 @@ void main() {
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.evenLocked(),
+        android: const AndroidSecretAccess.evenLocked(strongBox: false),
         darwin: const DarwinSecretAccess.biometric(
           prefix: prefix,
           promptReason: 'Authenticate for biometric test',
@@ -133,7 +133,7 @@ void main() {
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.evenLocked(),
+        android: const AndroidSecretAccess.evenLocked(strongBox: false),
         darwin: const DarwinSecretAccess.biometricFatal(
           prefix: prefix,
           promptReason: 'Authenticate for biometricFatal test',

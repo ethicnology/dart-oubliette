@@ -89,6 +89,9 @@ class KeychainConfig {
       };
 }
 
+/// There is no `secItemUpdate` — items are immutable once stored.
+/// `SecAccessControl` is set at `secItemAdd` time and cannot be changed.
+/// To replace a value, call [secItemDelete] then [secItemAdd].
 final class Keychain {
   Keychain({required this.config});
 

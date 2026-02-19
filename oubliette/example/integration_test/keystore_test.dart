@@ -59,7 +59,7 @@ void main() {
       expect(payload.ciphertext.length, greaterThan(0));
       expect(payload.version, expectedEncryptionVersion);
       expect(payload.aad, aad);
-      expect(payload.alias, alias);
+      expect(payload.keyAlias, alias);
     });
 
     testWidgets('decrypt recovers plaintext using payload version, aad, alias',
@@ -72,7 +72,7 @@ void main() {
       );
       final decrypted = await facade.decrypt(
         version: encrypted.version,
-        alias: encrypted.alias,
+        alias: encrypted.keyAlias,
         ciphertext: encrypted.ciphertext,
         nonce: encrypted.nonce,
         aad: encrypted.aad,
@@ -85,7 +85,7 @@ void main() {
       final encrypted = await facade.encrypt(alias: alias, plaintext: plaintext, aad: aad);
       final decrypted = await facade.decrypt(
         version: encrypted.version,
-        alias: encrypted.alias,
+        alias: encrypted.keyAlias,
         ciphertext: encrypted.ciphertext,
         nonce: encrypted.nonce,
         aad: encrypted.aad,
@@ -101,7 +101,7 @@ void main() {
       expect(
         () => facade.decrypt(
           version: encrypted.version,
-          alias: encrypted.alias,
+          alias: encrypted.keyAlias,
           ciphertext: encrypted.ciphertext,
           nonce: wrongNonce,
           aad: encrypted.aad,

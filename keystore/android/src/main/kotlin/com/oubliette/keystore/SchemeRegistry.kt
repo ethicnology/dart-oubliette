@@ -8,4 +8,9 @@ object SchemeRegistry {
   )
 
   fun schemeFor(version: Int): EncryptionScheme? = schemes[version]
+
+  /** Shut down all registered schemes. Called once during plugin detach. */
+  fun shutdownAll() {
+    schemes.values.forEach { it.shutdown() }
+  }
 }

@@ -58,11 +58,11 @@ class _CustomProfilePageState extends State<CustomProfilePage> {
               ? null
               : _promptSubtitleController.text,
         ),
-        darwin: const DarwinSecretAccess.evenLocked(),
+        darwin: const DarwinSecretAccess.evenLocked(secureEnclave: false),
       );
     }
     return Oubliette(
-      android: const AndroidSecretAccess.evenLocked(),
+      android: const AndroidSecretAccess.evenLocked(strongBox: false),
       darwin: DarwinSecretAccess.custom(
         prefix: _prefixController.text,
         service: _serviceController.text.isEmpty

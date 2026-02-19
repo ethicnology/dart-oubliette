@@ -32,6 +32,13 @@ final class Keystore {
     await _channel.invokeMethod<void>('deleteEntry', {'alias': alias});
   }
 
+  /// Encrypts [plaintext] using the key identified by [alias].
+  ///
+  /// Throws [PlatformException] with code:
+  /// - `"key_not_found"` if the alias does not exist in the Android Keystore.
+  /// - `"key_invalidated"` if the key was permanently invalidated
+  ///   (e.g. biometric enrollment changed).
+  /// - `"encrypt_failed"` for other encryption errors.
   Future<EncryptedPayload> encrypt({
     required String alias,
     required Uint8List plaintext,
@@ -57,6 +64,13 @@ final class Keystore {
     );
   }
 
+  /// Decrypts [ciphertext] using the key identified by [alias].
+  ///
+  /// Throws [PlatformException] with code:
+  /// - `"key_not_found"` if the alias does not exist in the Android Keystore.
+  /// - `"key_invalidated"` if the key was permanently invalidated
+  ///   (e.g. biometric enrollment changed).
+  /// - `"decrypt_failed"` for other decryption errors.
   Future<Uint8List> decrypt({
     required int version,
     required String alias,
@@ -122,7 +136,7 @@ final class Keystore {
       nonce: nonce,
       ciphertext: ciphertext,
       aad: aad,
-      alias: alias,
+      keyAlias: alias,
     );
   }
 }

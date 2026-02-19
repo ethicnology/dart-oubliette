@@ -59,7 +59,7 @@ class AndroidOubliette extends Oubliette {
     final ep = EncryptedPayloadMapper.fromJson(payload);
     return _keystore.decrypt(
       version: ep.version,
-      alias: ep.alias,
+      alias: ep.keyAlias,
       ciphertext: ep.ciphertext,
       nonce: ep.nonce,
       aad: ep.aad,

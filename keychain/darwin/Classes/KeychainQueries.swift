@@ -47,6 +47,10 @@ func keychainQuery(params: KeychainParams) -> [String: Any] {
   var query: [String: Any] = [
     kSecClass as String: kSecClassGenericPassword,
     kSecAttrAccount as String: params.alias,
+    // Deliberately disable iCloud Keychain sync. Secrets (e.g. mnemonic
+    // phrases) must remain device-local to prevent cloud-based exfiltration.
+    // This also ensures items are not silently migrated across devices during
+    // iCloud restore.
     kSecAttrSynchronizable as String: kCFBooleanFalse as Any
   ]
   if let service = params.service {

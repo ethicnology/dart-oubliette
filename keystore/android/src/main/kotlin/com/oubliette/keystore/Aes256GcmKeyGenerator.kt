@@ -18,7 +18,9 @@ object Aes256GcmKeyGenerator {
   ) {
     val keyStore = KeyStore.getInstance(keyStoreType)
     keyStore.load(null)
-    if (keyStore.containsAlias(alias)) return
+    if (keyStore.containsAlias(alias)) {
+      throw IllegalStateException("A key already exists for alias \"$alias\". Call deleteEntry() first.")
+    }
     val keyGenerator = KeyGenerator.getInstance(
       KeyProperties.KEY_ALGORITHM_AES,
       keyStoreType
