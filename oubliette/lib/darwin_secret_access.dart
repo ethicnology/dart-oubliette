@@ -7,8 +7,8 @@ export 'package:keychain/keychain.dart' show KeychainAccessibility;
 /// Use one of the named constructors to select a security profile:
 /// - [DarwinSecretAccess.evenLocked] — accessible even when the device is locked (after first unlock since boot).
 /// - [DarwinSecretAccess.onlyUnlocked] — accessible only while the device is unlocked.
-/// - [DarwinSecretAccess.biometric] — requires biometric/passcode auth; survives biometric enrollment changes.
-/// - [DarwinSecretAccess.biometricFatal] — requires biometric auth; invalidated if biometric enrollment changes. Item destroyed if passcode removed. No passcode fallback.
+/// - [DarwinSecretAccess.authenticated] — requires authentication (biometric/passcode); survives enrollment changes.
+/// - [DarwinSecretAccess.authenticatedFatal] — requires authentication; invalidated if biometric enrollment changes. Item destroyed if passcode removed.
 ///
 /// ### macOS keychain backends
 ///
@@ -26,11 +26,12 @@ export 'package:keychain/keychain.dart' show KeychainAccessibility;
 ///   with a Development Certificate and the `keychain-access-groups`
 ///   entitlement — without this you get `errSecMissingEntitlement` (-34018).
 ///
-/// The [biometric] and [biometricFatal] profiles set [useDataProtection]
-/// to `true` because they rely on Touch ID / Face ID which is only available
-/// through the Data Protection keychain. If you only need a macOS password
-/// prompt (no biometric), use [DarwinSecretAccess.custom] with
-/// `authenticationRequired: true` and `useDataProtection: false`.
+/// The [authenticated] and [authenticatedFatal] profiles set
+/// [useDataProtection] to `true` because they rely on Touch ID / Face ID
+/// which is only available through the Data Protection keychain. If you only
+/// need a macOS password prompt (no biometric), use
+/// [DarwinSecretAccess.custom] with `authenticationRequired: true` and
+/// `useDataProtection: false`.
 const _defaultPrefix = 'oubliette_';
 
 class DarwinSecretAccess {
@@ -118,14 +119,14 @@ class DarwinSecretAccess {
          accessGroup: null,
        );
 
-  /// Requires biometric or passcode authentication on every read.
+  /// Requires user authentication (biometric or passcode) on every read.
   /// Survives biometric enrollment changes (e.g. new fingerprint).
   ///
   /// Sets [useDataProtection] to `true`. On macOS this uses the Data
   /// Protection keychain which requires code signing and entitlements.
   /// For a password-only prompt on unsigned macOS apps, use
   /// [DarwinSecretAccess.custom] with `useDataProtection: false`.
-  const DarwinSecretAccess.biometric({
+  const DarwinSecretAccess.authenticated({
     String prefix = _defaultPrefix,
     String? service,
     required String promptReason,
@@ -142,7 +143,7 @@ class DarwinSecretAccess {
          accessGroup: null,
        );
 
-  /// Requires biometric authentication on every read. The item is
+  /// Requires user authentication on every read. The item is
   /// **invalidated** if biometric enrollment changes — the secret
   /// becomes irrecoverable. No passcode fallback.
   ///
@@ -152,7 +153,7 @@ class DarwinSecretAccess {
   ///
   /// Sets [useDataProtection] to `true`. On macOS this uses the Data
   /// Protection keychain which requires code signing and entitlements.
-  const DarwinSecretAccess.biometricFatal({
+  const DarwinSecretAccess.authenticatedFatal({
     String prefix = _defaultPrefix,
     String? service,
     required String promptReason,

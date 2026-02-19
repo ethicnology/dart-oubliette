@@ -95,16 +95,16 @@ void main() {
     });
   });
 
-  group('AndroidSecretAccess.biometric (requires fingerprint / PIN)', () {
+  group('AndroidSecretAccess.authenticated (requires fingerprint / PIN)', () {
     late Oubliette storage;
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.biometric(
-          prefix: 'test_bio_',
+        android: const AndroidSecretAccess.authenticated(
+          prefix: 'test_auth_',
           strongBox: false,
           promptTitle: 'Oubliette Test',
-          promptSubtitle: 'Authenticate for biometric test',
+          promptSubtitle: 'Authenticate for test',
         ),
         darwin: const DarwinSecretAccess.evenLocked(secureEnclave: false),
       );
@@ -113,28 +113,28 @@ void main() {
     testWidgets('store/useAndForget round-trip — authenticate when prompted', (
       tester,
     ) async {
-      const key = 'bio_key';
-      final value = Uint8List.fromList(utf8.encode('biometric secret'));
+      const key = 'auth_key';
+      final value = Uint8List.fromList(utf8.encode('authenticated secret'));
       await storage.store(key, value);
       final decoded = await storage.useAndForget<String>(
         key,
         (bytes) async => utf8.decode(bytes),
       );
-      expect(decoded, 'biometric secret');
+      expect(decoded, 'authenticated secret');
       await storage.trash(key);
     });
   });
 
-  group('AndroidSecretAccess.biometricFatal (requires fingerprint / PIN)', () {
+  group('AndroidSecretAccess.authenticatedFatal (requires fingerprint / PIN)', () {
     late Oubliette storage;
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.biometricFatal(
-          prefix: 'test_bio_strict_',
+        android: const AndroidSecretAccess.authenticatedFatal(
+          prefix: 'test_af_',
           strongBox: false,
           promptTitle: 'Oubliette Test',
-          promptSubtitle: 'Authenticate for biometricFatal test',
+          promptSubtitle: 'Authenticate for authenticatedFatal test',
         ),
         darwin: const DarwinSecretAccess.evenLocked(secureEnclave: false),
       );
@@ -143,14 +143,14 @@ void main() {
     testWidgets('store/useAndForget round-trip — authenticate when prompted', (
       tester,
     ) async {
-      const key = 'bio_strict_key';
-      final value = Uint8List.fromList(utf8.encode('strict biometric secret'));
+      const key = 'af_key';
+      final value = Uint8List.fromList(utf8.encode('fatal authenticated secret'));
       await storage.store(key, value);
       final decoded = await storage.useAndForget<String>(
         key,
         (bytes) async => utf8.decode(bytes),
       );
-      expect(decoded, 'strict biometric secret');
+      expect(decoded, 'fatal authenticated secret');
       await storage.trash(key);
     });
   });

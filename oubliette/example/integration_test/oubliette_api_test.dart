@@ -29,14 +29,14 @@ void main() {
       expect(missing, isNull);
     });
 
-    testWidgets('storeString/useStringAndForget/trash round-trip', (WidgetTester tester) async {
+    testWidgets('store/useAndForget/trash string-as-bytes round-trip', (WidgetTester tester) async {
       const key = 'api_test_string';
-      const value = 'secret string';
-      await storage.storeString(key, value);
-      final fetched = await storage.useStringAndForget<String>(key, (v) async => v);
-      expect(fetched, value);
+      final value = Uint8List.fromList(utf8.encode('secret string'));
+      await storage.store(key, value);
+      final fetched = await storage.useAndForget<String>(key, (bytes) async => utf8.decode(bytes));
+      expect(fetched, 'secret string');
       await storage.trash(key);
-      final missing = await storage.useStringAndForget<String>(key, (v) async => v);
+      final missing = await storage.useAndForget<String>(key, (bytes) async => utf8.decode(bytes));
       expect(missing, isNull);
     });
 

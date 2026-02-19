@@ -15,15 +15,15 @@ enum SecurityProfile {
     subtitle: 'Accessible only while the device is unlocked',
     icon: Icons.lock_outline,
   ),
-  biometric(
-    label: 'Biometric',
-    subtitle: 'Requires biometric/passcode — survives enrollment changes',
+  authenticated(
+    label: 'Authenticated',
+    subtitle: 'Requires authentication — survives enrollment changes',
     icon: Icons.fingerprint,
   ),
-  biometricFatal(
-    label: 'Biometric Fatal',
+  authenticatedFatal(
+    label: 'Authenticated Fatal',
     subtitle:
-        'Requires biometric — invalidated on enrollment change, destroyed if passcode removed',
+        'Requires authentication — invalidated on enrollment change, destroyed if passcode removed',
     icon: Icons.front_hand,
   );
 
@@ -55,30 +55,30 @@ enum SecurityProfile {
             secureEnclave: false,
           ),
         );
-      case SecurityProfile.biometric:
+      case SecurityProfile.authenticated:
         return Oubliette(
-          android: const AndroidSecretAccess.biometric(
-            prefix: 'demo_bio_',
+          android: const AndroidSecretAccess.authenticated(
+            prefix: 'demo_auth_',
             strongBox: false,
             promptTitle: 'Oubliette',
             promptSubtitle: 'Authenticate to access your secret',
           ),
-          darwin: const DarwinSecretAccess.biometric(
-            prefix: 'demo_bio_',
+          darwin: const DarwinSecretAccess.authenticated(
+            prefix: 'demo_auth_',
             promptReason: 'Authenticate to access your secret',
             secureEnclave: true,
           ),
         );
-      case SecurityProfile.biometricFatal:
+      case SecurityProfile.authenticatedFatal:
         return Oubliette(
-          android: const AndroidSecretAccess.biometricFatal(
-            prefix: 'demo_bs_',
+          android: const AndroidSecretAccess.authenticatedFatal(
+            prefix: 'demo_af_',
             strongBox: false,
             promptTitle: 'Oubliette',
             promptSubtitle: 'Authenticate to access your secret',
           ),
-          darwin: const DarwinSecretAccess.biometricFatal(
-            prefix: 'demo_bs_',
+          darwin: const DarwinSecretAccess.authenticatedFatal(
+            prefix: 'demo_af_',
             promptReason: 'Authenticate to access your secret',
             secureEnclave: true,
           ),

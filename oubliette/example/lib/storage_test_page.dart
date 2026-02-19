@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -44,7 +45,7 @@ class _StorageTestPageState extends State<StorageTestPage> {
     if (key.isEmpty) { _setMessage('Enter a key.', error: true); return; }
     setState(() { _loading = true; _message = null; _fetchedValue = null; });
     try {
-      await widget.storage.storeString(key, value);
+      await widget.storage.store(key, Uint8List.fromList(utf8.encode(value)));
       if (!mounted) return;
       _setMessage('Saved.');
     } on PlatformException catch (e) {
@@ -61,10 +62,10 @@ class _StorageTestPageState extends State<StorageTestPage> {
     if (key.isEmpty) { _setMessage('Enter a key.', error: true); return; }
     setState(() { _loading = true; _message = null; _fetchedValue = null; });
     try {
-      await widget.storage.useStringAndForget<void>(key, (value) async {
+      await widget.storage.useAndForget<void>(key, (bytes) async {
         if (!mounted) return;
         setState(() {
-          _fetchedValue = value;
+          _fetchedValue = utf8.decode(bytes);
           _message = null;
           _isError = false;
         });

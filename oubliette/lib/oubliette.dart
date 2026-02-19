@@ -6,7 +6,6 @@ import 'package:oubliette/darwin_secret_access.dart';
 
 export 'android_secret_access.dart';
 export 'darwin_secret_access.dart';
-export 'oubliette_string_extension.dart';
 
 abstract class Oubliette {
   factory Oubliette({

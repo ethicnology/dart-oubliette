@@ -3,8 +3,8 @@
 /// Use one of the named constructors to select a security profile:
 /// - [AndroidSecretAccess.evenLocked] — accessible even when the device is locked (after first unlock).
 /// - [AndroidSecretAccess.onlyUnlocked] — accessible only while the device is unlocked.
-/// - [AndroidSecretAccess.biometric] — requires biometric/credential auth; survives biometric enrollment changes.
-/// - [AndroidSecretAccess.biometricFatal] — requires biometric/credential auth; key is permanently invalidated if biometric enrollment changes.
+/// - [AndroidSecretAccess.authenticated] — requires authentication (biometric/PIN/pattern/password); survives enrollment changes.
+/// - [AndroidSecretAccess.authenticatedFatal] — requires authentication; key is permanently invalidated if biometric enrollment changes.
 ///
 /// Each named profile uses a dedicated, hardcoded Keystore alias.
 /// The [custom] constructor requires a unique alias that must not collide
@@ -12,14 +12,14 @@
 const _defaultPrefix = 'oubliette_';
 const _evenLockedKeyAlias = 'oubliette_even_locked';
 const _onlyUnlockedKeyAlias = 'oubliette_only_unlocked';
-const _biometricKeyAlias = 'oubliette_biometric';
-const _biometricFatalKeyAlias = 'oubliette_biometric_fatal';
+const _authenticatedKeyAlias = 'oubliette_authenticated';
+const _authenticatedFatalKeyAlias = 'oubliette_authenticated_fatal';
 
 const _reservedKeyAliases = [
   _evenLockedKeyAlias,
   _onlyUnlockedKeyAlias,
-  _biometricKeyAlias,
-  _biometricFatalKeyAlias,
+  _authenticatedKeyAlias,
+  _authenticatedFatalKeyAlias,
 ];
 
 class AndroidSecretAccess {
@@ -34,8 +34,8 @@ class AndroidSecretAccess {
   /// Alias under which the AES-256 key is stored in the Android Keystore.
   /// Maps to the first argument of `KeyGenParameterSpec.Builder(alias, …)`.
   ///
-  /// Each named profile (`evenLocked`, `onlyUnlocked`, `biometric`,
-  /// `biometricFatal`) uses a dedicated reserved alias. The [custom]
+  /// Each named profile (`evenLocked`, `onlyUnlocked`, `authenticated`,
+  /// `authenticatedFatal`) uses a dedicated reserved alias. The [custom]
   /// constructor rejects any alias that collides with a reserved one.
   final String keyAlias;
 
@@ -90,11 +90,11 @@ class AndroidSecretAccess {
   /// Requires API 24 (Android 7.0); enforced by this library on API 30+.
   final bool invalidatedByBiometricEnrollment;
 
-  /// Title displayed at the top of the `BiometricPrompt` dialog shown before
-  /// each encrypt/decrypt operation. Maps to
+  /// Title displayed at the top of the authentication prompt dialog shown
+  /// before each encrypt/decrypt operation. Maps to
   /// `BiometricPrompt.Builder.setTitle(promptTitle)`.
   ///
-  /// When `null`, the biometric prompt is skipped entirely and
+  /// When `null`, the authentication prompt is skipped entirely and
   /// [userAuthenticationRequired] is `false`. A non-null value enables
   /// per-operation authentication.
   ///
@@ -102,8 +102,8 @@ class AndroidSecretAccess {
   /// authentication is needed (e.g. `"Unlock your vault"`).
   final String? promptTitle;
 
-  /// Subtitle displayed below [promptTitle] in the `BiometricPrompt` dialog.
-  /// Maps to `BiometricPrompt.Builder.setSubtitle(promptSubtitle)`.
+  /// Subtitle displayed below [promptTitle] in the authentication prompt
+  /// dialog. Maps to `BiometricPrompt.Builder.setSubtitle(promptSubtitle)`.
   ///
   /// Provides secondary context or instructions (e.g. `"Use your fingerprint
   /// or PIN"`). Shown only when [promptTitle] is non-null. If `null`, the
@@ -154,20 +154,20 @@ class AndroidSecretAccess {
          promptSubtitle: null,
        );
 
-  /// Requires biometric or device credential authentication for every
-  /// encrypt/decrypt operation. The key survives biometric enrollment
-  /// changes (e.g. new fingerprint added).
+  /// Requires user authentication (biometric, PIN, pattern, or password)
+  /// for every encrypt/decrypt operation. The key survives biometric
+  /// enrollment changes (e.g. new fingerprint added).
   ///
   /// Requires `<uses-permission android:name="android.permission.USE_BIOMETRIC" />`
   /// in your app's `AndroidManifest.xml`. Only effective on API 30+ (Android 11).
-  const AndroidSecretAccess.biometric({
+  const AndroidSecretAccess.authenticated({
     String prefix = _defaultPrefix,
     required bool strongBox,
     required String promptTitle,
     required String promptSubtitle,
   }) : this._(
          prefix: prefix,
-         keyAlias: _biometricKeyAlias,
+         keyAlias: _authenticatedKeyAlias,
          strongBox: strongBox,
          unlockedDeviceRequired: true,
          userAuthenticationRequired: true,
@@ -176,20 +176,21 @@ class AndroidSecretAccess {
          promptSubtitle: promptSubtitle,
        );
 
-  /// Requires biometric or device credential authentication for every
-  /// encrypt/decrypt operation. The key is **permanently invalidated**
-  /// if biometric enrollment changes — the secret becomes irrecoverable.
+  /// Requires user authentication (biometric, PIN, pattern, or password)
+  /// for every encrypt/decrypt operation. The key is **permanently
+  /// invalidated** if biometric enrollment changes — the secret becomes
+  /// irrecoverable.
   ///
   /// Requires `<uses-permission android:name="android.permission.USE_BIOMETRIC" />`
   /// in your app's `AndroidManifest.xml`. Only effective on API 30+ (Android 11).
-  const AndroidSecretAccess.biometricFatal({
+  const AndroidSecretAccess.authenticatedFatal({
     String prefix = _defaultPrefix,
     required bool strongBox,
     required String promptTitle,
     required String promptSubtitle,
   }) : this._(
          prefix: prefix,
-         keyAlias: _biometricFatalKeyAlias,
+         keyAlias: _authenticatedFatalKeyAlias,
          strongBox: strongBox,
          unlockedDeviceRequired: true,
          userAuthenticationRequired: true,

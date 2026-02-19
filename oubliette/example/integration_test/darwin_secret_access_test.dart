@@ -97,16 +97,16 @@ void main() {
     });
   });
 
-  group('DarwinSecretAccess.biometric (requires Touch ID / Face ID)', () {
+  group('DarwinSecretAccess.authenticated (requires Touch ID / Face ID / passcode)', () {
     late Oubliette storage;
-    const prefix = 'test_bio_';
+    const prefix = 'test_auth_';
 
     setUp(() {
       storage = Oubliette(
         android: const AndroidSecretAccess.evenLocked(strongBox: false),
-        darwin: const DarwinSecretAccess.biometric(
+        darwin: const DarwinSecretAccess.authenticated(
           prefix: prefix,
-          promptReason: 'Authenticate for biometric test',
+          promptReason: 'Authenticate for test',
           secureEnclave: true,
         ),
       );
@@ -115,28 +115,28 @@ void main() {
     testWidgets('store/useAndForget round-trip — authenticate when prompted', (
       tester,
     ) async {
-      const key = 'bio_key';
-      final value = Uint8List.fromList(utf8.encode('biometric secret'));
+      const key = 'auth_key';
+      final value = Uint8List.fromList(utf8.encode('authenticated secret'));
       await storage.store(key, value);
       final decoded = await storage.useAndForget<String>(
         key,
         (bytes) async => utf8.decode(bytes),
       );
-      expect(decoded, 'biometric secret');
+      expect(decoded, 'authenticated secret');
       await storage.trash(key);
     });
   });
 
-  group('DarwinSecretAccess.biometricFatal (requires Touch ID / Face ID)', () {
+  group('DarwinSecretAccess.authenticatedFatal (requires Touch ID / Face ID / passcode)', () {
     late Oubliette storage;
-    const prefix = 'test_bio_strict_';
+    const prefix = 'test_af_';
 
     setUp(() {
       storage = Oubliette(
         android: const AndroidSecretAccess.evenLocked(strongBox: false),
-        darwin: const DarwinSecretAccess.biometricFatal(
+        darwin: const DarwinSecretAccess.authenticatedFatal(
           prefix: prefix,
-          promptReason: 'Authenticate for biometricFatal test',
+          promptReason: 'Authenticate for authenticatedFatal test',
           secureEnclave: true,
         ),
       );
@@ -145,14 +145,14 @@ void main() {
     testWidgets('store/useAndForget round-trip — authenticate when prompted', (
       tester,
     ) async {
-      const key = 'bio_strict_key';
-      final value = Uint8List.fromList(utf8.encode('strict biometric secret'));
+      const key = 'af_key';
+      final value = Uint8List.fromList(utf8.encode('fatal authenticated secret'));
       await storage.store(key, value);
       final decoded = await storage.useAndForget<String>(
         key,
         (bytes) async => utf8.decode(bytes),
       );
-      expect(decoded, 'strict biometric secret');
+      expect(decoded, 'fatal authenticated secret');
       await storage.trash(key);
     });
   });

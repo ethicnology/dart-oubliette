@@ -16,6 +16,9 @@ An [oubliette](https://en.wikipedia.org/wiki/Oubliette) is a secret dungeon whos
 ## Quick start
 
 ```dart
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:oubliette/oubliette.dart';
 
 final storage = Oubliette(
@@ -23,8 +26,9 @@ final storage = Oubliette(
   darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
 );
 
-await storage.storeString('mnemonic', 'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong');
-final mnemonic = await storage.useStringAndForget<String>('mnemonic', (v) async => v);
+final mnemonic = Uint8List.fromList(utf8.encode('zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong'));
+await storage.store('mnemonic', mnemonic);
+final phrase = await storage.useAndForget<String>('mnemonic', (bytes) async => utf8.decode(bytes));
 await storage.trash('mnemonic');
 ```
 
@@ -38,7 +42,7 @@ await storage.trash('mnemonic');
 
 ### Bytes, Not Strings
 
-The API operates on `Uint8List`. Encoding is the caller's concern. String helpers (`storeString`, `useStringAndForget`) exist as convenience, not as the primary interface.
+The API operates exclusively on `Uint8List`. Encoding is the caller's concern. Strings are immutable in Dart and cannot be zeroed from memory, so there are no string convenience methods — callers must encode to bytes themselves.
 
 ### Use-and-Forget, Not Read
 
@@ -48,14 +52,16 @@ There is no `read()`. Consumers must use `useAndForget(key, action)`, which retr
 
 `store(key, value)` throws if the key already exists. `trash(key)` then `store(key, newValue)`. This eliminates race conditions around partial updates and avoids `SecItemUpdate` silently changing accessibility attributes.
 
+`trash(key)` removes only the stored data — not the underlying cryptographic key. On Android, the encrypted payload is deleted from `SharedPreferences` but the Keystore key is retained. On Darwin, the Keychain item is deleted but the Secure Enclave key pair (when enabled) is retained. On both platforms the cryptographic key is shared across all secrets in a given security profile — deleting it would break every other secret encrypted under the same profile.
+
 ### Security Profiles, Not Flags
 
 | Profile | Meaning |
 |---------|---------|
 | `evenLocked` | Accessible even when the device is locked (after first unlock). |
 | `onlyUnlocked` | Accessible only while the device is unlocked. |
-| `biometric` | Requires biometric or credential authentication. Survives enrollment changes. |
-| `biometricFatal` | Requires biometric authentication. Permanently invalidated if enrollment changes. |
+| `authenticated` | Requires user authentication (biometric, PIN, pattern, or password). Survives enrollment changes. |
+| `authenticatedFatal` | Requires user authentication. Permanently invalidated if biometric enrollment changes. |
 | `custom` | Full manual control for advanced use cases. |
 
 Hardware-backing (`strongBox` on Android, `secureEnclave` on Darwin) is always an explicit, required choice — never a hidden default.
@@ -86,7 +92,7 @@ On Darwin, `kSecAttrSynchronizable` is explicitly set to `false` on every keycha
 
 ### macOS: Two Keychains, Explicit Choice
 
-Legacy file-based keychain (`useDataProtection = false`) works without code signing. Data Protection keychain (`useDataProtection = true`) enables Touch ID/Face ID but requires entitlements. The `biometric`/`biometricFatal` profiles set Data Protection automatically.
+Legacy file-based keychain (`useDataProtection = false`) works without code signing. Data Protection keychain (`useDataProtection = true`) enables Touch ID/Face ID but requires entitlements. The `authenticated`/`authenticatedFatal` profiles set Data Protection automatically.
 
 ### Memory Hygiene at Every Layer
 
