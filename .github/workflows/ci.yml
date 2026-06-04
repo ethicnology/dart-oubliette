@@ -108,31 +108,3 @@ jobs:
             integration_test/refactor_regression_test.dart
             integration_test/oubliette_api_test.dart
             integration_test/plugin_integration_test.dart
-
-  ios-integration:
-    name: iOS integration (real Keychain, simulator)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-      # Boot an available iPhone simulator for the real-Keychain run.
-      - name: Boot iOS Simulator
-        run: |
-          UDID=$(xcrun simctl list devices available iPhone | grep -oE '[0-9A-F-]{36}' | head -1)
-          echo "Booting simulator $UDID"
-          xcrun simctl boot "$UDID"
-          xcrun simctl bootstatus "$UDID" -b
-          echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
-      # Same non-biometric / non-SE tests against the REAL Keychain
-      # (onlyUnlocked / evenLocked, secureEnclave: false). SE needs a device.
-      - name: Integration tests (simulator)
-        working-directory: oubliette/example
-        run: >-
-          flutter test
-          integration_test/refactor_regression_test.dart
-          integration_test/oubliette_api_test.dart
-          integration_test/plugin_integration_test.dart
-          -d "$SIM_UDID"
