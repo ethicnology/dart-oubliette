@@ -14,7 +14,7 @@ jobs:
     name: Analyze & Dart tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -33,8 +33,8 @@ jobs:
     name: Android build (compiles plugin Kotlin)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -54,7 +54,7 @@ jobs:
     name: Darwin build + Swift unit tests
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -72,3 +72,67 @@ jobs:
             -scheme Runner \
             -destination 'platform=macOS' \
           || echo "::warning::RunnerTests require a configured scheme; run locally if this step is unavailable."
+
+  android-integration:
+    name: Android integration (real Keystore, emulator)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      # KVM is required for the hardware-accelerated emulator to boot.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # Exercises the REAL AndroidKeyStore (not mocks): cross-profile slot
+      # isolation, lazy-ensure / idempotent init, StrongBox fail-closed, and
+      # PayloadTamperException. Biometric and Secure-Enclave paths need an
+      # enrolled credential and stay in RELEASE_CHECKLIST (device-only).
+      - name: Integration tests (emulator)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          working-directory: oubliette/example
+          script: >-
+            flutter test
+            integration_test/refactor_regression_test.dart
+            integration_test/oubliette_api_test.dart
+            integration_test/plugin_integration_test.dart
+
+  ios-integration:
+    name: iOS integration (real Keychain, simulator)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      # Boot an available iPhone simulator for the real-Keychain run.
+      - name: Boot iOS Simulator
+        run: |
+          UDID=$(xcrun simctl list devices available iPhone | grep -oE '[0-9A-F-]{36}' | head -1)
+          echo "Booting simulator $UDID"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
+      # Same non-biometric / non-SE tests against the REAL Keychain
+      # (onlyUnlocked / evenLocked, secureEnclave: false). SE needs a device.
+      - name: Integration tests (simulator)
+        working-directory: oubliette/example
+        run: >-
+          flutter test
+          integration_test/refactor_regression_test.dart
+          integration_test/oubliette_api_test.dart
+          integration_test/plugin_integration_test.dart
+          -d "$SIM_UDID"

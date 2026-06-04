@@ -5,6 +5,19 @@ let serialQueue = DispatchQueue(label: "com.oubliette.keychain", qos: .userIniti
 
 extension Data {
   /// Best-effort in-place zeroing of the backing bytes.
+  ///
+  /// IMPORTANT: this only scrubs the secret when the receiver *uniquely* owns
+  /// its storage. `withUnsafeMutableBytes` is `mutating`, so on a `Data` whose
+  /// buffer is shared, Swift copy-on-write hands it a fresh copy and zeroes
+  /// *that* — leaving the shared original intact. A buffer becomes shared the
+  /// moment it is bridged into a query dictionary (`kSecValueData`) or into a
+  /// `FlutterStandardTypedData` (whose `initWithData:` does `[data copy]`, a
+  /// retain for immutable `NSData`). So wiping *after* handing the bytes to
+  /// SecItemAdd or to Flutter is effectively a no-op for the copy that
+  /// survives. Wiping a not-yet-shared, uniquely-owned buffer (e.g. an
+  /// intermediate before it reaches a query) does work. This matches the
+  /// "zeroing is best-effort; method-channel copies persist" stance in
+  /// SECURITY.md — do not treat post-handoff wipes as a guarantee.
   mutating func wipe() {
     withUnsafeMutableBytes { ptr in
       if let base = ptr.baseAddress {
