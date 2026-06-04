@@ -49,14 +49,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.8"
-  dart_mappable:
-    dependency: transitive
-    description:
-      name: dart_mappable
-      sha256: "0e219930c9f7b9e0f14ae7c1de931c401875110fd5c67975b6b9492a6d3a531b"
-      url: "https://pub.dev"
-    source: hosted
-    version: "4.6.1"
   fake_async:
     dependency: transitive
     description:
@@ -125,14 +117,14 @@ packages:
       path: "../../keychain"
       relative: true
     source: path
-    version: "0.0.1"
+    version: "1.0.0"
   keystore:
     dependency: "direct dev"
     description:
       path: "../../keystore"
       relative: true
     source: path
-    version: "0.0.1"
+    version: "1.0.0"
   leak_tracker:
     dependency: transitive
     description:
@@ -195,7 +187,7 @@ packages:
       path: ".."
       relative: true
     source: path
-    version: "0.0.1"
+    version: "1.0.0"
   path:
     dependency: transitive
     description:
@@ -253,7 +245,7 @@ packages:
     source: hosted
     version: "5.0.5"
   shared_preferences:
-    dependency: transitive
+    dependency: "direct dev"
     description:
       name: shared_preferences
       sha256: "2939ae520c9024cb197fc20dee269cd8cdbf564c8b5746374ec6cacdc5169e64"
@@ -369,14 +361,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.7"
-  type_plus:
-    dependency: transitive
-    description:
-      name: type_plus
-      sha256: d5d1019471f0d38b91603adb9b5fd4ce7ab903c879d2fbf1a3f80a630a03fcc9
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.1.1"
   vector_math:
     dependency: transitive
     description:

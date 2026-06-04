@@ -1,5 +1,5 @@
 group = "com.oubliette.keystore"
-version = "1.0-SNAPSHOT"
+version = "1.0.0"
 
 buildscript {
     ext.kotlin_version = "2.2.20"
@@ -44,7 +44,10 @@ android {
     }
 
     defaultConfig {
-        minSdk = 29
+        // API 30 (Android 11) floor: required so setUserAuthenticationParameters
+        // is always available. On API 29 the authenticated profiles would
+        // silently generate a key with no user-auth requirement.
+        minSdk = 30
     }
 
     dependencies {

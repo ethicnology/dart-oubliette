@@ -6,6 +6,7 @@ import 'package:oubliette/darwin_secret_access.dart';
 
 export 'android_secret_access.dart';
 export 'darwin_secret_access.dart';
+export 'src/errors.dart' show PayloadTamperException;
 
 abstract class Oubliette {
   factory Oubliette({

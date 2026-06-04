@@ -6,14 +6,21 @@
 /// - [AndroidSecretAccess.authenticated] — requires authentication (biometric/PIN/pattern/password); survives enrollment changes.
 /// - [AndroidSecretAccess.authenticatedFatal] — requires authentication; key is permanently invalidated if biometric enrollment changes.
 ///
-/// Each named profile uses a dedicated, hardcoded Keystore alias.
-/// The [custom] constructor requires a unique alias that must not collide
-/// with any reserved profile alias.
-const _defaultPrefix = 'oubliette_';
+/// Each named profile uses a dedicated, hardcoded Keystore alias **and a
+/// dedicated default storage prefix**. The prefix namespaces the
+/// SharedPreferences slot (`prefix + key`) so the same logical key stored
+/// under two different profiles never collides — slot isolation is a security
+/// boundary, not a convenience. The [custom] constructor requires a unique
+/// alias and prefix that must not collide with any reserved profile value.
 const _evenLockedKeyAlias = 'oubliette_even_locked';
 const _onlyUnlockedKeyAlias = 'oubliette_only_unlocked';
 const _authenticatedKeyAlias = 'oubliette_authenticated';
 const _authenticatedFatalKeyAlias = 'oubliette_authenticated_fatal';
+
+const _evenLockedPrefix = 'oubliette_even_locked_';
+const _onlyUnlockedPrefix = 'oubliette_only_unlocked_';
+const _authenticatedPrefix = 'oubliette_authenticated_';
+const _authenticatedFatalPrefix = 'oubliette_authenticated_fatal_';
 
 const _reservedKeyAliases = [
   _evenLockedKeyAlias,
@@ -22,13 +29,26 @@ const _reservedKeyAliases = [
   _authenticatedFatalKeyAlias,
 ];
 
+const _reservedPrefixes = [
+  _evenLockedPrefix,
+  _onlyUnlockedPrefix,
+  _authenticatedPrefix,
+  _authenticatedFatalPrefix,
+];
+
 class AndroidSecretAccess {
   /// Prefix prepended to every SharedPreferences key used to store the
-  /// encrypted payload. Also used as AAD (Additional Authenticated Data)
-  /// in the AES-GCM cipher, binding the ciphertext to its storage slot.
+  /// encrypted payload. The resulting slot key (`prefix + key`) is also used
+  /// as the AES-GCM AAD (Additional Authenticated Data).
   ///
-  /// Example: `prefix = 'oubliette_'` + `key = 'token'` → stored under
-  /// `'oubliette_token'`.
+  /// On fetch the AAD is **recomputed** from `prefix + key` and compared
+  /// against the value embedded in the stored blob; a mismatch throws
+  /// [PayloadTamperException]. The AAD is therefore verify-only — it is never
+  /// read back from disk to decide how to decrypt.
+  ///
+  /// Each named profile defaults to a distinct prefix so the same logical key
+  /// cannot collide across security domains. Example:
+  /// `evenLocked` + `key = 'token'` → `'oubliette_even_locked_token'`.
   final String prefix;
 
   /// Alias under which the AES-256 key is stored in the Android Keystore.
@@ -44,12 +64,13 @@ class AndroidSecretAccess {
   /// via `KeyGenParameterSpec.Builder.setIsStrongBoxBacked(true)`.
   ///
   /// StrongBox provides stronger isolation than a TEE but may not be present
-  /// on all devices. Availability is checked at runtime via
-  /// `PackageManager.FEATURE_STRONGBOX_KEYSTORE`; if the feature is absent
-  /// the plugin silently falls back to the TEE-backed Keystore.
+  /// on all devices. This is **fail-closed**: if `strongBox` is `true` and the
+  /// device lacks `PackageManager.FEATURE_STRONGBOX_KEYSTORE` (or generation
+  /// throws `StrongBoxUnavailableException`), key generation fails with
+  /// `strongbox_unavailable` — it never silently falls back to the TEE.
   ///
-  /// Use `Keystore().isStrongBoxAvailable()` to decide whether to advertise
-  /// the stronger guarantee in your UI.
+  /// Callers willing to accept a TEE-backed key must opt in explicitly, e.g.
+  /// `strongBox: await Keystore().isStrongBoxAvailable()`.
   final bool strongBox;
 
   /// When `true`, the key is only usable while the device is unlocked,
@@ -69,8 +90,8 @@ class AndroidSecretAccess {
   ///
   /// Implemented via `KeyGenParameterSpec.Builder.setUserAuthenticationRequired(true)`
   /// combined with `setUserAuthenticationParameters(0, AUTH_DEVICE_CREDENTIAL |
-  /// AUTH_BIOMETRIC_STRONG)`. Only enforced on API 30+ (Android 11); on
-  /// earlier API levels the key is accessible without authentication.
+  /// AUTH_BIOMETRIC_STRONG)`. Always enforced — the `minSdk` floor is API 30
+  /// (Android 11), so the requirement can never be silently dropped.
   ///
   /// For the [custom] constructor this is derived automatically:
   /// `userAuthenticationRequired = promptTitle != null`.
@@ -87,7 +108,6 @@ class AndroidSecretAccess {
   /// the secret must be re-entered by the user.
   ///
   /// Only meaningful when [userAuthenticationRequired] is `true`.
-  /// Requires API 24 (Android 7.0); enforced by this library on API 30+.
   final bool invalidatedByBiometricEnrollment;
 
   /// Title displayed at the top of the authentication prompt dialog shown
@@ -125,7 +145,7 @@ class AndroidSecretAccess {
   /// unlocked at least once. Maps to `setUnlockedDeviceRequired(false)`
   /// on the `KeyGenParameterSpec`.
   const AndroidSecretAccess.evenLocked({
-    String prefix = _defaultPrefix,
+    String prefix = _evenLockedPrefix,
     required bool strongBox,
   }) : this._(
          prefix: prefix,
@@ -141,7 +161,7 @@ class AndroidSecretAccess {
   /// Accessible only while the device is unlocked. Maps to
   /// `setUnlockedDeviceRequired(true)` on the `KeyGenParameterSpec`.
   const AndroidSecretAccess.onlyUnlocked({
-    String prefix = _defaultPrefix,
+    String prefix = _onlyUnlockedPrefix,
     required bool strongBox,
   }) : this._(
          prefix: prefix,
@@ -159,9 +179,9 @@ class AndroidSecretAccess {
   /// enrollment changes (e.g. new fingerprint added).
   ///
   /// Requires `<uses-permission android:name="android.permission.USE_BIOMETRIC" />`
-  /// in your app's `AndroidManifest.xml`. Only effective on API 30+ (Android 11).
+  /// in your app's `AndroidManifest.xml`.
   const AndroidSecretAccess.authenticated({
-    String prefix = _defaultPrefix,
+    String prefix = _authenticatedPrefix,
     required bool strongBox,
     required String promptTitle,
     required String promptSubtitle,
@@ -182,9 +202,9 @@ class AndroidSecretAccess {
   /// irrecoverable.
   ///
   /// Requires `<uses-permission android:name="android.permission.USE_BIOMETRIC" />`
-  /// in your app's `AndroidManifest.xml`. Only effective on API 30+ (Android 11).
+  /// in your app's `AndroidManifest.xml`.
   const AndroidSecretAccess.authenticatedFatal({
-    String prefix = _defaultPrefix,
+    String prefix = _authenticatedFatalPrefix,
     required bool strongBox,
     required String promptTitle,
     required String promptSubtitle,
@@ -199,7 +219,9 @@ class AndroidSecretAccess {
          promptSubtitle: promptSubtitle,
        );
 
-  /// Full manual control. [keyAlias] must not collide with reserved aliases.
+  /// Full manual control. [keyAlias] and [prefix] must not collide with the
+  /// values reserved by the named profiles — distinct security domains require
+  /// distinct slots and key material.
   AndroidSecretAccess.custom({
     required this.prefix,
     required this.keyAlias,
@@ -212,6 +234,11 @@ class AndroidSecretAccess {
     if (_reservedKeyAliases.contains(keyAlias)) {
       throw ArgumentError(
         'keyAlias "$keyAlias" is reserved for a named profile. Use a unique alias.',
+      );
+    }
+    if (_reservedPrefixes.contains(prefix)) {
+      throw ArgumentError(
+        'prefix "$prefix" is reserved for a named profile. Use a unique prefix.',
       );
     }
   }

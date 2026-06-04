@@ -116,14 +116,23 @@ final class Keychain {
     );
   }
 
-  /// Ensures the Secure Enclave key pair for this config's [service] exists,
-  /// generating it if needed.
+  /// Ensures the Secure Enclave key pair for this config exists, generating it
+  /// if needed.
+  ///
+  /// The SE key identity is scoped by service, accessibility, and access group
+  /// — all three are sent so the native tag matches the one used on
+  /// store/fetch, and so a profile change regenerates the key rather than
+  /// silently reusing an old policy.
   ///
   /// Returns `true` if the key already existed, `false` if it was just created.
   Future<bool> ensureEnclaveKeyPair() async {
     final result = await _channel.invokeMethod<bool>(
       'ensureEnclaveKeyPair',
-      {if (config.service != null) 'service': config.service},
+      {
+        if (config.service != null) 'service': config.service,
+        'accessibility': config.accessibility.value,
+        if (config.accessGroup != null) 'accessGroup': config.accessGroup,
+      },
     );
     return result ?? false;
   }

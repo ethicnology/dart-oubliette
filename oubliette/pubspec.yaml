@@ -1,8 +1,9 @@
 name: oubliette
 description: "Cross-platform secure storage for Flutter (Android Keystore, iOS/macOS Keychain)."
-version: 0.0.1
+version: 1.0.0
 publish_to: 'none'
-homepage:
+homepage: https://github.com/ethicnology/dart-oubliette
+repository: https://github.com/ethicnology/dart-oubliette
 
 environment:
   sdk: ^3.10.4

@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
+import android.security.keystore.StrongBoxUnavailableException
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -22,12 +24,25 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     internal var activity: Activity? = null
 
     private val keyStoreType = "AndroidKeyStore"
-    private val cryptoThread = HandlerThread("oubliette-crypto").also { it.start() }
-    private val cryptoHandler = Handler(cryptoThread.looper)
+
+    /**
+     * Background thread for keymaster Binder calls (Cipher.init, Cipher.doFinal,
+     * key gen). Created in [onAttachedToEngine] and torn down in
+     * [onDetachedFromEngine], then recreated on a subsequent attach — so a
+     * re-attached plugin instance never posts to a dead looper (which would
+     * silently drop the work and hang the awaiting Dart Future).
+     */
+    private lateinit var cryptoThread: HandlerThread
+    internal lateinit var cryptoHandler: Handler
+
+    /** Posts MethodChannel.Result callbacks back onto the platform thread. */
+    internal val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "keystore")
         appContext = flutterPluginBinding.applicationContext
+        cryptoThread = HandlerThread("oubliette-crypto").also { it.start() }
+        cryptoHandler = Handler(cryptoThread.looper)
         channel.setMethodCallHandler(this)
     }
 
@@ -89,13 +104,32 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 result.error("bad_args", "Missing unlockedDeviceRequired.", null)
                 return
             }
-        val wantsStrongBox = call.argument<Boolean>("strongBox") ?: true
-        val useStrongBox = wantsStrongBox &&
-                appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
+        val strongBox = call.argument<Boolean>("strongBox")
+            ?: run {
+                result.error("bad_args", "Missing strongBox.", null)
+                return
+            }
         val userAuthenticationRequired = call.argument<Boolean>("userAuthenticationRequired") ?: false
-        val invalidatedByBiometricEnrollment = call.argument<Boolean>("invalidatedByBiometricEnrollment") ?: true
+        val invalidatedByBiometricEnrollment = call.argument<Boolean>("invalidatedByBiometricEnrollment")
+            ?: run {
+                result.error("bad_args", "Missing invalidatedByBiometricEnrollment.", null)
+                return
+            }
         cryptoHandler.post {
             try {
+                // Fail closed: requesting StrongBox must yield StrongBox or a
+                // clear error — never a silent TEE downgrade. The feature flag
+                // is a pre-flight check; key generation below is the source of
+                // truth and may still throw StrongBoxUnavailableException.
+                if (strongBox &&
+                    !appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)) {
+                    result.error(
+                        "strongbox_unavailable",
+                        "StrongBox requested but FEATURE_STRONGBOX_KEYSTORE is absent on this device.",
+                        null
+                    )
+                    return@post
+                }
                 val scheme = SchemeRegistry.schemeFor(version)
                 if (scheme == null) {
                     result.error("generate_key_failed", "Unsupported version.", null)
@@ -104,11 +138,13 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 scheme.generateKey(
                     alias,
                     unlockedDeviceRequired,
-                    useStrongBox,
+                    strongBox,
                     userAuthenticationRequired,
                     invalidatedByBiometricEnrollment
                 )
                 result.success(null)
+            } catch (e: StrongBoxUnavailableException) {
+                result.error("strongbox_unavailable", e.message ?: e.toString(), null)
             } catch (e: IllegalStateException) {
                 result.error("already_exists", e.message ?: e.toString(), null)
             } catch (e: Exception) {
@@ -142,6 +178,7 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         val aad = call.argument<String>("aad")
         val alias = call.argument<String>("alias")
         if (plaintext == null || aad == null || alias == null) {
+            plaintext?.fill(0)
             result.error("bad_args", "Missing plaintext, aad, or alias.", null)
             return
         }
@@ -184,21 +221,23 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             return
         }
         cryptoHandler.post {
+            var plaintext: ByteArray? = null
             try {
                 val scheme = SchemeRegistry.schemeFor(version)
                 if (scheme == null) {
                     result.error("decrypt_failed", "Unsupported version.", null)
                     return@post
                 }
-                val plaintext = scheme.decrypt(alias, ciphertext, nonce, aad)
+                plaintext = scheme.decrypt(alias, ciphertext, nonce, aad)
                 result.success(plaintext.copyOf())
-                plaintext.fill(0)
             } catch (e: KeyNotFoundException) {
                 result.error("key_not_found", e.message ?: e.toString(), null)
             } catch (e: KeyInvalidatedException) {
                 result.error("key_invalidated", e.message ?: e.toString(), null)
             } catch (e: Exception) {
                 result.error("decrypt_failed", e.message ?: e.toString(), null)
+            } finally {
+                plaintext?.fill(0)
             }
         }
     }
@@ -223,7 +262,9 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
-        SchemeRegistry.shutdownAll()
-        cryptoThread.quitSafely()
+        // Only the per-instance HandlerThread is torn down — it is recreated on
+        // the next attach. The schemes are stateless and process-static, so
+        // there is nothing else to shut down (and nothing to leave dead).
+        if (::cryptoThread.isInitialized) cryptoThread.quitSafely()
     }
 }

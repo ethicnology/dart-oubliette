@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'keychain'
-  s.version          = '0.0.1'
+  s.version          = '1.0.0'
   s.summary          = 'Flutter plugin exposing the iOS/macOS Keychain (SecItem API).'
   s.description      = <<-DESC
 Flutter plugin that provides typed access to the iOS and macOS Keychain via the Security framework.

@@ -1,6 +1,5 @@
 package com.oubliette.keystore
 
-import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.security.KeyStore
@@ -37,7 +36,11 @@ object Aes256GcmKeyGenerator {
     if (strongBox) {
       specBuilder.setIsStrongBoxBacked(true)
     }
-    if (userAuthenticationRequired && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+    // minSdk is 30 (Android 11), so setUserAuthenticationParameters is always
+    // available — no SDK gate, no silent downgrade of the authenticated
+    // profiles. setUserAuthenticationRequired (API 23) and
+    // setInvalidatedByBiometricEnrollment (API 24) are likewise unconditional.
+    if (userAuthenticationRequired) {
       specBuilder.setUserAuthenticationRequired(true)
       specBuilder.setInvalidatedByBiometricEnrollment(invalidatedByBiometricEnrollment)
       specBuilder.setUserAuthenticationParameters(

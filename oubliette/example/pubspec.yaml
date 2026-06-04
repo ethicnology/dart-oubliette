@@ -38,6 +38,9 @@ dev_dependencies:
     sdk: flutter
   flutter_test:
     sdk: flutter
+  # Used by integration_test/refactor_regression_test.dart to tamper with the
+  # on-disk blob and verify the decrypt trust boundary.
+  shared_preferences: ^2.5.4
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is

@@ -2,6 +2,17 @@ import Security
 
 let serialQueue = DispatchQueue(label: "com.oubliette.keychain", qos: .userInitiated)
 
+extension Data {
+  /// Best-effort in-place zeroing of the backing bytes.
+  mutating func wipe() {
+    withUnsafeMutableBytes { ptr in
+      if let base = ptr.baseAddress {
+        base.initializeMemory(as: UInt8.self, repeating: 0, count: ptr.count)
+      }
+    }
+  }
+}
+
 struct KeychainParams {
   let alias: String
   let service: String?
@@ -12,6 +23,11 @@ struct KeychainParams {
   let authenticationPrompt: String?
   let secureEnclave: Bool
   let accessGroup: String?
+
+  /// The subset of scoping inputs that identify the Secure Enclave key.
+  var enclaveParams: EnclaveParams {
+    EnclaveParams(service: service, accessibility: accessibility, accessGroup: accessGroup)
+  }
 
   static func from(_ args: [String: Any]) -> KeychainParams? {
     guard let alias = args["alias"] as? String else { return nil }
@@ -99,24 +115,38 @@ func createAccessControl(params: KeychainParams) -> SecAccessControl? {
 }
 
 func secItemAdd(params: KeychainParams, data: Data) -> OSStatus {
-  var dataToStore = data
+  // Own a mutable copy so we can zero it afterwards without mutating the
+  // caller-owned (and possibly immutable) FlutterStandardTypedData buffer.
+  var dataToStore = Data(data)
   if params.secureEnclave {
-    guard let (_, publicKey) = ensureEnclaveKeyPair(service: params.service) else {
+    guard let (_, publicKey) = ensureEnclaveKeyPair(params: params.enclaveParams) else {
+      dataToStore.wipe()
       return errSecParam
     }
-    guard let encrypted = enclaveEncrypt(data: data, publicKey: publicKey) else {
+    guard let encrypted = enclaveEncrypt(data: dataToStore, publicKey: publicKey) else {
+      dataToStore.wipe()
       return errSecParam
     }
+    dataToStore.wipe()        // drop the plaintext copy; store ciphertext
     dataToStore = encrypted
   }
   var query = keychainQuery(params: params)
-  if params.authenticationRequired, let accessControl = createAccessControl(params: params) {
+  if params.authenticationRequired {
+    // Fail closed: auth was requested but the access control could not be
+    // created. Never fall through to a plain kSecAttrAccessible item that the
+    // caller believes is auth-gated.
+    guard let accessControl = createAccessControl(params: params) else {
+      dataToStore.wipe()
+      return errSecParam
+    }
     query[kSecAttrAccessControl as String] = accessControl
   } else {
     query[kSecAttrAccessible as String] = params.accessibility
   }
   query[kSecValueData as String] = dataToStore
-  return Security.SecItemAdd(query as CFDictionary, nil)
+  let status = Security.SecItemAdd(query as CFDictionary, nil)
+  dataToStore.wipe()
+  return status
 }
 
 func secItemDelete(params: KeychainParams) -> OSStatus {

@@ -4,9 +4,7 @@ import android.security.keystore.KeyPermanentlyInvalidatedException
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import java.security.ProviderException
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicReference
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
@@ -21,18 +19,36 @@ class V1Scheme(
 
   override val version: Int get() = 1
 
-  private val timeoutExecutor = Executors.newSingleThreadExecutor()
-
+  /**
+   * Runs [block] (an AndroidKeyStore `Cipher.init`, which makes a Binder call
+   * to keymaster that can hang on a busy/wedged secure element) on a throwaway
+   * daemon thread and joins with a timeout.
+   *
+   * Deliberately stateless: there is no shared, shutdownable executor. A hung
+   * hardware call leaks one daemon thread that dies with the process, but can
+   * never wedge a future operation (the old single-thread executor would stay
+   * stuck) nor be left permanently dead after a plugin re-attach (the old
+   * executor was shut down on detach and never rebuilt).
+   */
   private fun initCipherWithTimeout(block: () -> Unit) {
-    val future = timeoutExecutor.submit(block)
-    try {
-      future.get(cipherInitTimeoutSeconds, TimeUnit.SECONDS)
-    } catch (e: TimeoutException) {
-      future.cancel(true)
-      throw ProviderException("timed out after ${cipherInitTimeoutSeconds}s — hardware backend may be busy")
-    } catch (e: java.util.concurrent.ExecutionException) {
-      throw e.cause ?: e
+    val error = AtomicReference<Throwable?>()
+    val worker = Thread {
+      try {
+        block()
+      } catch (t: Throwable) {
+        error.set(t)
+      }
+    }.apply {
+      isDaemon = true
+      name = "oubliette-cipher-init"
+      start()
     }
+    worker.join(cipherInitTimeoutSeconds * 1000)
+    if (worker.isAlive) {
+      worker.interrupt() // best effort; a native binder call may ignore it
+      throw ProviderException("timed out after ${cipherInitTimeoutSeconds}s — hardware backend may be busy")
+    }
+    error.get()?.let { throw it }
   }
 
   override fun generateKey(alias: String, unlockedDeviceRequired: Boolean, strongBox: Boolean, userAuthenticationRequired: Boolean, invalidatedByBiometricEnrollment: Boolean) {
@@ -99,10 +115,6 @@ class V1Scheme(
   override fun decryptWithCipher(cipher: Cipher, ciphertext: ByteArray, aad: String): ByteArray {
     cipher.updateAAD(aad.toByteArray(StandardCharsets.UTF_8))
     return cipher.doFinal(ciphertext)
-  }
-
-  override fun shutdown() {
-    timeoutExecutor.shutdownNow()
   }
 
   private fun getKey(alias: String): SecretKey? {

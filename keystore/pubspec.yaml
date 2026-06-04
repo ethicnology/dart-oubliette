@@ -1,8 +1,9 @@
 name: keystore
 description: Flutter plugin exposing the Android Keystore (AES-256-GCM) via a typed Dart facade.
-version: 0.0.1
+version: 1.0.0
 publish_to: 'none'
-homepage:
+homepage: https://github.com/ethicnology/dart-oubliette
+repository: https://github.com/ethicnology/dart-oubliette
 
 environment:
   sdk: ^3.10.4
@@ -11,11 +12,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  dart_mappable: ^4.6.1
 
 dev_dependencies:
-  build_runner: ^2.4.13
-  dart_mappable_builder: ^4.6.1
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0

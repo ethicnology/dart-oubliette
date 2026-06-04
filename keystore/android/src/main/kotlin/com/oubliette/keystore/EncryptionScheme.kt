@@ -30,9 +30,6 @@ interface EncryptionScheme {
     fun initDecryptCipher(alias: String, nonce: ByteArray): Cipher
     fun encryptWithCipher(cipher: Cipher, plaintext: ByteArray, aad: String): EncryptResult
     fun decryptWithCipher(cipher: Cipher, ciphertext: ByteArray, aad: String): ByteArray
-
-    /** Release resources (thread pools, etc.). Called once on plugin detach. */
-    fun shutdown() {}
 }
 
 /** The Keystore alias does not correspond to any existing key. */

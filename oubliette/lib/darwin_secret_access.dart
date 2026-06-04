@@ -32,10 +32,28 @@ export 'package:keychain/keychain.dart' show KeychainAccessibility;
 /// need a macOS password prompt (no biometric), use
 /// [DarwinSecretAccess.custom] with `authenticationRequired: true` and
 /// `useDataProtection: false`.
-const _defaultPrefix = 'oubliette_';
+/// Per-profile default keychain account prefixes. Distinct prefixes keep the
+/// same logical key in different security profiles from sharing a keychain
+/// slot — critical on Darwin, where the read query carries no access-control
+/// attribute, so the protection bound at write time is authoritative and a
+/// shared slot would let a weaker profile read a stronger profile's item with
+/// no prompt. Slot isolation is a security boundary here.
+const _evenLockedPrefix = 'oubliette_even_locked_';
+const _onlyUnlockedPrefix = 'oubliette_only_unlocked_';
+const _authenticatedPrefix = 'oubliette_authenticated_';
+const _authenticatedFatalPrefix = 'oubliette_authenticated_fatal_';
+
+const _reservedPrefixes = [
+  _evenLockedPrefix,
+  _onlyUnlockedPrefix,
+  _authenticatedPrefix,
+  _authenticatedFatalPrefix,
+];
 
 class DarwinSecretAccess {
-  /// Prefix prepended to every storage key in the Keychain.
+  /// Prefix prepended to every storage key (`kSecAttrAccount`) in the
+  /// Keychain. Each named profile defaults to a distinct prefix so the same
+  /// logical key cannot collide across security domains.
   final String prefix;
 
   /// `kSecAttrService` — namespaces keychain items so the same key in
@@ -85,7 +103,7 @@ class DarwinSecretAccess {
   /// Accessible after the first unlock since boot, even when the device
   /// is locked. Maps to `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
   const DarwinSecretAccess.evenLocked({
-    String prefix = _defaultPrefix,
+    String prefix = _evenLockedPrefix,
     String? service,
     required bool secureEnclave,
   }) : this._(
@@ -104,7 +122,7 @@ class DarwinSecretAccess {
   /// wiped from memory on lock. Maps to
   /// `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`.
   const DarwinSecretAccess.onlyUnlocked({
-    String prefix = _defaultPrefix,
+    String prefix = _onlyUnlockedPrefix,
     String? service,
     required bool secureEnclave,
   }) : this._(
@@ -127,7 +145,7 @@ class DarwinSecretAccess {
   /// For a password-only prompt on unsigned macOS apps, use
   /// [DarwinSecretAccess.custom] with `useDataProtection: false`.
   const DarwinSecretAccess.authenticated({
-    String prefix = _defaultPrefix,
+    String prefix = _authenticatedPrefix,
     String? service,
     required String promptReason,
     required bool secureEnclave,
@@ -154,7 +172,7 @@ class DarwinSecretAccess {
   /// Sets [useDataProtection] to `true`. On macOS this uses the Data
   /// Protection keychain which requires code signing and entitlements.
   const DarwinSecretAccess.authenticatedFatal({
-    String prefix = _defaultPrefix,
+    String prefix = _authenticatedFatalPrefix,
     String? service,
     required String promptReason,
     required bool secureEnclave,
@@ -175,7 +193,7 @@ class DarwinSecretAccess {
   /// Useful for advanced combinations such as password-only prompts on
   /// unsigned macOS apps (`authenticationRequired: true`,
   /// `useDataProtection: false`).
-  const DarwinSecretAccess.custom({
+  DarwinSecretAccess.custom({
     required this.prefix,
     required this.service,
     required this.accessibility,
@@ -185,7 +203,13 @@ class DarwinSecretAccess {
     required this.authenticationPrompt,
     required this.secureEnclave,
     required this.accessGroup,
-  });
+  }) {
+    if (_reservedPrefixes.contains(prefix)) {
+      throw ArgumentError(
+        'prefix "$prefix" is reserved for a named profile. Use a unique prefix.',
+      );
+    }
+  }
 
   KeychainConfig toConfig() => KeychainConfig(
     service: service,

@@ -1,5 +1,10 @@
 package com.oubliette.keystore
 
+/**
+ * Stateless registry of immutable encryption schemes. Holds no mutable
+ * lifecycle state, so it stays valid across plugin attach/detach cycles — there
+ * is nothing to shut down or rebuild.
+ */
 object SchemeRegistry {
   const val CURRENT_VERSION = 1
 
@@ -8,9 +13,4 @@ object SchemeRegistry {
   )
 
   fun schemeFor(version: Int): EncryptionScheme? = schemes[version]
-
-  /** Shut down all registered schemes. Called once during plugin detach. */
-  fun shutdownAll() {
-    schemes.values.forEach { it.shutdown() }
-  }
 }

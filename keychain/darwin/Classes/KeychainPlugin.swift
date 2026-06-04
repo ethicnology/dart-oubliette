@@ -94,37 +94,21 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
           return
         }
         if params.secureEnclave {
-          guard let (privateKey, _) = ensureEnclaveKeyPair(service: params.service),
+          guard let (privateKey, _) = ensureEnclaveKeyPair(params: params.enclaveParams),
                 var plaintext = enclaveDecrypt(data: rawData, privateKey: privateKey) else {
-            rawData.withUnsafeMutableBytes { ptr in
-              if let base = ptr.baseAddress {
-                base.initializeMemory(as: UInt8.self, repeating: 0, count: ptr.count)
-              }
-            }
+            rawData.wipe()
             DispatchQueue.main.async {
               result(FlutterError(code: "se_decrypt_failed", message: "Secure Enclave decryption failed.", details: nil))
             }
             return
           }
-          rawData.withUnsafeMutableBytes { ptr in
-            if let base = ptr.baseAddress {
-              base.initializeMemory(as: UInt8.self, repeating: 0, count: ptr.count)
-            }
-          }
+          rawData.wipe()
           let typedData = FlutterStandardTypedData(bytes: plaintext)
-          plaintext.withUnsafeMutableBytes { ptr in
-            if let base = ptr.baseAddress {
-              base.initializeMemory(as: UInt8.self, repeating: 0, count: ptr.count)
-            }
-          }
+          plaintext.wipe()
           DispatchQueue.main.async { result(typedData) }
         } else {
           let typedData = FlutterStandardTypedData(bytes: rawData)
-          rawData.withUnsafeMutableBytes { ptr in
-            if let base = ptr.baseAddress {
-              base.initializeMemory(as: UInt8.self, repeating: 0, count: ptr.count)
-            }
-          }
+          rawData.wipe()
           DispatchQueue.main.async { result(typedData) }
         }
       case errSecItemNotFound:
@@ -150,23 +134,15 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
   }
 
   private func handleEnsureEnclaveKeyPair(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-    let service = (call.arguments as? [String: Any]).flatMap { $0["service"] as? String }
+    let args = (call.arguments as? [String: Any]) ?? [:]
+    let enclaveParams = EnclaveParams(
+      service: args["service"] as? String,
+      accessibility: SecAccessibility.fromDart(args["accessibility"] as? String),
+      accessGroup: args["accessGroup"] as? String
+    )
     serialQueue.async {
-      guard let tag = enclaveKeyTag(service: service) else {
-        DispatchQueue.main.async {
-          result(FlutterError(code: "bad_args", message: "Could not compute key tag.", details: nil))
-        }
-        return
-      }
-      let fetchQuery: [String: Any] = [
-        kSecClass as String: kSecClassKey,
-        kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
-        kSecAttrApplicationTag as String: tag,
-        kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
-        kSecReturnRef as String: false
-      ]
-      let alreadyExisted = SecItemCopyMatching(fetchQuery as CFDictionary, nil) == errSecSuccess
-      guard ensureEnclaveKeyPair(service: service) != nil else {
+      let alreadyExisted = enclaveKeyExists(params: enclaveParams)
+      guard ensureEnclaveKeyPair(params: enclaveParams) != nil else {
         DispatchQueue.main.async {
           result(FlutterError(code: "se_key_gen_failed", message: "Could not ensure SE key pair.", details: nil))
         }
