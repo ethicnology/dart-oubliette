@@ -9,7 +9,7 @@ Flutter plugin that provides typed access to the iOS and macOS Keychain via the 
   s.license          = { :file => '../LICENSE' }
   s.author           = { 'ethicnology' => 'contact@ethicnology.com' }
   s.source           = { :path => '.' }
-  s.source_files = 'Classes/**/*'
+  s.source_files = 'keychain/Sources/keychain/**/*'
 
   s.ios.dependency 'Flutter'
   s.osx.dependency 'FlutterMacOS'

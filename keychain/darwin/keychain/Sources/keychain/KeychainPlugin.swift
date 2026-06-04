@@ -3,6 +3,7 @@ import Flutter
 #else
 import FlutterMacOS
 #endif
+import Foundation
 import LocalAuthentication
 import Security
 

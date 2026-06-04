@@ -173,11 +173,11 @@ consuming app's pipeline responsibility.
 
 | Tool | Version | Pinned by |
 |------|---------|-----------|
-| Flutter | 3.38.5 | `.fvmrc` |
+| Flutter | 3.44.1 | `.fvmrc` |
 | Dart | bundled with Flutter | (via Flutter pin) |
-| AGP | 8.11.1 | `keystore/android/build.gradle`, example |
-| Gradle | 8.14 (+ `distributionSha256Sum`) | wrapper `gradle-wrapper.properties` |
-| Kotlin | 2.2.20 | `build.gradle` |
+| AGP | 9.0.1 (built-in Kotlin) | `keystore/android/build.gradle`, example |
+| Gradle | 9.1.0 (+ `distributionSha256Sum`) | wrapper `gradle-wrapper.properties` |
+| Kotlin | 2.3.20 | `build.gradle` |
 | JDK | 17 (vendor per CI) | `compileOptions` / `jvmTarget` |
 | Xcode / Swift | Swift 6.0 | document per release (`.xcode-version` recommended) |
 | CocoaPods | 1.16.2 | `Podfile.lock` |

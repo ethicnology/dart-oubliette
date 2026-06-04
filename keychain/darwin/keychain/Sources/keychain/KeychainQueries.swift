@@ -1,3 +1,4 @@
+import Foundation
 import Security
 
 let serialQueue = DispatchQueue(label: "com.oubliette.keychain", qos: .userInitiated)

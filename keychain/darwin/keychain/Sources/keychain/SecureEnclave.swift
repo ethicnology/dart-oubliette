@@ -1,3 +1,4 @@
+import Foundation
 import Security
 
 let enclaveAlgorithm = SecKeyAlgorithm.eciesEncryptionCofactorX963SHA256AESGCM
