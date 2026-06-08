@@ -155,7 +155,7 @@ class AndroidOubliette extends Oubliette {
         case 'auth_failed':
         case 'auth_error':
           throw AuthenticationFailedException(key: key, cause: e);
-        case 'auth_cancelled': // forward-compat; not currently emitted here
+        case 'auth_cancelled': // emitted by BiometricAuth for user-cancel codes
           throw AuthenticationFailedException(
               key: key, cancelled: true, cause: e);
       }

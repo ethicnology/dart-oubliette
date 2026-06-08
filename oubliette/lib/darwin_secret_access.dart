@@ -99,7 +99,7 @@ class DarwinSecretAccess {
   final String? authenticationPrompt;
 
   /// When `true`, data is encrypted/decrypted using a Secure Enclave
-  /// P-256 key via `eciesEncryptionCofactorX963SHA256AESGCM`. The
+  /// P-256 key via `eciesEncryptionCofactorVariableIVX963SHA256AESGCM`. The
   /// private key never leaves the SE chip.
   final bool secureEnclave;
 

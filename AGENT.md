@@ -5,6 +5,15 @@
 These are load-bearing security invariants. Each exists because removing it
 reintroduces a specific, reviewed vulnerability. Do not "simplify" them away.
 
+- **The AEAD is not key-committing.** AES-GCM (Android) and SE-ECIES-GCM (Darwin)
+  are not key-committing AEADs. This is safe today because nothing ever tries to
+  decrypt one blob under multiple candidate keys — each slot maps to exactly one
+  key. **Never build a "try every key until one decrypts" path** (a multi-key
+  decryption oracle); if a future scheme needs that, switch to a key-committing
+  construction first. Also: the AES-GCM random-nonce safety bound is **per key**
+  (~2^32 messages, NIST SP 800-38D) and is satisfied by the one-write-per-slot
+  model — do not introduce a high-frequency re-encrypt loop on a single key.
+
 - **SharedPreferences usage is intentional.** Android's `EncryptedSharedPreferences`
   (from `androidx.security.crypto`) is deprecated. The project encrypts at the
   Keystore layer; SharedPreferences stores only ciphertext (`EncryptedPayload` JSON).

@@ -1,7 +1,12 @@
 import Foundation
 import Security
 
-let enclaveAlgorithm = SecKeyAlgorithm.eciesEncryptionCofactorX963SHA256AESGCM
+// ECIES with a per-message variable IV — the variant Apple recommends for new
+// code (the fixed-IV `…CofactorX963SHA256AESGCM` is now "legacy"). One shared
+// constant drives both encrypt and decrypt, so the choice is symmetric. (The
+// fixed-IV variant was not exploitable here — ECIES derives a fresh ephemeral
+// key per message — but this is the current-recommended primitive.)
+let enclaveAlgorithm = SecKeyAlgorithm.eciesEncryptionCofactorVariableIVX963SHA256AESGCM
 
 /// Everything that scopes a Secure Enclave key. Two keys with different
 /// scoping must never share a tag, and changing any field must regenerate the

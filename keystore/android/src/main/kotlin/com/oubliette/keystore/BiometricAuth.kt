@@ -211,7 +211,18 @@ internal fun KeystorePlugin.authenticate(
 
       override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
         onError()
-        result.error("auth_error", "[$errorCode] $errString", null)
+        // Distinguish user-driven cancellation from other auth errors so the
+        // Dart layer sets AuthenticationFailedException.cancelled accurately.
+        // Both remain recoverable (retry, never purge) — only the flag differs.
+        val code = when (errorCode) {
+          BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED,
+          BiometricPrompt.BIOMETRIC_ERROR_CANCELED,
+          13 -> "auth_cancelled" // 13 = BIOMETRIC_ERROR_NEGATIVE_BUTTON (no named
+          // const on the platform BiometricPrompt class; the negative button is
+          // the user tapping "Cancel", so it is a cancellation)
+          else -> "auth_error"
+        }
+        result.error(code, "[$errorCode] $errString", null)
       }
     }
   )

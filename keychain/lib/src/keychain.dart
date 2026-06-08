@@ -68,7 +68,7 @@ class KeychainConfig {
   final String? authenticationPrompt;
 
   /// When `true`, data is encrypted/decrypted using a Secure Enclave
-  /// P-256 key via `eciesEncryptionCofactorX963SHA256AESGCM`. The
+  /// P-256 key via `eciesEncryptionCofactorVariableIVX963SHA256AESGCM`. The
   /// ciphertext blob is stored in the Keychain; the private key never
   /// leaves the SE chip.
   final bool secureEnclave;

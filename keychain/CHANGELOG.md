@@ -16,7 +16,9 @@ Enclave ECIES wrapping.
 * **Device-local accessibility by default** (`whenUnlockedThisDeviceOnly` /
   `afterFirstUnlockThisDeviceOnly`); authenticated profiles attach a
   `SecAccessControl`.
-* **Secure Enclave ECIES** (`eciesEncryptionCofactorX963SHA256AESGCM`): the
+* **Secure Enclave ECIES** (`eciesEncryptionCofactorVariableIVX963SHA256AESGCM`
+  — Apple's recommended-for-new-code variant; the fixed-IV `…X963SHA256AESGCM`
+  is now legacy): the
   P-256 private key never leaves the SE chip. The SE key identity encodes
   `(service, accessibility, accessGroup)` in a collision-free tag.
 * **Fail-closed authentication:** `secItemAdd` errors rather than storing an
