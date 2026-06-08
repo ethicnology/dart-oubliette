@@ -38,7 +38,8 @@ class AndroidOubliette extends Oubliette {
         unlockedDeviceRequired: access.unlockedDeviceRequired,
         strongBox: access.strongBox,
         userAuthenticationRequired: access.userAuthenticationRequired,
-        invalidatedByBiometricEnrollment: access.invalidatedByBiometricEnrollment,
+        invalidatedByBiometricEnrollment:
+            access.invalidatedByBiometricEnrollment,
         requireHardwareBacking: access.requireHardwareBacking,
       );
     } on PlatformException catch (e) {
@@ -64,7 +65,9 @@ class AndroidOubliette extends Oubliette {
   Future<void> store(String key, Uint8List value) {
     return _withKeyLock(key, () async {
       if (await exists(key)) {
-        throw StateError('A value already exists for key "$key". Call trash() first.');
+        throw StateError(
+          'A value already exists for key "$key". Call trash() first.',
+        );
       }
       await _ensureKey();
       final storedKey = _storedKey(key);
@@ -158,7 +161,10 @@ class AndroidOubliette extends Oubliette {
           throw AuthenticationFailedException(key: key, cause: e);
         case 'auth_cancelled': // emitted by BiometricAuth for user-cancel codes
           throw AuthenticationFailedException(
-              key: key, cancelled: true, cause: e);
+            key: key,
+            cancelled: true,
+            cause: e,
+          );
       }
       rethrow;
     }

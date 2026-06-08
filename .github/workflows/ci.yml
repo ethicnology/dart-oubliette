@@ -24,16 +24,12 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
-      - name: Activate Melos
-        run: |
-          dart pub global activate melos
-          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
       - name: Resolve workspace
         run: flutter pub get
       - name: Analyze all packages
-        run: melos run analyze
+        run: dart run melos run analyze
       - name: Dart tests (all packages)
-        run: melos run test
+        run: dart run melos run test
 
   android-build:
     name: Android build (compiles plugin Kotlin)

@@ -103,7 +103,10 @@ abstract class Oubliette {
   /// - **Compiler dead-store elimination**: in theory the JIT/AOT could
   ///   optimise away the `fillRange` call, though this is unlikely in
   ///   practice for `Uint8List`.
-  Future<T?> useAndForget<T>(String key, Future<T> Function(Uint8List bytes) action) async {
+  Future<T?> useAndForget<T>(
+    String key,
+    Future<T> Function(Uint8List bytes) action,
+  ) async {
     final bytes = await fetch(key);
     if (bytes == null) return null;
     try {

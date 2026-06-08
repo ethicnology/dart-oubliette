@@ -19,7 +19,11 @@ void main() {
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.evenLocked(prefix: 'test_el_', strongBox: false, requireHardwareBacking: false),
+        android: const AndroidSecretAccess.evenLocked(
+          prefix: 'test_el_',
+          strongBox: false,
+          requireHardwareBacking: false,
+        ),
         darwin: const DarwinSecretAccess.evenLocked(secureEnclave: false),
       );
     });
@@ -60,7 +64,8 @@ void main() {
       storage = Oubliette(
         android: const AndroidSecretAccess.onlyUnlocked(
           prefix: 'test_ou_',
-          strongBox: false, requireHardwareBacking: false,
+          strongBox: false,
+          requireHardwareBacking: false,
         ),
         darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
       );
@@ -102,7 +107,8 @@ void main() {
       storage = Oubliette(
         android: const AndroidSecretAccess.authenticated(
           prefix: 'test_auth_',
-          strongBox: false, requireHardwareBacking: false,
+          strongBox: false,
+          requireHardwareBacking: false,
           promptTitle: 'Oubliette Test',
           promptSubtitle: 'Authenticate for test',
         ),
@@ -125,33 +131,40 @@ void main() {
     });
   });
 
-  group('AndroidSecretAccess.authenticatedFatal (requires fingerprint / PIN)', () {
-    late Oubliette storage;
+  group(
+    'AndroidSecretAccess.authenticatedFatal (requires fingerprint / PIN)',
+    () {
+      late Oubliette storage;
 
-    setUp(() {
-      storage = Oubliette(
-        android: const AndroidSecretAccess.authenticatedFatal(
-          prefix: 'test_af_',
-          strongBox: false, requireHardwareBacking: false,
-          promptTitle: 'Oubliette Test',
-          promptSubtitle: 'Authenticate for authenticatedFatal test',
-        ),
-        darwin: const DarwinSecretAccess.evenLocked(secureEnclave: false),
-      );
-    });
+      setUp(() {
+        storage = Oubliette(
+          android: const AndroidSecretAccess.authenticatedFatal(
+            prefix: 'test_af_',
+            strongBox: false,
+            requireHardwareBacking: false,
+            promptTitle: 'Oubliette Test',
+            promptSubtitle: 'Authenticate for authenticatedFatal test',
+          ),
+          darwin: const DarwinSecretAccess.evenLocked(secureEnclave: false),
+        );
+      });
 
-    testWidgets('store/useAndForget round-trip — authenticate when prompted', (
-      tester,
-    ) async {
-      const key = 'af_key';
-      final value = Uint8List.fromList(utf8.encode('fatal authenticated secret'));
-      await storage.store(key, value);
-      final decoded = await storage.useAndForget<String>(
-        key,
-        (bytes) async => utf8.decode(bytes),
+      testWidgets(
+        'store/useAndForget round-trip — authenticate when prompted',
+        (tester) async {
+          const key = 'af_key';
+          final value = Uint8List.fromList(
+            utf8.encode('fatal authenticated secret'),
+          );
+          await storage.store(key, value);
+          final decoded = await storage.useAndForget<String>(
+            key,
+            (bytes) async => utf8.decode(bytes),
+          );
+          expect(decoded, 'fatal authenticated secret');
+          await storage.trash(key);
+        },
       );
-      expect(decoded, 'fatal authenticated secret');
-      await storage.trash(key);
-    });
-  });
+    },
+  );
 }

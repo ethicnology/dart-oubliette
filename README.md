@@ -246,4 +246,4 @@ This repository is a monorepo with three packages:
 
 ## AI agent guidance
 
-See [AGENT.md](AGENT.md) for constraints that AI coding assistants should follow.
+See [AGENTS.md](AGENTS.md) for constraints that AI coding assistants should follow.

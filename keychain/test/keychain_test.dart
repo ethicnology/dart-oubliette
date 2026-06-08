@@ -17,28 +17,33 @@ void main() {
     String? authenticationPrompt,
     bool secureEnclave = false,
     String? accessGroup,
-  }) =>
-      KeychainConfig(
-        service: service,
-        accessibility: accessibility,
-        useDataProtection: useDataProtection,
-        authenticationRequired: authenticationRequired,
-        biometryCurrentSetOnly: biometryCurrentSetOnly,
-        authenticationPrompt: authenticationPrompt,
-        secureEnclave: secureEnclave,
-        accessGroup: accessGroup,
-      );
+  }) => KeychainConfig(
+    service: service,
+    accessibility: accessibility,
+    useDataProtection: useDataProtection,
+    authenticationRequired: authenticationRequired,
+    biometryCurrentSetOnly: biometryCurrentSetOnly,
+    authenticationPrompt: authenticationPrompt,
+    secureEnclave: secureEnclave,
+    accessGroup: accessGroup,
+  );
 
   group('KeychainAccessibility', () {
     test('every value maps to its documented string', () {
       expect(KeychainAccessibility.whenUnlocked.value, 'whenUnlocked');
-      expect(KeychainAccessibility.whenUnlockedThisDeviceOnly.value,
-          'whenUnlockedThisDeviceOnly');
+      expect(
+        KeychainAccessibility.whenUnlockedThisDeviceOnly.value,
+        'whenUnlockedThisDeviceOnly',
+      );
       expect(KeychainAccessibility.afterFirstUnlock.value, 'afterFirstUnlock');
-      expect(KeychainAccessibility.afterFirstUnlockThisDeviceOnly.value,
-          'afterFirstUnlockThisDeviceOnly');
-      expect(KeychainAccessibility.whenPasscodeSetThisDeviceOnly.value,
-          'whenPasscodeSetThisDeviceOnly');
+      expect(
+        KeychainAccessibility.afterFirstUnlockThisDeviceOnly.value,
+        'afterFirstUnlockThisDeviceOnly',
+      );
+      expect(
+        KeychainAccessibility.whenPasscodeSetThisDeviceOnly.value,
+        'whenPasscodeSetThisDeviceOnly',
+      );
     });
   });
 
@@ -55,7 +60,11 @@ void main() {
         'secureEnclave',
         'accessGroup',
       ]) {
-        expect(map.containsKey(absent), isFalse, reason: '$absent must be omitted when unset');
+        expect(
+          map.containsKey(absent),
+          isFalse,
+          reason: '$absent must be omitted when unset',
+        );
       }
     });
 

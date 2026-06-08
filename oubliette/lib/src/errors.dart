@@ -201,7 +201,11 @@ final class AuthenticationFailedException extends OublietteException {
   /// The underlying platform error, for diagnostics.
   final Object? cause;
 
-  const AuthenticationFailedException({this.key, this.cancelled = false, this.cause});
+  const AuthenticationFailedException({
+    this.key,
+    this.cancelled = false,
+    this.cause,
+  });
 
   @override
   bool get recoverable => true;

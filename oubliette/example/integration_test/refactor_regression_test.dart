@@ -18,14 +18,21 @@ void main() {
 
   // Cross-profile isolation works on every platform; run it everywhere.
   group('cross-profile slot isolation (#11 / #12 / #13)', () {
-    testWidgets('a key stored under one profile is invisible to another',
-        (tester) async {
+    testWidgets('a key stored under one profile is invisible to another', (
+      tester,
+    ) async {
       final onlyUnlocked = Oubliette(
-        android: const AndroidSecretAccess.onlyUnlocked(strongBox: false, requireHardwareBacking: false),
+        android: const AndroidSecretAccess.onlyUnlocked(
+          strongBox: false,
+          requireHardwareBacking: false,
+        ),
         darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
       );
       final evenLocked = Oubliette(
-        android: const AndroidSecretAccess.evenLocked(strongBox: false, requireHardwareBacking: false),
+        android: const AndroidSecretAccess.evenLocked(
+          strongBox: false,
+          requireHardwareBacking: false,
+        ),
         darwin: const DarwinSecretAccess.evenLocked(secureEnclave: false),
       );
 
@@ -59,7 +66,8 @@ void main() {
       final storage = Oubliette(
         android: const AndroidSecretAccess.onlyUnlocked(
           prefix: 'reg_lazy_',
-          strongBox: false, requireHardwareBacking: false,
+          strongBox: false,
+          requireHardwareBacking: false,
         ),
         darwin: const DarwinSecretAccess.onlyUnlocked(
           prefix: 'reg_lazy_',
@@ -82,7 +90,8 @@ void main() {
       final storage = Oubliette(
         android: const AndroidSecretAccess.onlyUnlocked(
           prefix: 'reg_init_',
-          strongBox: false, requireHardwareBacking: false,
+          strongBox: false,
+          requireHardwareBacking: false,
         ),
         darwin: const DarwinSecretAccess.onlyUnlocked(
           prefix: 'reg_init_',
@@ -100,8 +109,9 @@ void main() {
       return;
     }
 
-    testWidgets('StrongBox is fail-closed when unavailable (N1)',
-        (tester) async {
+    testWidgets('StrongBox is fail-closed when unavailable (N1)', (
+      tester,
+    ) async {
       final keystore = Keystore();
       final hasStrongBox = await keystore.isStrongBoxAvailable();
       if (hasStrongBox) {
@@ -115,11 +125,15 @@ void main() {
         keystore.generateKey(
           alias: alias,
           unlockedDeviceRequired: false,
-          strongBox: true, requireHardwareBacking: false,
+          strongBox: true,
+          requireHardwareBacking: false,
         ),
         throwsA(
-          isA<PlatformException>()
-              .having((e) => e.code, 'code', 'strongbox_unavailable'),
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'strongbox_unavailable',
+          ),
         ),
       );
       // No key must have been created as a silent TEE fallback.
@@ -130,7 +144,8 @@ void main() {
       final storage = Oubliette(
         android: const AndroidSecretAccess.onlyUnlocked(
           prefix: 'reg_tamper_',
-          strongBox: false, requireHardwareBacking: false,
+          strongBox: false,
+          requireHardwareBacking: false,
         ),
         darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
       );
@@ -162,8 +177,9 @@ void main() {
       );
     });
 
-    testWidgets('fetch rejects an on-disk scheme-version tamper (C4)',
-        (tester) async {
+    testWidgets('fetch rejects an on-disk scheme-version tamper (C4)', (
+      tester,
+    ) async {
       // The scheme `version` selects the decryptor AND is bound into the GCM
       // AAD (V1Scheme.versionedAad). A rewritten on-disk version can never
       // silently decrypt — today it misses the append-only registry; once a v2
@@ -171,7 +187,8 @@ void main() {
       final storage = Oubliette(
         android: const AndroidSecretAccess.onlyUnlocked(
           prefix: 'reg_ver_',
-          strongBox: false, requireHardwareBacking: false,
+          strongBox: false,
+          requireHardwareBacking: false,
         ),
         darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
       );

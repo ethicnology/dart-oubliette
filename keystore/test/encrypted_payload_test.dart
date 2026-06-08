@@ -65,15 +65,20 @@ void main() {
         '"key_alias":"oubliette_only_unlocked"}';
 
     test('current code still serialises to the frozen v1 bytes', () {
-      expect(payload.toJson(), goldenV1,
-          reason: 'serialisation drift would orphan data on upgrade');
+      expect(
+        payload.toJson(),
+        goldenV1,
+        reason: 'serialisation drift would orphan data on upgrade',
+      );
     });
 
     test('current code still reads a frozen v1 blob', () {
       final restored = EncryptedPayload.fromJson(goldenV1);
       expect(restored.version, 1);
-      expect(restored.nonce,
-          Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]));
+      expect(
+        restored.nonce,
+        Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+      );
       expect(restored.ciphertext, Uint8List.fromList([42, 43, 44]));
       expect(restored.aad, 'oubliette_only_unlocked_k');
       expect(restored.keyAlias, 'oubliette_only_unlocked');
@@ -108,34 +113,47 @@ void main() {
         '"aad":"a","key_alias":"k"}';
 
     test('rejects an empty nonce', () {
-      expect(() => EncryptedPayload.fromJson(blob(nonce: '')),
-          throwsA(isA<FormatException>()));
+      expect(
+        () => EncryptedPayload.fromJson(blob(nonce: '')),
+        throwsA(isA<FormatException>()),
+      );
     });
 
     test('rejects an empty ciphertext', () {
-      expect(() => EncryptedPayload.fromJson(blob(ciphertext: '')),
-          throwsA(isA<FormatException>()));
+      expect(
+        () => EncryptedPayload.fromJson(blob(ciphertext: '')),
+        throwsA(isA<FormatException>()),
+      );
     });
 
     test('rejects a version below 1', () {
-      expect(() => EncryptedPayload.fromJson(blob(version: '0')),
-          throwsA(isA<FormatException>()));
-      expect(() => EncryptedPayload.fromJson(blob(version: '-3')),
-          throwsA(isA<FormatException>()));
+      expect(
+        () => EncryptedPayload.fromJson(blob(version: '0')),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => EncryptedPayload.fromJson(blob(version: '-3')),
+        throwsA(isA<FormatException>()),
+      );
     });
 
     test('rejects non-base64 nonce/ciphertext', () {
-      expect(() => EncryptedPayload.fromJson(blob(nonce: '!!!notb64!!!')),
-          throwsA(isA<FormatException>()));
-      expect(() => EncryptedPayload.fromJson(blob(ciphertext: '@@@')),
-          throwsA(isA<FormatException>()));
+      expect(
+        () => EncryptedPayload.fromJson(blob(nonce: '!!!notb64!!!')),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => EncryptedPayload.fromJson(blob(ciphertext: '@@@')),
+        throwsA(isA<FormatException>()),
+      );
     });
 
     test('rejects a missing field', () {
       // key_alias absent.
       expect(
         () => EncryptedPayload.fromJson(
-            '{"version":1,"nonce":"AQIDBAUGBwgJCgsM","ciphertext":"Kiss","aad":"a"}'),
+          '{"version":1,"nonce":"AQIDBAUGBwgJCgsM","ciphertext":"Kiss","aad":"a"}',
+        ),
         throwsA(isA<FormatException>()),
       );
     });

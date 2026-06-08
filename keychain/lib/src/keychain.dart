@@ -77,16 +77,16 @@ class KeychainConfig {
   final String? accessGroup;
 
   Map<String, dynamic> toMap() => {
-        if (service != null) 'service': service,
-        'accessibility': accessibility.value,
-        if (useDataProtection) 'useDataProtection': true,
-        if (authenticationRequired) 'authenticationRequired': true,
-        if (biometryCurrentSetOnly) 'biometryCurrentSetOnly': true,
-        if (authenticationPrompt != null)
-          'authenticationPrompt': authenticationPrompt,
-        if (secureEnclave) 'secureEnclave': true,
-        if (accessGroup != null) 'accessGroup': accessGroup,
-      };
+    if (service != null) 'service': service,
+    'accessibility': accessibility.value,
+    if (useDataProtection) 'useDataProtection': true,
+    if (authenticationRequired) 'authenticationRequired': true,
+    if (biometryCurrentSetOnly) 'biometryCurrentSetOnly': true,
+    if (authenticationPrompt != null)
+      'authenticationPrompt': authenticationPrompt,
+    if (secureEnclave) 'secureEnclave': true,
+    if (accessGroup != null) 'accessGroup': accessGroup,
+  };
 }
 
 /// There is no `secItemUpdate` — items are immutable once stored.
@@ -99,9 +99,9 @@ final class Keychain {
   final MethodChannel _channel = const MethodChannel('keychain');
 
   Map<String, dynamic> _args(String alias) => {
-        'alias': alias,
-        ...config.toMap(),
-      };
+    'alias': alias,
+    ...config.toMap(),
+  };
 
   Future<bool> contains(String alias) async {
     final result = await _channel.invokeMethod<bool>(
@@ -126,14 +126,11 @@ final class Keychain {
   ///
   /// Returns `true` if the key already existed, `false` if it was just created.
   Future<bool> ensureEnclaveKeyPair() async {
-    final result = await _channel.invokeMethod<bool>(
-      'ensureEnclaveKeyPair',
-      {
-        if (config.service != null) 'service': config.service,
-        'accessibility': config.accessibility.value,
-        if (config.accessGroup != null) 'accessGroup': config.accessGroup,
-      },
-    );
+    final result = await _channel.invokeMethod<bool>('ensureEnclaveKeyPair', {
+      if (config.service != null) 'service': config.service,
+      'accessibility': config.accessibility.value,
+      if (config.accessGroup != null) 'accessGroup': config.accessGroup,
+    });
     return result ?? false;
   }
 

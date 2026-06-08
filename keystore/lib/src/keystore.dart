@@ -54,7 +54,8 @@ final class Keystore {
       'aad': aad,
       'alias': alias,
       if (authenticate) 'promptTitle': promptTitle,
-      if (authenticate) 'promptSubtitle': promptSubtitle ?? 'Confirm your identity',
+      if (authenticate)
+        'promptSubtitle': promptSubtitle ?? 'Confirm your identity',
     };
     return _parseEncryptResponse(
       await _channel.invokeMethod<Map>(
@@ -90,7 +91,8 @@ final class Keystore {
       'aad': aad,
       'alias': alias,
       if (authenticate) 'promptTitle': promptTitle,
-      if (authenticate) 'promptSubtitle': promptSubtitle ?? 'Confirm your identity',
+      if (authenticate)
+        'promptSubtitle': promptSubtitle ?? 'Confirm your identity',
     };
     final plaintext = await _channel.invokeMethod<Uint8List>(
       authenticate ? 'authenticateDecrypt' : 'decrypt',

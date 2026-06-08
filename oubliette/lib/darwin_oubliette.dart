@@ -9,8 +9,8 @@ import 'src/slot.dart';
 
 class DarwinOubliette extends Oubliette {
   DarwinOubliette({required this.access})
-      : _keychain = Keychain(config: access.toConfig()),
-        super.internal();
+    : _keychain = Keychain(config: access.toConfig()),
+      super.internal();
 
   final DarwinSecretAccess access;
   final Keychain _keychain;
@@ -79,18 +79,24 @@ class DarwinOubliette extends Oubliette {
   Future<void> store(String key, Uint8List value) {
     return _withKeyLock(key, () async {
       if (await exists(key)) {
-        throw StateError('A value already exists for key "$key". Call trash() first.');
+        throw StateError(
+          'A value already exists for key "$key". Call trash() first.',
+        );
       }
       await _ensureKey();
       await _mapError(
-          key, () => _keychain.secItemAdd(_storedKey(key), _wrap(value)));
+        key,
+        () => _keychain.secItemAdd(_storedKey(key), _wrap(value)),
+      );
     });
   }
 
   @override
   Future<Uint8List?> fetch(String key) async {
-    final stored =
-        await _mapError(key, () => _keychain.secItemCopyMatching(_storedKey(key)));
+    final stored = await _mapError(
+      key,
+      () => _keychain.secItemCopyMatching(_storedKey(key)),
+    );
     if (stored == null) return null;
     return _unwrap(key, stored);
   }
@@ -115,7 +121,10 @@ class DarwinOubliette extends Oubliette {
           throw AuthenticationFailedException(key: key, cause: e);
         case 'auth_cancelled':
           throw AuthenticationFailedException(
-              key: key, cancelled: true, cause: e);
+            key: key,
+            cancelled: true,
+            cause: e,
+          );
       }
       rethrow;
     }

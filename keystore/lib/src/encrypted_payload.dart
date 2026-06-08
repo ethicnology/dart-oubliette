@@ -50,12 +50,12 @@ final class EncryptedPayload {
   });
 
   Map<String, dynamic> toMap() => {
-        'version': version,
-        'nonce': base64Encode(nonce),
-        'ciphertext': base64Encode(ciphertext),
-        'aad': aad,
-        'key_alias': keyAlias,
-      };
+    'version': version,
+    'nonce': base64Encode(nonce),
+    'ciphertext': base64Encode(ciphertext),
+    'aad': aad,
+    'key_alias': keyAlias,
+  };
 
   String toJson() => jsonEncode(toMap());
 
@@ -78,7 +78,9 @@ final class EncryptedPayload {
     // it here with a clear signal rather than letting it reach the scheme
     // registry as an opaque lookup miss.
     if (version < 1) {
-      throw FormatException('EncryptedPayload version must be >= 1, got $version');
+      throw FormatException(
+        'EncryptedPayload version must be >= 1, got $version',
+      );
     }
     final Uint8List nonceBytes;
     final Uint8List ciphertextBytes;
@@ -86,7 +88,9 @@ final class EncryptedPayload {
       nonceBytes = base64Decode(nonce);
       ciphertextBytes = base64Decode(ciphertext);
     } on FormatException catch (e) {
-      throw FormatException('EncryptedPayload has non-base64 nonce/ciphertext: $e');
+      throw FormatException(
+        'EncryptedPayload has non-base64 nonce/ciphertext: $e',
+      );
     }
     // Structural integrity only — exact nonce/tag sizes are the scheme's
     // concern (and are enforced natively). Empty values cannot be a valid

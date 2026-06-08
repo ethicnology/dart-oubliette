@@ -8,7 +8,10 @@ import 'package:oubliette/oubliette.dart';
 void main() {
   group('AndroidSecretAccess profile → flags', () {
     test('evenLocked', () {
-      const a = AndroidSecretAccess.evenLocked(strongBox: false, requireHardwareBacking: false);
+      const a = AndroidSecretAccess.evenLocked(
+        strongBox: false,
+        requireHardwareBacking: false,
+      );
       expect(a.keyAlias, 'oubliette_even_locked');
       expect(a.prefix, 'oubliette_even_locked_');
       expect(a.unlockedDeviceRequired, false);
@@ -19,7 +22,10 @@ void main() {
     });
 
     test('onlyUnlocked', () {
-      const a = AndroidSecretAccess.onlyUnlocked(strongBox: false, requireHardwareBacking: false);
+      const a = AndroidSecretAccess.onlyUnlocked(
+        strongBox: false,
+        requireHardwareBacking: false,
+      );
       expect(a.keyAlias, 'oubliette_only_unlocked');
       expect(a.prefix, 'oubliette_only_unlocked_');
       expect(a.unlockedDeviceRequired, true);
@@ -29,7 +35,8 @@ void main() {
 
     test('authenticated requires auth, survives enrollment change', () {
       const a = AndroidSecretAccess.authenticated(
-        strongBox: false, requireHardwareBacking: false,
+        strongBox: false,
+        requireHardwareBacking: false,
         promptTitle: 't',
         promptSubtitle: 's',
       );
@@ -44,7 +51,8 @@ void main() {
 
     test('authenticatedFatal invalidates on enrollment change', () {
       const a = AndroidSecretAccess.authenticatedFatal(
-        strongBox: false, requireHardwareBacking: false,
+        strongBox: false,
+        requireHardwareBacking: false,
         promptTitle: 't',
         promptSubtitle: 's',
       );
@@ -57,11 +65,17 @@ void main() {
 
     test('strongBox flag is carried through unchanged', () {
       expect(
-        const AndroidSecretAccess.onlyUnlocked(strongBox: true, requireHardwareBacking: false).strongBox,
+        const AndroidSecretAccess.onlyUnlocked(
+          strongBox: true,
+          requireHardwareBacking: false,
+        ).strongBox,
         true,
       );
       expect(
-        const AndroidSecretAccess.onlyUnlocked(strongBox: false, requireHardwareBacking: false).strongBox,
+        const AndroidSecretAccess.onlyUnlocked(
+          strongBox: false,
+          requireHardwareBacking: false,
+        ).strongBox,
         false,
       );
     });
@@ -70,7 +84,8 @@ void main() {
       final withPrompt = AndroidSecretAccess.custom(
         prefix: 'p_',
         keyAlias: 'a',
-        strongBox: false, requireHardwareBacking: false,
+        strongBox: false,
+        requireHardwareBacking: false,
         unlockedDeviceRequired: true,
         invalidatedByBiometricEnrollment: false,
         promptTitle: 'unlock',
@@ -81,7 +96,8 @@ void main() {
       final noPrompt = AndroidSecretAccess.custom(
         prefix: 'p_',
         keyAlias: 'a',
-        strongBox: false, requireHardwareBacking: false,
+        strongBox: false,
+        requireHardwareBacking: false,
         unlockedDeviceRequired: true,
         invalidatedByBiometricEnrollment: false,
         promptTitle: null,
@@ -94,8 +110,10 @@ void main() {
   group('DarwinSecretAccess profile → flags', () {
     test('evenLocked', () {
       const d = DarwinSecretAccess.evenLocked(secureEnclave: false);
-      expect(d.accessibility,
-          KeychainAccessibility.afterFirstUnlockThisDeviceOnly);
+      expect(
+        d.accessibility,
+        KeychainAccessibility.afterFirstUnlockThisDeviceOnly,
+      );
       expect(d.useDataProtection, false);
       expect(d.authenticationRequired, false);
       expect(d.biometryCurrentSetOnly, false);
@@ -104,8 +122,7 @@ void main() {
 
     test('onlyUnlocked', () {
       const d = DarwinSecretAccess.onlyUnlocked(secureEnclave: false);
-      expect(
-          d.accessibility, KeychainAccessibility.whenUnlockedThisDeviceOnly);
+      expect(d.accessibility, KeychainAccessibility.whenUnlockedThisDeviceOnly);
       expect(d.useDataProtection, false);
       expect(d.authenticationRequired, false);
       expect(d.biometryCurrentSetOnly, false);
@@ -116,36 +133,42 @@ void main() {
         promptReason: 'why',
         secureEnclave: false,
       );
-      expect(
-          d.accessibility, KeychainAccessibility.whenUnlockedThisDeviceOnly);
+      expect(d.accessibility, KeychainAccessibility.whenUnlockedThisDeviceOnly);
       expect(d.useDataProtection, true);
       expect(d.authenticationRequired, true);
       expect(d.biometryCurrentSetOnly, false);
       expect(d.authenticationPrompt, 'why');
     });
 
-    test('authenticatedFatal → passcode-set accessibility + current-set-only',
-        () {
-      const d = DarwinSecretAccess.authenticatedFatal(
-        promptReason: 'why',
-        secureEnclave: false,
-      );
-      expect(d.accessibility,
-          KeychainAccessibility.whenPasscodeSetThisDeviceOnly);
-      expect(d.useDataProtection, true);
-      expect(d.authenticationRequired, true);
-      expect(d.biometryCurrentSetOnly, true);
-      expect(d.authenticationPrompt, 'why');
-    });
+    test(
+      'authenticatedFatal → passcode-set accessibility + current-set-only',
+      () {
+        const d = DarwinSecretAccess.authenticatedFatal(
+          promptReason: 'why',
+          secureEnclave: false,
+        );
+        expect(
+          d.accessibility,
+          KeychainAccessibility.whenPasscodeSetThisDeviceOnly,
+        );
+        expect(d.useDataProtection, true);
+        expect(d.authenticationRequired, true);
+        expect(d.biometryCurrentSetOnly, true);
+        expect(d.authenticationPrompt, 'why');
+      },
+    );
 
     test('secureEnclave flag is carried through unchanged', () {
       expect(
-        const DarwinSecretAccess.onlyUnlocked(secureEnclave: true).secureEnclave,
+        const DarwinSecretAccess.onlyUnlocked(
+          secureEnclave: true,
+        ).secureEnclave,
         true,
       );
       expect(
-        const DarwinSecretAccess.onlyUnlocked(secureEnclave: false)
-            .secureEnclave,
+        const DarwinSecretAccess.onlyUnlocked(
+          secureEnclave: false,
+        ).secureEnclave,
         false,
       );
     });
@@ -153,9 +176,9 @@ void main() {
 
   group('DarwinSecretAccess.toConfig().toMap() wire shape', () {
     test('onlyUnlocked omits false/null flags', () {
-      final map = const DarwinSecretAccess.onlyUnlocked(secureEnclave: false)
-          .toConfig()
-          .toMap();
+      final map = const DarwinSecretAccess.onlyUnlocked(
+        secureEnclave: false,
+      ).toConfig().toMap();
       expect(map['accessibility'], 'whenUnlockedThisDeviceOnly');
       // Falsey/absent options must not be present (native reads `?? false`).
       expect(map.containsKey('useDataProtection'), false);

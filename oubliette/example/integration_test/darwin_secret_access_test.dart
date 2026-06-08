@@ -20,8 +20,14 @@ void main() {
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.evenLocked(strongBox: false, requireHardwareBacking: false),
-        darwin: const DarwinSecretAccess.evenLocked(prefix: prefix, secureEnclave: false),
+        android: const AndroidSecretAccess.evenLocked(
+          strongBox: false,
+          requireHardwareBacking: false,
+        ),
+        darwin: const DarwinSecretAccess.evenLocked(
+          prefix: prefix,
+          secureEnclave: false,
+        ),
       );
     });
 
@@ -60,7 +66,10 @@ void main() {
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.onlyUnlocked(strongBox: false, requireHardwareBacking: false),
+        android: const AndroidSecretAccess.onlyUnlocked(
+          strongBox: false,
+          requireHardwareBacking: false,
+        ),
         darwin: const DarwinSecretAccess.onlyUnlocked(
           prefix: prefix,
           secureEnclave: false,
@@ -97,63 +106,79 @@ void main() {
     });
   });
 
-  group('DarwinSecretAccess.authenticated (requires Touch ID / Face ID / passcode)', () {
-    late Oubliette storage;
-    const prefix = 'test_auth_';
+  group(
+    'DarwinSecretAccess.authenticated (requires Touch ID / Face ID / passcode)',
+    () {
+      late Oubliette storage;
+      const prefix = 'test_auth_';
 
-    setUp(() {
-      storage = Oubliette(
-        android: const AndroidSecretAccess.evenLocked(strongBox: false, requireHardwareBacking: false),
-        darwin: const DarwinSecretAccess.authenticated(
-          prefix: prefix,
-          promptReason: 'Authenticate for test',
-          secureEnclave: true,
-        ),
+      setUp(() {
+        storage = Oubliette(
+          android: const AndroidSecretAccess.evenLocked(
+            strongBox: false,
+            requireHardwareBacking: false,
+          ),
+          darwin: const DarwinSecretAccess.authenticated(
+            prefix: prefix,
+            promptReason: 'Authenticate for test',
+            secureEnclave: true,
+          ),
+        );
+      });
+
+      testWidgets(
+        'store/useAndForget round-trip — authenticate when prompted',
+        (tester) async {
+          const key = 'auth_key';
+          final value = Uint8List.fromList(utf8.encode('authenticated secret'));
+          await storage.store(key, value);
+          final decoded = await storage.useAndForget<String>(
+            key,
+            (bytes) async => utf8.decode(bytes),
+          );
+          expect(decoded, 'authenticated secret');
+          await storage.trash(key);
+        },
       );
-    });
+    },
+  );
 
-    testWidgets('store/useAndForget round-trip — authenticate when prompted', (
-      tester,
-    ) async {
-      const key = 'auth_key';
-      final value = Uint8List.fromList(utf8.encode('authenticated secret'));
-      await storage.store(key, value);
-      final decoded = await storage.useAndForget<String>(
-        key,
-        (bytes) async => utf8.decode(bytes),
+  group(
+    'DarwinSecretAccess.authenticatedFatal (requires Touch ID / Face ID / passcode)',
+    () {
+      late Oubliette storage;
+      const prefix = 'test_af_';
+
+      setUp(() {
+        storage = Oubliette(
+          android: const AndroidSecretAccess.evenLocked(
+            strongBox: false,
+            requireHardwareBacking: false,
+          ),
+          darwin: const DarwinSecretAccess.authenticatedFatal(
+            prefix: prefix,
+            promptReason: 'Authenticate for authenticatedFatal test',
+            secureEnclave: true,
+          ),
+        );
+      });
+
+      testWidgets(
+        'store/useAndForget round-trip — authenticate when prompted',
+        (tester) async {
+          const key = 'af_key';
+          final value = Uint8List.fromList(
+            utf8.encode('fatal authenticated secret'),
+          );
+          await storage.store(key, value);
+          final decoded = await storage.useAndForget<String>(
+            key,
+            (bytes) async => utf8.decode(bytes),
+          );
+          expect(decoded, 'fatal authenticated secret');
+          await storage.trash(key);
+        },
       );
-      expect(decoded, 'authenticated secret');
-      await storage.trash(key);
-    });
-  });
-
-  group('DarwinSecretAccess.authenticatedFatal (requires Touch ID / Face ID / passcode)', () {
-    late Oubliette storage;
-    const prefix = 'test_af_';
-
-    setUp(() {
-      storage = Oubliette(
-        android: const AndroidSecretAccess.evenLocked(strongBox: false, requireHardwareBacking: false),
-        darwin: const DarwinSecretAccess.authenticatedFatal(
-          prefix: prefix,
-          promptReason: 'Authenticate for authenticatedFatal test',
-          secureEnclave: true,
-        ),
-      );
-    });
-
-    testWidgets('store/useAndForget round-trip — authenticate when prompted', (
-      tester,
-    ) async {
-      const key = 'af_key';
-      final value = Uint8List.fromList(utf8.encode('fatal authenticated secret'));
-      await storage.store(key, value);
-      final decoded = await storage.useAndForget<String>(
-        key,
-        (bytes) async => utf8.decode(bytes),
-      );
-      expect(decoded, 'fatal authenticated secret');
-      await storage.trash(key);
-    });
-  });
+    },
+  );
 }

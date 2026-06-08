@@ -19,15 +19,20 @@ dev_dependencies:
 
 melos:
   scripts:
+    # Scripts call melos via `dart run melos` (the dev-dependency) rather than a
+    # globally-activated `melos` — a global activation is tied to the SDK it was
+    # activated with and breaks when invoked under a different Dart (e.g. fvm vs
+    # system). `dart run` always uses the workspace's resolved melos under the
+    # ambient Dart, so run with `fvm exec ...` locally (CI's Dart is already 3.12).
     analyze:
       description: Analyze every package (fails on any issue).
-      run: melos exec -- flutter analyze
+      run: dart run melos exec -- flutter analyze
     test:
       description: Run Dart unit tests in every package that has a test/ dir.
-      run: melos exec --dir-exists=test -- flutter test
+      run: dart run melos exec --dir-exists=test -- flutter test
     format:
       description: Check formatting across all packages.
-      run: melos exec -- dart format --set-exit-if-changed .
+      run: dart run melos exec -- dart format --set-exit-if-changed .
     format:fix:
       description: Apply formatting across all packages.
-      run: melos exec -- dart format .
+      run: dart run melos exec -- dart format .

@@ -29,19 +29,27 @@ void main() {
     });
 
     test('AuthenticationFailedException is the ONLY recoverable type', () {
-      final recoverableCount =
-          exceptions.keys.where((e) => e.recoverable).length;
-      expect(recoverableCount, 2, // both AuthenticationFailedException variants
-          reason: 'only authentication failures are retry-able');
+      final recoverableCount = exceptions.keys
+          .where((e) => e.recoverable)
+          .length;
       expect(
-        exceptions.keys.where((e) => e.recoverable).every(
-            (e) => e is AuthenticationFailedException),
+        recoverableCount,
+        2, // both AuthenticationFailedException variants
+        reason: 'only authentication failures are retry-able',
+      );
+      expect(
+        exceptions.keys
+            .where((e) => e.recoverable)
+            .every((e) => e is AuthenticationFailedException),
         isTrue,
       );
     });
 
     test('cancelled flag is carried and surfaced in toString', () {
-      const cancelled = AuthenticationFailedException(key: 'k', cancelled: true);
+      const cancelled = AuthenticationFailedException(
+        key: 'k',
+        cancelled: true,
+      );
       expect(cancelled.cancelled, isTrue);
       expect(cancelled.toString(), contains('cancelled'));
     });

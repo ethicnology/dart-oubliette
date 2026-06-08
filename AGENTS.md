@@ -1,4 +1,4 @@
-# AGENT.md — AI Agent Guidance
+# AGENTS.md — AI Agent Guidance
 
 ## Do not change without discussion
 
@@ -133,30 +133,29 @@ reintroduces a specific, reviewed vulnerability. Do not "simplify" them away.
 ## Build & test
 
 This is a **Dart pub workspace** (root `pubspec.yaml` with `workspace:` + `melos:`)
-— one resolution, one root `pubspec.lock`. Use **`fvm flutter`** (the repo pins
-Flutter 3.44.1 / Dart 3.12.1 via `.fvmrc`; a default-PATH `flutter` may be too old).
+— one resolution, one root `pubspec.lock`. A root **`Makefile`** wraps the common
+tasks behind the pinned SDK (fvm) + Melos — **prefer it**:
 
 ```bash
-# One-time: resolve the whole workspace, and activate the Melos CLI
-fvm flutter pub get                  # resolves ALL packages at once (from root)
-fvm dart pub global activate melos   # CLI on PATH (~/.pub-cache/bin); dev-dep pins the version
-
-# Analyze + unit-test every package (run via fvm exec so Melos uses the pinned SDK)
-fvm exec melos run analyze
-fvm exec melos run test
-fvm exec melos run format            # format:fix to apply
-
-# Kotlin JVM tests — run through the example's Gradle (needs the Flutter embedding)
-cd oubliette/example/android && ./gradlew :keystore:testDebugUnitTest
-
-# Integration tests (on device/emulator — API 30+ for Android)
-cd oubliette/example && fvm flutter test integration_test/
-
-# Run the example app
-cd oubliette/example && fvm flutter run
+make get          # resolve the whole workspace (one pub get from the root)
+make analyze      # analyze every package
+make test         # Dart unit tests in every package
+make format       # check formatting (make format-fix to apply)
+make kotlin-test  # Kotlin JVM unit tests (via the example Gradle build)
+make apk          # build the example debug APK (compiles all plugin Kotlin)
+make integration  # integration tests (needs a device/emulator)
+make help         # list every target
 ```
 
-CI uses the same Melos scripts (`dart pub global activate melos` → `melos run analyze`/`test`).
+Each target runs `fvm exec dart run melos run <script>` (the repo pins
+Flutter 3.44.1 / Dart 3.12.1 via `.fvmrc`). It deliberately does **not** use a
+globally-activated `melos` — a global activation is tied to one SDK and breaks
+under a different Dart (system vs fvm). On a machine/CI where the right
+Dart+Flutter are already on PATH, drop fvm: `make test RUNNER=`. Run the example
+app with `cd oubliette/example && fvm flutter run`.
+
+CI runs the same workspace scripts directly: `flutter pub get` →
+`dart run melos run analyze` → `dart run melos run test` (no global melos).
 
 Biometric, Secure Enclave, and StrongBox paths cannot be exercised on
 simulators/CI — verify them manually on real devices with an enrolled credential

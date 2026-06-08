@@ -237,9 +237,9 @@ class DarwinSecretAccess {
         accessibility,
         'accessibility',
         'must be a *ThisDeviceOnly class (whenUnlockedThisDeviceOnly, '
-        'afterFirstUnlockThisDeviceOnly, or whenPasscodeSetThisDeviceOnly) — '
-        'Oubliette never stores a hardware-bound secret with a '
-        'backup-restorable or syncable accessibility',
+            'afterFirstUnlockThisDeviceOnly, or whenPasscodeSetThisDeviceOnly) — '
+            'Oubliette never stores a hardware-bound secret with a '
+            'backup-restorable or syncable accessibility',
       );
     }
     // Keychain accounts are `prefix + slotSeparator + key`. The separator's
