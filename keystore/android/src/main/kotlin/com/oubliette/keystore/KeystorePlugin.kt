@@ -38,6 +38,20 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     /** Posts MethodChannel.Result callbacks back onto the platform thread. */
     internal val mainHandler = Handler(Looper.getMainLooper())
 
+    /**
+     * Posts [block] to the crypto thread. [block] MUST deliver its result via
+     * [mainHandler] (MethodChannel.Result is @UiThread). If the looper is gone
+     * (plugin detached mid-call) the runnable never runs — [onDead] is invoked
+     * (e.g. to wipe a secret) and the Dart Future is failed explicitly so it
+     * cannot hang awaiting a result that will never arrive.
+     */
+    internal fun postCrypto(result: Result, onDead: () -> Unit = {}, block: () -> Unit) {
+        if (!cryptoHandler.post(block)) {
+            onDead()
+            mainHandler.post { result.error("detached", "Plugin detached during operation.", null) }
+        }
+    }
+
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "keystore")
         appContext = flutterPluginBinding.applicationContext
@@ -82,11 +96,12 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 result.error("bad_args", "Missing alias.", null)
                 return
             }
-        cryptoHandler.post {
+        postCrypto(result) {
             try {
-                result.success(getKey(alias) != null)
+                val exists = getKey(alias) != null
+                mainHandler.post { result.success(exists) }
             } catch (e: Exception) {
-                result.error("contains_alias_failed", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("contains_alias_failed", e.message ?: e.toString(), null) }
             }
         }
     }
@@ -115,7 +130,7 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 result.error("bad_args", "Missing invalidatedByBiometricEnrollment.", null)
                 return
             }
-        cryptoHandler.post {
+        postCrypto(result) {
             try {
                 // Fail closed: requesting StrongBox must yield StrongBox or a
                 // clear error — never a silent TEE downgrade. The feature flag
@@ -123,17 +138,19 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 // truth and may still throw StrongBoxUnavailableException.
                 if (strongBox &&
                     !appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)) {
-                    result.error(
-                        "strongbox_unavailable",
-                        "StrongBox requested but FEATURE_STRONGBOX_KEYSTORE is absent on this device.",
-                        null
-                    )
-                    return@post
+                    mainHandler.post {
+                        result.error(
+                            "strongbox_unavailable",
+                            "StrongBox requested but FEATURE_STRONGBOX_KEYSTORE is absent on this device.",
+                            null
+                        )
+                    }
+                    return@postCrypto
                 }
                 val scheme = SchemeRegistry.schemeFor(version)
                 if (scheme == null) {
-                    result.error("generate_key_failed", "Unsupported version.", null)
-                    return@post
+                    mainHandler.post { result.error("generate_key_failed", "Unsupported version.", null) }
+                    return@postCrypto
                 }
                 scheme.generateKey(
                     alias,
@@ -142,13 +159,15 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                     userAuthenticationRequired,
                     invalidatedByBiometricEnrollment
                 )
-                result.success(null)
+                mainHandler.post { result.success(null) }
             } catch (e: StrongBoxUnavailableException) {
-                result.error("strongbox_unavailable", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("strongbox_unavailable", e.message ?: e.toString(), null) }
+            } catch (e: HardwareUnavailableException) {
+                mainHandler.post { result.error("hardware_unavailable", e.message ?: e.toString(), null) }
             } catch (e: IllegalStateException) {
-                result.error("already_exists", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("already_exists", e.message ?: e.toString(), null) }
             } catch (e: Exception) {
-                result.error("generate_key_failed", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("generate_key_failed", e.message ?: e.toString(), null) }
             }
         }
     }
@@ -159,16 +178,16 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 result.error("bad_args", "Missing alias.", null)
                 return
             }
-        cryptoHandler.post {
+        postCrypto(result) {
             try {
                 val keyStore = KeyStore.getInstance(keyStoreType)
                 keyStore.load(null)
                 if (keyStore.containsAlias(alias)) {
                     keyStore.deleteEntry(alias)
                 }
-                result.success(null)
+                mainHandler.post { result.success(null) }
             } catch (e: Exception) {
-                result.error("delete_entry_failed", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("delete_entry_failed", e.message ?: e.toString(), null) }
             }
         }
     }
@@ -182,27 +201,31 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             result.error("bad_args", "Missing plaintext, aad, or alias.", null)
             return
         }
-        cryptoHandler.post {
+        postCrypto(result, onDead = { plaintext.fill(0) }) {
             try {
                 val scheme = SchemeRegistry.schemeFor(SchemeRegistry.CURRENT_VERSION)
                     ?: run {
-                        result.error("encrypt_failed", "Unsupported version.", null)
-                        return@post
+                        mainHandler.post { result.error("encrypt_failed", "Unsupported version.", null) }
+                        return@postCrypto
                     }
                 val encryptResult = scheme.encrypt(alias, plaintext, aad)
-                result.success(
-                    mapOf(
-                        "version" to encryptResult.version,
-                        "nonce" to encryptResult.nonce,
-                        "ciphertext" to encryptResult.ciphertext
+                mainHandler.post {
+                    result.success(
+                        mapOf(
+                            "version" to encryptResult.version,
+                            "nonce" to encryptResult.nonce,
+                            "ciphertext" to encryptResult.ciphertext
+                        )
                     )
-                )
+                }
             } catch (e: KeyNotFoundException) {
-                result.error("key_not_found", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("key_not_found", e.message ?: e.toString(), null) }
             } catch (e: KeyInvalidatedException) {
-                result.error("key_invalidated", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("key_invalidated", e.message ?: e.toString(), null) }
+            } catch (e: HardwareUnavailableException) {
+                mainHandler.post { result.error("hardware_unavailable", e.message ?: e.toString(), null) }
             } catch (e: Exception) {
-                result.error("encrypt_failed", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("encrypt_failed", e.message ?: e.toString(), null) }
             } finally {
                 plaintext.fill(0)
             }
@@ -220,22 +243,25 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             result.error("bad_args", "Missing version, ciphertext, nonce, aad, or alias.", null)
             return
         }
-        cryptoHandler.post {
+        postCrypto(result) {
             var plaintext: ByteArray? = null
             try {
                 val scheme = SchemeRegistry.schemeFor(version)
                 if (scheme == null) {
-                    result.error("decrypt_failed", "Unsupported version.", null)
-                    return@post
+                    mainHandler.post { result.error("decrypt_failed", "Unsupported version.", null) }
+                    return@postCrypto
                 }
                 plaintext = scheme.decrypt(alias, ciphertext, nonce, aad)
-                result.success(plaintext.copyOf())
+                val out = plaintext.copyOf()
+                mainHandler.post { result.success(out) }
             } catch (e: KeyNotFoundException) {
-                result.error("key_not_found", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("key_not_found", e.message ?: e.toString(), null) }
             } catch (e: KeyInvalidatedException) {
-                result.error("key_invalidated", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("key_invalidated", e.message ?: e.toString(), null) }
+            } catch (e: HardwareUnavailableException) {
+                mainHandler.post { result.error("hardware_unavailable", e.message ?: e.toString(), null) }
             } catch (e: Exception) {
-                result.error("decrypt_failed", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("decrypt_failed", e.message ?: e.toString(), null) }
             } finally {
                 plaintext?.fill(0)
             }
@@ -243,13 +269,13 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     private fun handleIsStrongBoxAvailable(result: Result) {
-        cryptoHandler.post {
+        postCrypto(result) {
             try {
                 val available = appContext.packageManager
                     .hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
-                result.success(available)
+                mainHandler.post { result.success(available) }
             } catch (e: Exception) {
-                result.error("is_strongbox_available_failed", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("is_strongbox_available_failed", e.message ?: e.toString(), null) }
             }
         }
     }

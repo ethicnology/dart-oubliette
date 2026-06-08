@@ -33,3 +33,9 @@ migrate_working_dir/
 /coverage/
 **/.cursor/
 .gradle/
+
+# Local audit / planning docs — kept untracked, never committed
+/audit/
+/REVIEW.md
+/REFACTOR_PLAN.md
+/RELEASE_CHECKLIST.md

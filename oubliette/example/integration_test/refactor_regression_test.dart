@@ -5,13 +5,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:keystore/keystore.dart';
 import 'package:oubliette/oubliette.dart';
+import 'package:oubliette/src/slot.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// On-device regression tests for behaviors introduced by the security
 /// refactor. The Dart unit tests cover these against a mocked channel; these
 /// exercise the real native layer. Biometric/SE-dependent fixes (fail-closed
-/// auth, key_invalidated) need an enrolled credential and live in the manual
-/// RELEASE_CHECKLIST instead.
+/// auth, key_invalidated) need an enrolled credential and are verified manually
+/// on a real device instead.
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -134,7 +135,10 @@ void main() {
         darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
       );
       const key = 'tamper_key';
-      const slot = 'reg_tamper_$key';
+      // The on-disk slot is `prefix + slotSeparator + key` — build it the same
+      // way the library does, not a hardcoded `prefix + key` (which the slot
+      // separator refactor made stale).
+      final slot = buildSlot('reg_tamper_', key);
       addTearDown(() => storage.trash(key));
 
       await storage.store(key, Uint8List.fromList([7, 7, 7]));
@@ -147,7 +151,7 @@ void main() {
         version: original.version,
         nonce: original.nonce,
         ciphertext: original.ciphertext,
-        aad: 'reg_tamper_some_other_key',
+        aad: buildSlot('reg_tamper_', 'some_other_key'),
         keyAlias: original.keyAlias,
       );
       await prefs.setString(slot, tampered.toJson());
@@ -155,6 +159,42 @@ void main() {
       await expectLater(
         storage.useAndForget<void>(key, (_) async {}),
         throwsA(isA<PayloadTamperException>()),
+      );
+    });
+
+    testWidgets('fetch rejects an on-disk scheme-version tamper (C4)',
+        (tester) async {
+      // The scheme `version` selects the decryptor AND is bound into the GCM
+      // AAD (V1Scheme.versionedAad). A rewritten on-disk version can never
+      // silently decrypt — today it misses the append-only registry; once a v2
+      // that shares an alias exists, the GCM tag over `v{version}` rejects it.
+      final storage = Oubliette(
+        android: const AndroidSecretAccess.onlyUnlocked(
+          prefix: 'reg_ver_',
+          strongBox: false,
+        ),
+        darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
+      );
+      const key = 'ver_key';
+      final slot = buildSlot('reg_ver_', key);
+      addTearDown(() => storage.trash(key));
+
+      await storage.store(key, Uint8List.fromList([5, 5, 5]));
+
+      final prefs = await SharedPreferences.getInstance();
+      final original = EncryptedPayload.fromJson(prefs.getString(slot)!);
+      final tampered = EncryptedPayload(
+        version: original.version + 1, // flip the scheme version
+        nonce: original.nonce,
+        ciphertext: original.ciphertext,
+        aad: original.aad,
+        keyAlias: original.keyAlias,
+      );
+      await prefs.setString(slot, tampered.toJson());
+
+      await expectLater(
+        storage.useAndForget<void>(key, (_) async {}),
+        throwsA(isA<DecryptionFailedException>()),
       );
     });
   });

@@ -52,10 +52,12 @@ void main() {
     testWidgets('store fails if key already exists', (WidgetTester tester) async {
       const key = 'api_test_dup';
       await storage.store(key, Uint8List.fromList(utf8.encode('first')));
-      try {
-        await storage.store(key, Uint8List.fromList(utf8.encode('second')));
-        fail('Expected store to fail on duplicate key');
-      } catch (_) {}
+      // expectLater asserts the throw — a bare try/catch around `fail()` would
+      // swallow the TestFailure and pass even if the duplicate were accepted.
+      await expectLater(
+        storage.store(key, Uint8List.fromList(utf8.encode('second'))),
+        throwsA(isA<StateError>()),
+      );
       await storage.trash(key);
     });
   });

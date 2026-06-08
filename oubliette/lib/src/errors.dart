@@ -1,3 +1,25 @@
+/// Base class for every typed failure Oubliette raises.
+///
+/// Callers should branch on [recoverable] rather than string-matching a native
+/// `PlatformException.code`. The distinction is safety-critical: calling
+/// `purge()` (which is irreversible) in response to a *recoverable* error
+/// destroys data that a retry would have returned.
+///
+/// Being `sealed`, a `switch` over an [OublietteException] is exhaustive — the
+/// analyzer flags any unhandled subtype if a future release adds one.
+sealed class OublietteException implements Exception {
+  const OublietteException();
+
+  /// Whether retrying the *same* operation can succeed without destroying data
+  /// — typically after the user unlocks the device or re-authenticates.
+  ///
+  /// - `true`  → transient. Retry; **never** `purge()` in response.
+  /// - `false` → the secret behind this operation is unreadable. The only way
+  ///   forward is an explicit, data-destroying recovery: `purge()` →`init()` →
+  ///   have the user re-enter the secret.
+  bool get recoverable;
+}
+
 /// Thrown when a stored [EncryptedPayload] does not match the slot it was
 /// fetched from.
 ///
@@ -8,7 +30,10 @@
 /// `SharedPreferences` attempting to make a payload decrypt under a different
 /// (weaker, or differently-bound) key. The library refuses to decrypt rather
 /// than trust attacker-controlled routing metadata.
-class PayloadTamperException implements Exception {
+///
+/// Not recoverable by retry: the on-disk blob will keep failing the check until
+/// it is overwritten (`trash` + `store`).
+final class PayloadTamperException extends OublietteException {
   /// The logical key the caller asked for.
   final String key;
 
@@ -33,9 +58,158 @@ class PayloadTamperException implements Exception {
   });
 
   @override
+  bool get recoverable => false;
+
+  @override
   String toString() =>
       'PayloadTamperException: stored payload for key "$key" does not match '
       'its slot (expected aad="$expectedAad" alias="$expectedAlias", '
       'found aad="$actualAad" alias="$actualAlias"). '
       'Refusing to decrypt attacker-relocatable data.';
+}
+
+/// Thrown when a stored blob cannot be parsed into a valid [EncryptedPayload]
+/// — a missing/invalid `version`, a nonce of the wrong length, empty
+/// ciphertext, or non-base64 fields.
+///
+/// This signals on-disk corruption or an out-of-contract write, distinct from a
+/// cryptographic decrypt failure ([DecryptionFailedException]) and from a
+/// relocation attack ([PayloadTamperException]). Not recoverable by retry.
+final class PayloadCorruptException extends OublietteException {
+  /// Human-readable description of what was malformed.
+  final String reason;
+
+  const PayloadCorruptException(this.reason);
+
+  @override
+  bool get recoverable => false;
+
+  @override
+  String toString() => 'PayloadCorruptException: $reason';
+}
+
+/// Thrown when the profile's hardware key has been **permanently invalidated**
+/// by the OS, making both the key and every secret stored under it
+/// unrecoverable.
+///
+/// On Android this happens to any `userAuthenticationRequired` key when:
+/// - a new biometric is enrolled (only for `authenticatedFatal`, which sets
+///   `invalidatedByBiometricEnrollment`), or
+/// - the secure lock screen (PIN/pattern/password) is removed or reset — this
+///   invalidates **all** authenticated keys, including the non-fatal
+///   `authenticated` profile.
+///
+/// The library never deletes key material implicitly, so a present-but-dead
+/// key leaves the profile wedged: `store`/`fetch` keep failing and the alias
+/// cannot be regenerated. Recovery is an explicit, irreversible decision the
+/// caller must make — delete the profile's key **and** its stored blobs
+/// (`purge`), then re-`init()`.
+///
+/// Darwin cannot raise this: OS invalidation there deletes the keychain item,
+/// so `fetch` returns `null` rather than signalling an invalidated key.
+final class KeyInvalidatedException extends OublietteException {
+  /// The Keystore alias of the dead key (the profile's [keyAlias]).
+  final String keyAlias;
+
+  /// The underlying platform error, for diagnostics.
+  final Object? cause;
+
+  const KeyInvalidatedException({required this.keyAlias, this.cause});
+
+  @override
+  bool get recoverable => false;
+
+  @override
+  String toString() =>
+      'KeyInvalidatedException: the hardware key "$keyAlias" was permanently '
+      'invalidated (biometric enrollment or lock-screen change). The key and '
+      'every secret under it are unrecoverable; delete the profile key and its '
+      'stored values, then re-init to resume. (cause: $cause)';
+}
+
+/// Thrown when the profile's key alias does not exist at decrypt time — e.g.
+/// the Android Keystore was cleared, or the app was restored from a backup
+/// that carried `SharedPreferences` blobs but not the (non-backupable) key
+/// material.
+///
+/// Distinct from [KeyInvalidatedException] (the key existed and the OS killed
+/// it) and from [DecryptionFailedException] (the key exists but the ciphertext
+/// failed authentication). The orphaned blob is unreadable: the library does
+/// **not** silently mint a fresh key, as that would mask the cause behind an
+/// opaque decrypt failure. Recovery is an explicit `purge()` + `init()` +
+/// re-entry of the secret. Not recoverable by retry.
+final class KeyNotFoundException extends OublietteException {
+  /// The Keystore alias that was expected but absent.
+  final String keyAlias;
+
+  /// The underlying platform error, for diagnostics.
+  final Object? cause;
+
+  const KeyNotFoundException({required this.keyAlias, this.cause});
+
+  @override
+  bool get recoverable => false;
+
+  @override
+  String toString() =>
+      'KeyNotFoundException: the hardware key "$keyAlias" does not exist, but a '
+      'blob encrypted under it remains. The blob is unreadable; purge the '
+      'profile and re-init to resume. (cause: $cause)';
+}
+
+/// Thrown when authenticated decryption fails because the ciphertext did not
+/// verify under the profile key — corrupted/truncated storage, a key mismatch,
+/// or tampering the AEAD tag caught.
+///
+/// The key itself is intact (use [KeyInvalidatedException] / [KeyNotFoundException]
+/// for key-level problems); it is this specific blob that cannot be read. Not
+/// recoverable by retry.
+final class DecryptionFailedException extends OublietteException {
+  /// The logical key whose blob failed to decrypt.
+  final String key;
+
+  /// The underlying platform error, for diagnostics.
+  final Object? cause;
+
+  const DecryptionFailedException({required this.key, this.cause});
+
+  @override
+  bool get recoverable => false;
+
+  @override
+  String toString() =>
+      'DecryptionFailedException: the stored blob for key "$key" failed '
+      'authenticated decryption (corruption, key mismatch, or tampering). '
+      '(cause: $cause)';
+}
+
+/// Thrown when a per-operation authentication gate is not satisfied — the user
+/// cancelled or failed the biometric/credential prompt, or the device was
+/// locked so no prompt could be shown (`interaction_not_allowed`).
+///
+/// **Recoverable**: the key and data are intact. Prompt again once the user is
+/// ready / the device is unlocked. Never `purge()` in response — that would
+/// destroy readable data because the user simply hasn't authenticated yet.
+final class AuthenticationFailedException extends OublietteException {
+  /// The logical key the operation targeted, if applicable.
+  final String? key;
+
+  /// `true` when the user explicitly cancelled the prompt (vs a failed match
+  /// or a locked device).
+  final bool cancelled;
+
+  /// The underlying platform error, for diagnostics.
+  final Object? cause;
+
+  const AuthenticationFailedException({this.key, this.cancelled = false, this.cause});
+
+  @override
+  bool get recoverable => true;
+
+  @override
+  String toString() =>
+      'AuthenticationFailedException: authentication was not satisfied'
+      '${cancelled ? ' (cancelled by user)' : ''}'
+      '${key != null ? ' for key "$key"' : ''}. The data is intact — retry '
+      'after the user authenticates. (cause: $cause)';
 }

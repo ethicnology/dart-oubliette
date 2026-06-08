@@ -167,3 +167,85 @@ func secItemDelete(params: KeychainParams) -> OSStatus {
   let query = keychainQuery(params: params)
   return Security.SecItemDelete(query as CFDictionary)
 }
+
+/// The account-independent subset of a keychain query — used to enumerate a
+/// whole profile (every account under a service/group), not a single item.
+struct KeychainScope {
+  let service: String?
+  let accessGroup: String?
+  let useDataProtection: Bool
+}
+
+/// Deletes every generic-password item in [scope] whose `kSecAttrAccount`
+/// starts with [prefix] but with **none** of [excludePrefixes].
+///
+/// [excludePrefixes] is an optional belt-and-suspenders exclusion list. The
+/// oubliette layer no longer needs it: it passes `prefix + U+001D` (the slot
+/// separator), and since that separator can only appear at the prefix/key
+/// boundary, ownership is already exact — wiping `authenticated_<sep>` cannot
+/// match `authenticated_fatal_<sep>` items. The parameter is retained for
+/// callers that want additional sibling exclusions.
+///
+/// Keychain has no prefix-match predicate, so we enumerate the accounts in
+/// scope and delete the matching ones individually. Returns `errSecSuccess`
+/// when at least one item was deleted, `errSecItemNotFound` when nothing
+/// matched (a clean no-op for a wipe), or the first failing delete status.
+func secItemDeleteByPrefix(
+  scope: KeychainScope,
+  prefix: String,
+  excludePrefixes: [String] = []
+) -> OSStatus {
+  var listQuery: [String: Any] = [
+    kSecClass as String: kSecClassGenericPassword,
+    kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
+    kSecMatchLimit as String: kSecMatchLimitAll,
+    kSecReturnAttributes as String: true
+  ]
+  if let service = scope.service {
+    listQuery[kSecAttrService as String] = service
+  }
+  if let group = scope.accessGroup {
+    listQuery[kSecAttrAccessGroup as String] = group
+  }
+  #if os(macOS)
+  if scope.useDataProtection, #available(macOS 10.15, *) {
+    listQuery[kSecUseDataProtectionKeychain as String] = true
+  }
+  #endif
+
+  var items: CFTypeRef?
+  let listStatus = Security.SecItemCopyMatching(listQuery as CFDictionary, &items)
+  if listStatus == errSecItemNotFound { return errSecItemNotFound }
+  guard listStatus == errSecSuccess, let entries = items as? [[String: Any]] else {
+    return listStatus
+  }
+
+  var deletedAny = false
+  for entry in entries {
+    guard let account = entry[kSecAttrAccount as String] as? String,
+          account.hasPrefix(prefix),
+          !excludePrefixes.contains(where: { account.hasPrefix($0) }) else { continue }
+    var deleteQuery: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrAccount as String: account,
+      kSecAttrSynchronizable as String: kCFBooleanFalse as Any
+    ]
+    if let service = scope.service {
+      deleteQuery[kSecAttrService as String] = service
+    }
+    if let group = scope.accessGroup {
+      deleteQuery[kSecAttrAccessGroup as String] = group
+    }
+    #if os(macOS)
+    if scope.useDataProtection, #available(macOS 10.15, *) {
+      deleteQuery[kSecUseDataProtectionKeychain as String] = true
+    }
+    #endif
+    let status = Security.SecItemDelete(deleteQuery as CFDictionary)
+    if status != errSecSuccess && status != errSecItemNotFound {
+      return status
+    }
+    deletedAny = true
+  }
+  return deletedAny ? errSecSuccess : errSecItemNotFound
+}

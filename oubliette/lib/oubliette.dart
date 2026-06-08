@@ -6,7 +6,15 @@ import 'package:oubliette/darwin_secret_access.dart';
 
 export 'android_secret_access.dart';
 export 'darwin_secret_access.dart';
-export 'src/errors.dart' show PayloadTamperException;
+export 'src/errors.dart'
+    show
+        OublietteException,
+        PayloadTamperException,
+        PayloadCorruptException,
+        KeyInvalidatedException,
+        KeyNotFoundException,
+        DecryptionFailedException,
+        AuthenticationFailedException;
 
 abstract class Oubliette {
   factory Oubliette({
@@ -39,6 +47,33 @@ abstract class Oubliette {
 
   Future<void> trash(String key);
   Future<bool> exists(String key);
+
+  /// Destroys the **entire profile**: every secret stored under it *and* its
+  /// key material. Irreversible — there is no recovery of the wiped secrets.
+  ///
+  /// Where [trash] removes one secret's blob, [purge] removes all of the
+  /// profile's blobs (every slot sharing this profile's prefix).
+  ///
+  /// - **Android**: also deletes the profile's Keystore key (aliases are
+  ///   per-profile, so this is safe). The profile is left empty and keyless.
+  /// - **Darwin**: deletes only the blobs and **retains** the Secure Enclave
+  ///   key. SE key identity is `(service, accessibility, accessGroup)` — it
+  ///   excludes the prefix — so profiles differing only by prefix share one
+  ///   key; deleting it could brick a sibling profile. The key is inert once
+  ///   its blobs are gone and is never invalidated, so retaining it is safe.
+  ///
+  /// The primary use is recovering a profile wedged by a
+  /// [KeyInvalidatedException] (the dead key blocks re-provisioning) and
+  /// implementing a "forget everything" / logout flow. To resume using the
+  /// profile afterwards, call [init] again to mint a fresh key:
+  ///
+  /// ```dart
+  /// await vault.purge();
+  /// await vault.init();
+  /// ```
+  ///
+  /// Must not run concurrently with [store]/[fetch] on the same profile.
+  Future<void> purge();
 
   /// Fetches the secret for [key], passes it to [action], then attempts to
   /// zero the buffer before returning — regardless of whether [action]

@@ -33,17 +33,64 @@ reintroduces a specific, reviewed vulnerability. Do not "simplify" them away.
   `strongbox_unavailable` — never a silent TEE fallback. Callers who accept TEE
   branch explicitly via `isStrongBoxAvailable()`.
 
+- **Hardware backing is verified, fail-closed (Android).** Beyond StrongBox,
+  *every* key is checked via `KeyInfo` (`getSecurityLevel()` on API 31+,
+  `isInsideSecureHardware` on API 30) — at generation
+  (`Aes256GcmKeyGenerator`) **and on every key retrieval** (`V1Scheme.getKey`,
+  covering both the plain and biometric paths). A software-backed/unverifiable
+  key is deleted/refused with `hardware_unavailable`. Do not remove the per-use
+  check: it closes the orphan-reuse gap (a key left in the software keystore must
+  never be silently used for a secret). `isHardwareBacked` is fail-closed
+  (unverifiable → refused).
+
+- **Every Darwin profile is `ThisDeviceOnly`.** `DarwinSecretAccess.custom`
+  rejects non-device-local accessibility (`whenUnlocked`/`afterFirstUnlock`) via
+  the `_deviceLocalAccessibility` allow-set; the four named profiles already
+  comply. Do not relax this — a non-`ThisDeviceOnly` item rides an encrypted
+  backup to another device (where its hardware key can't follow), which is both
+  an exfiltration path and a guaranteed undecryptable-on-restore blob.
+
 - **Decrypt trust boundary.** On Android, `fetch` derives `aad` and `keyAlias`
   from the live `(profile, key)` pair, never from the stored payload. The
   payload's copies are verify-only and a mismatch throws `PayloadTamperException`.
-  Only `version` is read from disk (to select the scheme); a future scheme must
-  not allow a downgrade via the on-disk version byte by sharing key material.
+  Only `version` is read from disk (to select the scheme), and it is **bound
+  into the AES-GCM AAD** (`V1Scheme.versionedAad` prepends `v{version}`),
+  so a rewritten on-disk version byte fails the GCM tag — no downgrade even if a
+  future scheme reuses a key alias. Keep this: every scheme MUST bind its own
+  `version` into the AAD (it's free — both encrypt and decrypt route through the
+  one `encryptWithCipher`/`decryptWithCipher` chokepoint). Do not remove it.
 
 - **Per-profile distinct default prefixes.** Each named profile has its own
   default storage prefix (and key alias). Never collapse them to a shared
   default — slot isolation is a security boundary (especially on Darwin, where
   the read query carries no access-control attribute). `custom` rejects reserved
   prefixes/aliases.
+
+- **Reserved slot separator (frozen).** A storage slot is
+  `prefix + slotSeparator + key` where `slotSeparator = U+001D`
+  (`oubliette/lib/src/slot.dart`), rejected in prefixes and keys. This string is
+  the SharedPreferences key, the `kSecAttrAccount`, **and** the Android AES-GCM
+  AAD. The separator's position encodes the prefix length, making `purge()`
+  ownership exact — a profile whose prefix nests under another's (incl. two
+  custom siblings like `app_` ⊂ `app_admin_`) can never wipe the other. Do not
+  revert `purge()` to a bare `startsWith(prefix)`, change the separator, or drop
+  the prefix/key validation — each reintroduces a nested-prefix data-loss bug.
+
+- **Frozen on-disk format versions, both platforms.** Android: the
+  `EncryptedPayload` JSON envelope is format v1 (field names + base64 +
+  snake_case `key_alias` frozen). Darwin: every blob is prefixed with the frozen
+  1-byte `_darwinFormatV1` header (`darwin_oubliette.dart`). Bump either only by
+  *adding* a reader for a new value; never reinterpret an old one. The golden
+  vectors in `keystore/test/encrypted_payload_test.dart` are **hardcoded
+  literals** — a failure means you drifted the format; never "update" a golden
+  string to make CI green.
+
+- **Typed errors carry a `recoverable` flag.** Native codes map to sealed
+  `OublietteException` subtypes (`oubliette/lib/src/errors.dart`). Set
+  `recoverable` correctly: `AuthenticationFailedException` is recoverable (retry,
+  never `purge()`); key-gone / decrypt / tamper / corrupt are not. Do not
+  collapse a recoverable failure into a fatal-looking one — a caller may answer
+  a "fatal" error with the irreversible `purge()`.
 
 - **Fail-closed auth.** If authentication is requested and the platform cannot
   attach the protection (Swift: `SecAccessControl` creation fails; Android: an
@@ -73,23 +120,27 @@ reintroduces a specific, reviewed vulnerability. Do not "simplify" them away.
 
 ## Build & test
 
+Use **`fvm flutter`** — the repo is pinned to Flutter 3.44.1 / Dart 3.12.1
+(`.fvmrc`); a default-PATH `flutter` may be too old to resolve dependencies.
+
 ```bash
 # Static analysis (whole project)
-cd oubliette && flutter analyze
+cd oubliette && fvm flutter analyze
 
 # Dart unit tests
-cd oubliette && flutter test
-cd keystore && flutter test
+cd oubliette && fvm flutter test
+cd keystore && fvm flutter test
 
 # Kotlin JVM tests (Gradle wrapper committed under keystore/android)
 cd keystore/android && ./gradlew test
 
 # Integration tests (on device/emulator — API 30+ for Android)
-cd oubliette/example && flutter test integration_test/
+cd oubliette/example && fvm flutter test integration_test/
 
 # Run the example app
-cd oubliette/example && flutter run
+cd oubliette/example && fvm flutter run
 ```
 
 Biometric, Secure Enclave, and StrongBox paths cannot be exercised on
-simulators/CI — see `RELEASE_CHECKLIST.md` for the manual device matrix.
+simulators/CI — verify them manually on real devices with an enrolled credential
+(biometric + device-credential, StrongBox where present) before a release.

@@ -1,0 +1,27 @@
+# Dependency advisory scanning + update PRs. Covers all three ecosystems the
+# project ships: pub (Dart/Flutter), Gradle (Android native), and the CI
+# actions themselves. Addresses the supply-chain checklist (research C18/C19).
+version: 2
+updates:
+  - package-ecosystem: "pub"
+    directories:
+      - "/oubliette"
+      - "/keystore"
+      - "/keychain"
+      - "/oubliette/example"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "gradle"
+    directories:
+      - "/keystore/android"
+      - "/oubliette/example/android"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

@@ -25,6 +25,11 @@ class _FakeOubliette extends Oubliette {
   }
 
   @override
+  Future<void> purge() async {
+    _store.clear();
+  }
+
+  @override
   Future<void> init() async {}
 
   @override

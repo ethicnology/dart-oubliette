@@ -1,3 +1,5 @@
+import 'src/slot.dart';
+
 /// Controls how secrets are protected on Android.
 ///
 /// Use one of the named constructors to select a security profile:
@@ -8,8 +10,9 @@
 ///
 /// Each named profile uses a dedicated, hardcoded Keystore alias **and a
 /// dedicated default storage prefix**. The prefix namespaces the
-/// SharedPreferences slot (`prefix + key`) so the same logical key stored
-/// under two different profiles never collides — slot isolation is a security
+/// SharedPreferences slot (`prefix + separator + key`, see `slot.dart`) so the
+/// same logical key stored under two different profiles never collides — slot
+/// isolation is a security
 /// boundary, not a convenience. The [custom] constructor requires a unique
 /// alias and prefix that must not collide with any reserved profile value.
 const _evenLockedKeyAlias = 'oubliette_even_locked';
@@ -38,11 +41,12 @@ const _reservedPrefixes = [
 
 class AndroidSecretAccess {
   /// Prefix prepended to every SharedPreferences key used to store the
-  /// encrypted payload. The resulting slot key (`prefix + key`) is also used
-  /// as the AES-GCM AAD (Additional Authenticated Data).
+  /// encrypted payload. The resulting slot key (`prefix + separator + key`,
+  /// built by `slot.dart`'s `buildSlot`) is also used as the AES-GCM AAD
+  /// (Additional Authenticated Data).
   ///
-  /// On fetch the AAD is **recomputed** from `prefix + key` and compared
-  /// against the value embedded in the stored blob; a mismatch throws
+  /// On fetch the AAD is **recomputed** from `prefix + separator + key` and
+  /// compared against the value embedded in the stored blob; a mismatch throws
   /// [PayloadTamperException]. The AAD is therefore verify-only — it is never
   /// read back from disk to decide how to decrypt.
   ///
@@ -231,15 +235,28 @@ class AndroidSecretAccess {
     required this.promptTitle,
     required this.promptSubtitle,
   }) : userAuthenticationRequired = promptTitle != null {
+    validateSlotPrefix(prefix);
+    if (keyAlias.isEmpty) {
+      throw ArgumentError.value(keyAlias, 'keyAlias', 'must not be empty');
+    }
     if (_reservedKeyAliases.contains(keyAlias)) {
       throw ArgumentError(
         'keyAlias "$keyAlias" is reserved for a named profile. Use a unique alias.',
       );
     }
-    if (_reservedPrefixes.contains(prefix)) {
-      throw ArgumentError(
-        'prefix "$prefix" is reserved for a named profile. Use a unique prefix.',
-      );
+    // Storage slots are `prefix + slotSeparator + key`. The separator's
+    // position encodes the prefix length, so two *distinct* prefixes can never
+    // produce colliding slots — even when one nests under the other. The only
+    // genuine collision is an identical prefix (same slot namespace, different
+    // key material), so reject exact equality with a reserved prefix. (Nested
+    // reserved prefixes are also rejected as a conservative, no-cost guard.)
+    for (final reserved in _reservedPrefixes) {
+      if (prefix.startsWith(reserved) || reserved.startsWith(prefix)) {
+        throw ArgumentError(
+          'prefix "$prefix" collides with reserved profile prefix "$reserved" '
+          '(one is a prefix of the other). Use a clearly distinct prefix.',
+        );
+      }
     }
   }
 }

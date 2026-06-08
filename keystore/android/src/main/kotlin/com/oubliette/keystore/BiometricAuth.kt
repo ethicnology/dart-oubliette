@@ -12,12 +12,14 @@ import javax.crypto.Cipher
 private fun encryptErrorCode(t: Throwable): String = when (t) {
   is KeyNotFoundException -> "key_not_found"
   is KeyInvalidatedException -> "key_invalidated"
+  is HardwareUnavailableException -> "hardware_unavailable"
   else -> "encrypt_failed"
 }
 
 private fun decryptErrorCode(t: Throwable): String = when (t) {
   is KeyNotFoundException -> "key_not_found"
   is KeyInvalidatedException -> "key_invalidated"
+  is HardwareUnavailableException -> "hardware_unavailable"
   else -> "decrypt_failed"
 }
 
@@ -36,19 +38,21 @@ internal fun KeystorePlugin.handleAuthenticateEncrypt(call: MethodCall, result: 
   // Cipher.init issues a keymaster Binder call that can block on busy hardware;
   // run it off the platform thread, then hop back to the main thread to show
   // BiometricPrompt (which must be built and shown on the UI thread).
-  cryptoHandler.post {
+  // postCrypto guards the dead-looper case: plaintext is wiped and the Future
+  // failed instead of hanging if the plugin detached before this runs.
+  postCrypto(result, onDead = { plaintext.fill(0) }) {
     val scheme = SchemeRegistry.schemeFor(SchemeRegistry.CURRENT_VERSION)
     if (scheme == null) {
       plaintext.fill(0)
       mainHandler.post { result.error("encrypt_failed", "Unsupported version.", null) }
-      return@post
+      return@postCrypto
     }
     val cipher = try {
       scheme.initEncryptCipher(alias)
     } catch (e: Throwable) {
       plaintext.fill(0)
       mainHandler.post { result.error(encryptErrorCode(e), e.message ?: e.toString(), null) }
-      return@post
+      return@postCrypto
     }
     mainHandler.post {
       authenticate(
@@ -78,8 +82,14 @@ internal fun KeystorePlugin.handleAuthenticateEncrypt(call: MethodCall, result: 
             }
           }
           // If the crypto looper is gone (plugin detached mid-auth) the runnable
-          // never runs — wipe here so plaintext is never left in memory.
-          if (!posted) plaintext.fill(0)
+          // never runs — wipe the plaintext and fail the Dart Future explicitly
+          // so it cannot hang awaiting a result that will never arrive.
+          if (!posted) {
+            plaintext.fill(0)
+            mainHandler.post {
+              result.error("detached", "Plugin detached during authentication.", null)
+            }
+          }
         }
       )
     }
@@ -100,24 +110,24 @@ internal fun KeystorePlugin.handleAuthenticateDecrypt(call: MethodCall, result: 
     return
   }
 
-  cryptoHandler.post {
+  postCrypto(result) {
     val scheme = SchemeRegistry.schemeFor(version)
     if (scheme == null) {
       mainHandler.post { result.error("decrypt_failed", "Unsupported version.", null) }
-      return@post
+      return@postCrypto
     }
     val cipher = try {
       scheme.initDecryptCipher(alias, nonce)
     } catch (e: Throwable) {
       mainHandler.post { result.error(decryptErrorCode(e), e.message ?: e.toString(), null) }
-      return@post
+      return@postCrypto
     }
     mainHandler.post {
       authenticate(
         cipher, title, subtitle, result,
         onSuccess = { authenticatedCipher ->
           // doFinal off the main thread (see handleAuthenticateEncrypt).
-          cryptoHandler.post {
+          val posted = cryptoHandler.post {
             var decrypted: ByteArray? = null
             try {
               decrypted = scheme.decryptWithCipher(authenticatedCipher, ciphertext, aad)
@@ -128,6 +138,13 @@ internal fun KeystorePlugin.handleAuthenticateDecrypt(call: MethodCall, result: 
               mainHandler.post { result.error("decrypt_failed", e.message ?: e.toString(), null) }
             } finally {
               decrypted?.fill(0)
+            }
+          }
+          // Crypto looper gone (plugin detached mid-auth): fail the Dart Future
+          // explicitly rather than leaving it to hang (mirrors the encrypt path).
+          if (!posted) {
+            mainHandler.post {
+              result.error("detached", "Plugin detached during authentication.", null)
             }
           }
         }

@@ -102,7 +102,7 @@ class V1Scheme(
   }
 
   override fun encryptWithCipher(cipher: Cipher, plaintext: ByteArray, aad: String): EncryptResult {
-    cipher.updateAAD(aad.toByteArray(StandardCharsets.UTF_8))
+    cipher.updateAAD(versionedAad(aad))
     val ciphertext = cipher.doFinal(plaintext)
     val nonce = cipher.iv
       ?: throw IllegalArgumentException("Invalid nonce.")
@@ -113,13 +113,36 @@ class V1Scheme(
   }
 
   override fun decryptWithCipher(cipher: Cipher, ciphertext: ByteArray, aad: String): ByteArray {
-    cipher.updateAAD(aad.toByteArray(StandardCharsets.UTF_8))
+    cipher.updateAAD(versionedAad(aad))
     return cipher.doFinal(ciphertext)
   }
+
+  /**
+   * Binds this scheme's [version] into the AES-GCM AAD. The on-disk `version`
+   * selects the decrypting scheme but is itself read from attacker-writable
+   * storage; without binding it, a future v2 reusing v1's key alias could be
+   * forced to a weaker v1 decrypt by flipping the stored version. Because the
+   * version constant is mixed into the authenticated data, a mismatched
+   * scheme/version fails the GCM tag. Both encrypt and decrypt go through this
+   * single method, so the binding is symmetric by construction.
+   */
+  private fun versionedAad(aad: String): ByteArray =
+    "v$version\u001D$aad".toByteArray(StandardCharsets.UTF_8)
 
   private fun getKey(alias: String): SecretKey? {
     val keyStore = KeyStore.getInstance(keyStoreType)
     keyStore.load(null)
-    return keyStore.getKey(alias, null) as? SecretKey
+    val key = keyStore.getKey(alias, null) as? SecretKey ?: return null
+    // Re-assert hardware backing on every use, not only at generation. This
+    // closes the orphan-reuse gap: if a key was somehow created/left in the
+    // software keystore (e.g. a failed delete on a software-only device after
+    // generation refused it), it must never be silently used for a
+    // hardware-bound secret. Fail-closed, both plain and biometric paths.
+    if (!Aes256GcmKeyGenerator.isHardwareBacked(key)) {
+      throw HardwareUnavailableException(
+        "Key \"$alias\" is not backed by secure hardware; refusing to use it."
+      )
+    }
+    return key
   }
 }

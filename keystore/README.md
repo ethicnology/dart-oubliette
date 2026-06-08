@@ -35,11 +35,16 @@ final plain = await keystore.decrypt(
 
 - **StrongBox is fail-closed.** Requesting `strongBox: true` on a device without
   a StrongBox element throws `strongbox_unavailable` — no silent TEE fallback.
+- **Hardware backing is verified, fail-closed.** Every key is checked
+  (`KeyInfo`: `getSecurityLevel()` on API 31+, `isInsideSecureHardware` on API 30) at generation and on every encrypt/decrypt;
+  a software-backed key is deleted/refused with `hardware_unavailable`.
 - The encrypted blob is stored by the caller (the `oubliette` package puts it in
   `SharedPreferences`). The payload is already AES-256-GCM encrypted, so it does
   not need a second encryption layer.
 - `version` is the only field a decrypt path reads from an untrusted blob — it
-  selects the scheme. `aad` is supplied by the caller, not the blob.
+  selects the scheme — and it is **bound into the AES-GCM AAD**, so a rewritten
+  version fails the tag (no scheme downgrade). `aad` is supplied by the caller,
+  not the blob.
 - Cipher init runs under a per-call daemon-thread timeout (no shared executor);
   plaintext is wiped on every exit path.
 

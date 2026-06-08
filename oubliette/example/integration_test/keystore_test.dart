@@ -110,6 +110,42 @@ void main() {
       );
     });
 
+    testWidgets('decrypt with wrong aad throws (GCM AAD binding)', (tester) async {
+      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
+      final encrypted = await facade.encrypt(alias: alias, plaintext: plaintext, aad: aad);
+      // The AAD is authenticated by GCM: decrypting with a different AAD must
+      // fail the tag check. This is the binding the Android trust boundary
+      // (slot-derived aad, not the on-disk copy) relies on.
+      await expectLater(
+        facade.decrypt(
+          version: encrypted.version,
+          alias: encrypted.keyAlias,
+          ciphertext: encrypted.ciphertext,
+          nonce: encrypted.nonce,
+          aad: 'a_different_aad',
+        ),
+        throwsA(isA<PlatformException>()),
+      );
+    });
+
+    testWidgets('decrypt with tampered ciphertext throws (GCM integrity)', (tester) async {
+      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
+      final encrypted = await facade.encrypt(alias: alias, plaintext: plaintext, aad: aad);
+      // Flip one byte of the ciphertext; the GCM tag must reject it.
+      final tampered = Uint8List.fromList(encrypted.ciphertext);
+      tampered[0] ^= 0xFF;
+      await expectLater(
+        facade.decrypt(
+          version: encrypted.version,
+          alias: encrypted.keyAlias,
+          ciphertext: tampered,
+          nonce: encrypted.nonce,
+          aad: encrypted.aad,
+        ),
+        throwsA(isA<PlatformException>()),
+      );
+    });
+
     testWidgets('encrypt with auth key requires authentication', (tester) async {
       const authAlias = 'integration_test_auth_key';
       await facade.generateKey(
@@ -118,8 +154,9 @@ void main() {
         strongBox: false,
         userAuthenticationRequired: true,
       );
+      EncryptedPayload? result;
       try {
-        await facade.encrypt(
+        result = await facade.encrypt(
           alias: authAlias,
           plaintext: plaintext,
           aad: aad,
@@ -127,9 +164,19 @@ void main() {
           promptSubtitle: 'Authenticate',
         );
       } on PlatformException catch (e) {
-        debugPrint('auth encrypt result: ${e.code} ${e.message}');
+        // Non-interactive CI (no enrolled credential, no prompt possible): a
+        // PlatformException is the expected outcome — assert it carries a real
+        // code rather than silently swallowing it (the old no-assertion path
+        // passed whether or not auth was enforced).
+        expect(e.code, isNotEmpty);
       } finally {
         await facade.deleteEntry(authAlias);
+      }
+      // If it DID return (interactive device with an enrolled credential), the
+      // payload must be well-formed — never a silent empty/garbage result.
+      if (result != null) {
+        expect(result.ciphertext, isNotEmpty);
+        expect(result.nonce, isNotEmpty);
       }
     });
 

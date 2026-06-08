@@ -66,6 +66,19 @@ There is no `read()`. Consumers must use `useAndForget(key, action)`, which retr
 
 `trash(key)` removes only the stored data — not the underlying cryptographic key. On Android, the encrypted payload is deleted from `SharedPreferences` but the Keystore key is retained. On Darwin, the Keychain item is deleted but the Secure Enclave key pair (when enabled) is retained. On both platforms the cryptographic key is shared across all secrets in a given security profile — deleting it would break every other secret encrypted under the same profile.
 
+### Destroy a Whole Profile — `purge()`
+
+`purge()` is the profile-level counterpart to `trash`: it removes **every** secret in the profile *and* its key material (on Android, the Keystore key; on Darwin the shared Secure Enclave key is retained, since its identity may be shared with a sibling profile and it is never invalidated). It is the **only** API that destroys key material, and only when you call it.
+
+The primary use is recovering a profile wedged by a permanently-invalidated key (`KeyInvalidatedException` — e.g. a new biometric was enrolled, or the secure lock screen was removed): the dead key blocks re-provisioning, so
+
+```dart
+await vault.purge();   // wipe the dead key + its (already-unreadable) blobs
+await vault.init();    // mint a fresh key
+```
+
+`purge()` is profile-scoped: purging one profile never touches another, even when one profile's prefix nests inside another's — the reserved `U+001D` separator between prefix and key makes slot ownership exact. It is also the "forget everything" / logout primitive. **Irreversible** — there is no recovery of the wiped secrets.
+
 ### Security Profiles, Not Flags
 
 | Profile | Meaning |
@@ -78,7 +91,7 @@ There is no `read()`. Consumers must use `useAndForget(key, action)`, which retr
 
 Hardware-backing (`strongBox` on Android, `secureEnclave` on Darwin) is always an explicit, required choice — never a hidden default.
 
-Each named profile owns a **distinct default storage prefix** (`oubliette_only_unlocked_`, `oubliette_authenticated_`, …). The storage slot key is `prefix + key`, so the same logical key stored under two profiles can never collide — slot isolation is a security boundary, not a convenience. `custom` requires a unique prefix and key alias and rejects any that collide with a reserved profile's.
+Each named profile owns a **distinct default storage prefix** (`oubliette_only_unlocked_`, `oubliette_authenticated_`, …). The storage slot key is `prefix + U+001D + key` — a reserved separator (rejected in prefixes and keys) whose position encodes the prefix length, so the same logical key stored under two profiles can never collide and `purge()` ownership stays exact even when prefixes nest. Slot isolation is a security boundary, not a convenience. `custom` requires a unique prefix and key alias and rejects any that collide with a reserved profile's.
 
 ### Fail-Closed Authentication
 
@@ -90,11 +103,11 @@ Asking for protection and silently getting none is the worst failure mode in a s
 
 ### The Stored Blob Is Never Trusted to Decrypt Itself
 
-On Android the encrypted payload lives in attacker-writable `SharedPreferences`. Its `aad` and `key_alias` fields are therefore **verify-only**: on `fetch`, the library recomputes the expected AAD (`prefix + key`) and key alias from the live profile and compares them against the blob. A mismatch — a payload relocated to another slot, or its decrypting key downgraded — throws `PayloadTamperException`. Only the scheme `version` is read from the blob to drive decryption (it must be, to select the scheme); it can never be used to downgrade across schemes that share key material.
+On Android the encrypted payload lives in attacker-writable `SharedPreferences`. Its `aad` and `key_alias` fields are therefore **verify-only**: on `fetch`, the library recomputes the expected AAD (the full slot, `prefix + U+001D + key`) and key alias from the live profile and compares them against the blob. A mismatch — a payload relocated to another slot, or its decrypting key downgraded — throws `PayloadTamperException`. Only the scheme `version` is read from the blob to drive decryption (it must be, to select the scheme); it is **bound into the AES-GCM AAD**, so a rewritten version fails the GCM tag and can never force a downgrade across schemes that share key material.
 
 ### The Key Never Leaves Hardware
 
-On both platforms, the cryptographic key is hardware-bound. On Android the AES-256-GCM key lives in the Keystore (TEE or StrongBox). On iOS/macOS with Secure Enclave enabled, a P-256 key pair is generated inside the SE chip. The private key never enters the application process.
+On both platforms, the cryptographic key is hardware-bound. On Android the AES-256-GCM key lives in the Keystore (TEE or StrongBox). On iOS/macOS with Secure Enclave enabled, a P-256 key pair is generated inside the SE chip. The private key never enters the application process. On Android this is **verified fail-closed**: every key is checked (`KeyInfo.isInsideSecureHardware`) at generation and on every use, and a software-backed key is refused with `hardware_unavailable` rather than silently used.
 
 The Secure Enclave key's identity encodes **everything that scopes it** — service, accessibility, and access group — in a single collision-free, length-prefixed tag (`com.oubliette.enclave.…`). Two differently-scoped keys can never share a tag (so `service=nil`, `service=""`, and `service="default"` are all distinct), the SE access-control policy is threaded from the profile's accessibility (not hardcoded), and changing any scoping input regenerates the key rather than silently reusing the old policy.
 
@@ -106,31 +119,33 @@ Each security profile uses a single AES-256-GCM key with a fresh hardware-random
 
 ### Versioned Encryption (Android)
 
-Every `EncryptedPayload` carries its scheme version. A future V2 can be introduced without breaking existing data — old payloads continue to decrypt with V1. No migration, ever.
+Every `EncryptedPayload` carries its scheme version. A future V2 can be introduced without breaking existing data — old payloads continue to decrypt with V1. No migration, ever. On Darwin, where Keychain items have no envelope of their own, each stored blob is prefixed with a frozen 1-byte format header serving the same role, so the same guarantee holds on iOS/macOS.
 
 ```json
 {
   "version": 1,
   "nonce": "base64...",
   "ciphertext": "base64...",
-  "aad": "oubliette_only_unlocked_my_key",
+  "aad": "oubliette_only_unlocked_␝my_key",
   "key_alias": "oubliette_only_unlocked"
 }
 ```
 
-`aad` and `key_alias` are persisted for diagnostics and are **verify-only** on
-read (see "The Stored Blob Is Never Trusted to Decrypt Itself" above) — they are
+(The `␝` in `aad` is the reserved **U+001D** slot separator — the slot is
+`prefix + ␝ + key`.) `aad` and `key_alias` are persisted for diagnostics and are
+**verify-only** on read (see "The Stored Blob Is Never Trusted to Decrypt
+Itself" above) — they are
 never used to choose how the blob is decrypted.
 
 The encrypted payload is stored in standard `SharedPreferences` (not `EncryptedSharedPreferences`, which is deprecated). Since the payload is already AES-256-GCM encrypted by the Android Keystore, double-encryption would add complexity without meaningful security benefit.
 
 ### No Cloud Sync
 
-On Darwin, `kSecAttrSynchronizable` is explicitly set to `false` on every keychain query. Secrets never leave the device via iCloud Keychain. This is deliberate: mnemonic phrases must remain device-local to prevent cloud-based exfiltration.
+On Darwin, `kSecAttrSynchronizable` is explicitly set to `false` on every keychain query. Secrets never leave the device via iCloud Keychain. This is deliberate: mnemonic phrases must remain device-local to prevent cloud-based exfiltration. Every profile is device-local by construction — the `custom` constructor rejects non-`ThisDeviceOnly` accessibility (`whenUnlocked`/`afterFirstUnlock`), so a secret can't ride an encrypted backup to another device either.
 
 ### macOS: Two Keychains, Explicit Choice
 
-Legacy file-based keychain (`useDataProtection = false`) works without code signing. Data Protection keychain (`useDataProtection = true`) enables Touch ID/Face ID but requires entitlements. The `authenticated`/`authenticatedFatal` profiles set Data Protection automatically.
+Legacy file-based keychain (`useDataProtection = false`) works without code signing but **cannot enforce authentication** — the file-based keychain rejects `kSecAttrAccessControl`, so an authenticated write fails closed with `errSecParam` (-50). The Data Protection keychain (`useDataProtection = true`) is the only macOS backend that supports authentication (Touch ID/Face ID/password) and requires code signing + the `keychain-access-groups` entitlement. The `authenticated`/`authenticatedFatal` profiles set Data Protection automatically; with `custom`, pairing `authenticationRequired: true` with `useDataProtection: false` on macOS will not work.
 
 ### Memory Hygiene at Every Layer
 
@@ -147,17 +162,34 @@ These limitations are inherent to managed runtimes. If you need guaranteed memor
 
 ## Errors
 
-Catchable errors and the recommended caller reaction:
+All typed failures extend the sealed `OublietteException`, which exposes a
+single decision-critical flag: **`recoverable`**.
 
-| Error | Layer | Meaning / reaction |
-|-------|-------|--------------------|
-| `PayloadTamperException` (Dart) | oubliette | Stored blob's slot metadata doesn't match the live profile (relocated/tampered). Do not retry; treat the secret as compromised. |
-| `strongbox_unavailable` | keystore | `strongBox: true` requested but StrongBox absent/exhausted. Pre-flight with `isStrongBoxAvailable()` and branch, or surface to the user. |
-| `auth_unavailable` (`errSecParam`) | keychain | Auth requested but the access control couldn't be attached — fail-closed. Check device capability/entitlements. |
-| `key_not_found` | keystore | Alias has no key. Call `init()` (or rely on the lazy ensure) before use. |
-| `key_invalidated` | keystore | Key permanently invalidated (biometric enrollment changed on `authenticatedFatal`). The secret is unrecoverable; re-enroll. |
-| `already_exists` | keystore / keychain | A value/key already exists. `trash()` first, or treat as the idempotent success it is during `init()`. |
-| `auth_error` / `auth_cancelled` | both | User cancelled or authentication failed. Offer a retry. |
+- `recoverable == true` → transient. Retry (often after the user unlocks the
+  device or re-authenticates). **Never** call `purge()` in response — you would
+  destroy data a retry would have returned.
+- `recoverable == false` → the secret behind this operation is unreadable. The
+  only way forward is the explicit, data-destroying recovery: `purge()` →
+  `init()` → have the user re-enter the secret.
+
+| Exception (`recoverable`) | Native code | Meaning / reaction |
+|---------------------------|-------------|--------------------|
+| `AuthenticationFailedException` (`true`) | `auth_failed`, `auth_error`, `auth_cancelled`, `interaction_not_allowed` | User cancelled/failed the prompt, or the device was locked. Data is intact — offer a retry. Never purge. |
+| `PayloadTamperException` (`false`) | — (Dart, Android) | Stored blob's slot metadata doesn't match the live profile (relocated/tampered). Treat the secret as compromised; overwrite via `trash()` + `store()`. |
+| `PayloadCorruptException` (`false`) | — (Dart) | Stored blob is malformed (bad version/nonce/ciphertext, or unknown Darwin format header). On-disk corruption; recover the slot via `trash()` + `store()` or `purge()`. |
+| `KeyInvalidatedException` (`false`) | `key_invalidated` | Key permanently invalidated by the OS — a new biometric enrolled (`authenticatedFatal`) or the secure lock screen removed/reset (**any** authenticated profile). Secrets under it are unrecoverable; recover with `purge()` then `init()`. |
+| `KeyNotFoundException` (`false`) | `key_not_found` | The profile key alias is gone (Keystore cleared, or restored from a backup without key material) but a blob remains — the blob is unreadable. Recover with `purge()` then `init()`. |
+| `DecryptionFailedException` (`false`) | `decrypt_failed`, `se_decrypt_failed` | The key is intact but this blob failed authenticated decryption (corruption/tamper/key mismatch). Overwrite the slot or `purge()`. |
+
+The native codes above are platform-specific (e.g. `se_decrypt_failed` and `interaction_not_allowed` are Darwin-only; `key_invalidated`/`key_not_found` are Android-only) — match on the typed exception, not the code.
+
+Errors still surfaced as raw `PlatformException` (operational, not data-semantic):
+`strongbox_unavailable` (StrongBox requested but absent — pre-flight with
+`isStrongBoxAvailable()`), `hardware_unavailable` (the key is not
+secure-hardware-backed — fail-closed, checked at generation and on every use;
+the device cannot safely hold a hardware-bound secret), `already_exists` (a value/key exists —
+`trash()` first, or treat as idempotent success during `init()`), and the
+various `*_failed` generation/IO codes.
 
 ## Platform requirements
 
@@ -206,7 +238,7 @@ This repository is a monorepo with three packages:
 
 | Package | Description |
 |---------|-------------|
-| [`oubliette/`](oubliette/) | Main plugin — platform-agnostic `store`/`useAndForget`/`trash`/`exists` API over `Uint8List` values. Delegates to `keychain` and `keystore` via `default_package`. |
+| [`oubliette/`](oubliette/) | Main plugin — platform-agnostic `init`/`store`/`useAndForget`/`trash`/`exists`/`purge` API over `Uint8List` values. Delegates to `keychain` and `keystore` via `default_package`. |
 | [`keychain/`](keychain/) | Standalone Flutter plugin wrapping the iOS/macOS Keychain (`SecItem` API). Shared Swift source for both platforms. |
 | [`keystore/`](keystore/) | Standalone Flutter plugin wrapping the Android Keystore. Versioned encryption schemes (currently AES-256-GCM v1) with `EncryptedPayload` serialisation. |
 

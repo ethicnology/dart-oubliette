@@ -155,4 +155,24 @@ final class Keychain {
   Future<void> secItemDelete(String alias) async {
     await _channel.invokeMethod<void>('secItemDelete', _args(alias));
   }
+
+  /// Deletes every keychain item in this config's scope whose account starts
+  /// with [prefix] but does **not** start with any of [excludePrefixes].
+  ///
+  /// Callers that pass a separator-terminated [prefix] (the Oubliette layer
+  /// passes `profilePrefix + U+001D`) get exact ownership for free: the
+  /// separator can only sit at the prefix/key boundary, so wiping one profile
+  /// can never match a nested sibling's accounts. [excludePrefixes] is an
+  /// optional belt-and-suspenders list for callers that don't use a separator;
+  /// it defaults to empty and is a no-op if nothing matches.
+  Future<void> deleteByPrefix(
+    String prefix, {
+    List<String> excludePrefixes = const [],
+  }) async {
+    await _channel.invokeMethod<void>('secItemDeleteByPrefix', {
+      'prefix': prefix,
+      'excludePrefixes': excludePrefixes,
+      ...config.toMap(),
+    });
+  }
 }

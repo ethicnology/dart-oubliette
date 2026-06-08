@@ -40,6 +40,15 @@ class KeyNotFoundException(alias: String) :
 class KeyInvalidatedException(alias: String, cause: Throwable? = null) :
     IllegalStateException("Key permanently invalidated for alias \"$alias\".", cause)
 
+/**
+ * The freshly generated key is NOT backed by secure hardware (TEE/StrongBox) —
+ * it landed in the software keystore. Fail-closed: a hardware-bound secret must
+ * never silently fall back to software. Distinct from [KeyInvalidatedException]
+ * (extends RuntimeException, not IllegalStateException) so it is not mapped to
+ * the `already_exists` bucket.
+ */
+class HardwareUnavailableException(message: String) : RuntimeException(message)
+
 data class EncryptResult(
     val version: Int,
     val nonce: ByteArray,

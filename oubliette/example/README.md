@@ -1,16 +1,28 @@
 # oubliette_example
 
-Demonstrates how to use the oubliette plugin.
+Example app for the [`oubliette`](../) plugin. It exercises the four security
+profiles (`evenLocked` / `onlyUnlocked` / `authenticated` / `authenticatedFatal`)
+plus a `custom` profile, and demonstrates `store` / `useAndForget` / `trash` /
+`exists` / `purge` against the real platform Keystore (Android) and Keychain
+(iOS/macOS).
 
-## Getting Started
+> ⚠️ Demo only. For clarity the UI holds fetched secrets as `String` in widget
+> state — a real app must keep secrets in `Uint8List`, read them via
+> `useAndForget`, and never place them in UI state, logs, or the clipboard.
 
-This project is a starting point for a Flutter application.
+## Run
 
-A few resources to get you started if this is your first Flutter project:
+```bash
+cd oubliette/example
+fvm flutter run            # device/emulator; authenticated profiles need an enrolled credential
+```
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+## Tests
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```bash
+fvm flutter test                       # widget smoke test
+fvm flutter test integration_test/     # on a device/emulator — real Keystore/Keychain
+```
+
+Biometric / Secure-Enclave / StrongBox paths require a real device — see the
+project `SECURITY.md` and the CI matrix.

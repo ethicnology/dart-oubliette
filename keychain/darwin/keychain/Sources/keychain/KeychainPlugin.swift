@@ -26,6 +26,8 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       handleSecItemCopyMatching(call, result: result)
     case "secItemDelete":
       handleSecItemDelete(call, result: result)
+    case "secItemDeleteByPrefix":
+      handleSecItemDeleteByPrefix(call, result: result)
     case "keychainContains":
       handleKeychainContains(call, result: result)
     case "ensureEnclaveKeyPair":
@@ -42,6 +44,21 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       result(FlutterError(code: "bad_args", message: "Missing alias or data.", details: nil))
       return
     }
+    #if os(macOS)
+    // The legacy file-based macOS keychain rejects kSecAttrAccessControl
+    // (SecItemAdd → errSecParam). Surface an actionable error instead of a bare
+    // "-50". Authentication on macOS requires the data-protection keychain.
+    if params.authenticationRequired && !params.useDataProtection {
+      result(FlutterError(
+        code: "macos_auth_requires_data_protection",
+        message: "On macOS, authenticationRequired needs useDataProtection: true "
+          + "(the data-protection keychain) plus code signing and the "
+          + "keychain-access-groups entitlement. The legacy file-based keychain "
+          + "cannot enforce access control.",
+        details: nil))
+      return
+    }
+    #endif
     serialQueue.async {
       let status = secItemAdd(params: params, data: data.data)
       DispatchQueue.main.async {
@@ -170,4 +187,32 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       }
     }
   }
+
+  private func handleSecItemDeleteByPrefix(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    // No alias here (we match by prefix, not a single account), so parse the
+    // scoping fields directly rather than via KeychainParams.from.
+    guard let args = call.arguments as? [String: Any],
+          let prefix = args["prefix"] as? String else {
+      result(FlutterError(code: "bad_args", message: "Missing prefix.", details: nil))
+      return
+    }
+    let scope = KeychainScope(
+      service: args["service"] as? String,
+      accessGroup: args["accessGroup"] as? String,
+      useDataProtection: args["useDataProtection"] as? Bool ?? false
+    )
+    let excludePrefixes = (args["excludePrefixes"] as? [String]) ?? []
+    serialQueue.async {
+      let status = secItemDeleteByPrefix(scope: scope, prefix: prefix, excludePrefixes: excludePrefixes)
+      DispatchQueue.main.async {
+        // errSecItemNotFound means nothing matched — a clean no-op for a wipe.
+        if status == errSecSuccess || status == errSecItemNotFound {
+          result(nil)
+        } else {
+          result(FlutterError(code: "sec_item_delete_failed", message: String(status), details: nil))
+        }
+      }
+    }
+  }
+
 }
