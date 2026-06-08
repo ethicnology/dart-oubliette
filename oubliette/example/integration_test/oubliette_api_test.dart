@@ -13,7 +13,7 @@ void main() {
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.onlyUnlocked(strongBox: false),
+        android: const AndroidSecretAccess.onlyUnlocked(strongBox: false, requireHardwareBacking: false),
         darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
       );
     });

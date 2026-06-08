@@ -95,7 +95,7 @@ void main() {
 
   AndroidOubliette storage([AndroidSecretAccess? access]) => AndroidOubliette(
         access: access ??
-            const AndroidSecretAccess.onlyUnlocked(strongBox: false),
+            const AndroidSecretAccess.onlyUnlocked(strongBox: false, requireHardwareBacking: false),
       );
 
   group('round-trip & lazy key-ensure', () {
@@ -140,7 +140,7 @@ void main() {
       // reject a separator smuggled in via a `prefix:` override.
       final s = AndroidOubliette(
         access: AndroidSecretAccess.onlyUnlocked(
-            prefix: 'bad${slotSeparator}_', strongBox: false),
+            prefix: 'bad${slotSeparator}_', strongBox: false, requireHardwareBacking: false),
       );
       await expectLater(
         s.store('k', Uint8List.fromList([1])),
@@ -206,7 +206,7 @@ void main() {
     test('store rethrows key_invalidated and NEVER deletes the key', () async {
       final s = storage(
         const AndroidSecretAccess.authenticatedFatal(
-          strongBox: false,
+          strongBox: false, requireHardwareBacking: false,
           promptTitle: 't',
           promptSubtitle: 's',
         ),
@@ -379,7 +379,7 @@ void main() {
     test('only wipes its own prefix, leaving sibling profiles intact', () async {
       final only = storage(); // onlyUnlocked
       final even = AndroidOubliette(
-          access: const AndroidSecretAccess.evenLocked(strongBox: false));
+          access: const AndroidSecretAccess.evenLocked(strongBox: false, requireHardwareBacking: false));
       await only.store('k', Uint8List.fromList([1]));
       await even.store('k', Uint8List.fromList([2]));
 
@@ -400,11 +400,11 @@ void main() {
       // would be silently lost) when purging the authenticated profile.
       final auth = AndroidOubliette(
         access: const AndroidSecretAccess.authenticated(
-            strongBox: false, promptTitle: 't', promptSubtitle: 's'),
+            strongBox: false, requireHardwareBacking: false, promptTitle: 't', promptSubtitle: 's'),
       );
       final fatal = AndroidOubliette(
         access: const AndroidSecretAccess.authenticatedFatal(
-            strongBox: false, promptTitle: 't', promptSubtitle: 's'),
+            strongBox: false, requireHardwareBacking: false, promptTitle: 't', promptSubtitle: 's'),
       );
       await auth.store('k', Uint8List.fromList([1]));
       await fatal.store('k', Uint8List.fromList([2]));
@@ -428,7 +428,7 @@ void main() {
             access: AndroidSecretAccess.custom(
               prefix: prefix,
               keyAlias: alias,
-              strongBox: false,
+              strongBox: false, requireHardwareBacking: false,
               unlockedDeviceRequired: true,
               invalidatedByBiometricEnrollment: false,
               promptTitle: null,

@@ -12,14 +12,12 @@ import javax.crypto.Cipher
 private fun encryptErrorCode(t: Throwable): String = when (t) {
   is KeyNotFoundException -> "key_not_found"
   is KeyInvalidatedException -> "key_invalidated"
-  is HardwareUnavailableException -> "hardware_unavailable"
   else -> "encrypt_failed"
 }
 
 private fun decryptErrorCode(t: Throwable): String = when (t) {
   is KeyNotFoundException -> "key_not_found"
   is KeyInvalidatedException -> "key_invalidated"
-  is HardwareUnavailableException -> "hardware_unavailable"
   else -> "decrypt_failed"
 }
 
@@ -217,9 +215,12 @@ internal fun KeystorePlugin.authenticate(
         val code = when (errorCode) {
           BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED,
           BiometricPrompt.BIOMETRIC_ERROR_CANCELED,
-          13 -> "auth_cancelled" // 13 = BIOMETRIC_ERROR_NEGATIVE_BUTTON (no named
-          // const on the platform BiometricPrompt class; the negative button is
-          // the user tapping "Cancel", so it is a cancellation)
+          13 -> "auth_cancelled" // 13 = BIOMETRIC_ERROR_NEGATIVE_BUTTON. The
+          // platform android.hardware.biometrics.BiometricPrompt does NOT expose
+          // it as a resolvable named constant at this compileSdk (verified: the
+          // build fails on the named ref; it lives in androidx.biometric, which
+          // we don't use here). The negative button is the user tapping
+          // "Cancel", so it is a cancellation.
           else -> "auth_error"
         }
         result.error(code, "[$errorCode] $errString", null)

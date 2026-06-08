@@ -18,6 +18,7 @@ final class Keystore {
     required bool strongBox,
     bool userAuthenticationRequired = false,
     bool invalidatedByBiometricEnrollment = true,
+    required bool requireHardwareBacking,
   }) async {
     await _channel.invokeMethod<void>('generateKey', {
       'alias': alias,
@@ -25,6 +26,7 @@ final class Keystore {
       'strongBox': strongBox,
       'userAuthenticationRequired': userAuthenticationRequired,
       'invalidatedByBiometricEnrollment': invalidatedByBiometricEnrollment,
+      'requireHardwareBacking': requireHardwareBacking,
     });
   }
 

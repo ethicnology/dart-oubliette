@@ -49,6 +49,7 @@ class _CustomProfilePageState extends State<CustomProfilePage> {
           prefix: _prefixController.text,
           keyAlias: _keyAliasController.text,
           strongBox: _strongBox,
+          requireHardwareBacking: false, // demo runs on emulators (software keystore)
           unlockedDeviceRequired: _unlockedDeviceRequired,
           invalidatedByBiometricEnrollment: _invalidatedByBiometricEnrollment,
           promptTitle: _promptTitleController.text.isEmpty
@@ -62,7 +63,7 @@ class _CustomProfilePageState extends State<CustomProfilePage> {
       );
     }
     return Oubliette(
-      android: const AndroidSecretAccess.evenLocked(strongBox: false),
+      android: const AndroidSecretAccess.evenLocked(strongBox: false, requireHardwareBacking: false),
       darwin: DarwinSecretAccess.custom(
         prefix: _prefixController.text,
         service: _serviceController.text.isEmpty

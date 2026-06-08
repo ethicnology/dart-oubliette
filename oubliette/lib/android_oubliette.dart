@@ -39,6 +39,7 @@ class AndroidOubliette extends Oubliette {
         strongBox: access.strongBox,
         userAuthenticationRequired: access.userAuthenticationRequired,
         invalidatedByBiometricEnrollment: access.invalidatedByBiometricEnrollment,
+        requireHardwareBacking: access.requireHardwareBacking,
       );
     } on PlatformException catch (e) {
       // A concurrent init/store already created the key — that is success,

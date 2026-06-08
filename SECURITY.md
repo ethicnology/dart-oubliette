@@ -164,14 +164,17 @@ minimum OS for your app.
   memory-safety issues (e.g. CVE-2026-25276/25277). `ThisDeviceOnly`
   accessibility, access-group isolation, and per-use auth are the defense-in-depth
   that limits blast radius.
-- **Hardware backing is verified, fail-closed.** `strongBox: true` fails if
-  StrongBox is absent (never a silent TEE downgrade). Every key is checked via
-  `KeyInfo` (`getSecurityLevel()` on API 31+, `isInsideSecureHardware` on API 30)
-  — **at generation** (a software-backed key is deleted and generation fails)
-  **and again on every encrypt/decrypt** (so a pre-existing or orphaned software
-  key can never be silently reused). Either way the operation fails closed with
-  `hardware_unavailable`; a wallet seed is never held in a software keystore.
-  (For a guarantee of *which* hardware, layer key attestation in your app.)
+- **Hardware backing.** On a real device the Android Keystore key is
+  hardware-backed (TEE/StrongBox) automatically. `strongBox: true` is
+  fail-closed (absent StrongBox → error, never a silent TEE downgrade). For the
+  general case, set **`requireHardwareBacking: true`** (a required choice — no
+  default; pass `false` to allow software keystores like emulators) to make
+  key *generation* verify the key landed in secure hardware (`KeyInfo`:
+  `getSecurityLevel()` on API 31+, `isInsideSecureHardware` on API 30) and, if
+  not, delete it and fail with `hardware_unavailable` rather than keep a
+  software-keystore key. It defaults off so the library runs on software-only
+  keystores (emulators); **wallet apps holding seeds should set it true.** (For
+  a guarantee of *which* hardware, layer key attestation in your app.)
 - **Biometric-bypass CVEs are scoped to OS app-lock UIs, not our path.** Issues
   like CVE-2026-28895 (iOS) and the Pixel CVE-2024-53835/53840 class target the
   system's "require Face ID to open app" toggle or the biometric success
@@ -194,7 +197,8 @@ library's controls only pay off if the integrator does its part. In priority
 order:
 
 1. **Use an authenticated profile** (`authenticated` / `authenticatedFatal`,
-   `secureEnclave: true` on Darwin) — never `evenLocked`/`onlyUnlocked`. The
+   `secureEnclave: true` on Darwin, `requireHardwareBacking: true` on Android) —
+   never `evenLocked`/`onlyUnlocked`. The
    non-auth profiles are readable on any unlocked or in-process-compromised
    device; that is the single most likely real-world failure.
 2. **Never make oubliette the only backup.** It is the on-device hot copy.

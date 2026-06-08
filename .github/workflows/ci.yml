@@ -147,12 +147,17 @@ jobs:
       # isolation, and PayloadTamperException. Biometric / Data-Protection /
       # Secure-Enclave paths need a real device (GitHub macOS runners are VMs
       # with no Secure Enclave) and are verified manually before release.
+      # Run each file as its own `flutter test` invocation. Running several
+      # integration files in one command relaunches the macOS GUI app between
+      # files, and the headless runner intermittently fails to foreground it
+      # ("log reader stopped" / "open returned 1"). A fresh process per file
+      # avoids that and isolates failures. `set -e` (default) fails the job on
+      # the first failing file.
       - name: Integration tests (macOS desktop)
         working-directory: oubliette/example
-        run: >-
-          flutter test
-          integration_test/keychain_test.dart
-          integration_test/refactor_regression_test.dart
-          integration_test/oubliette_api_test.dart
-          integration_test/plugin_integration_test.dart
-          -d macos
+        run: |
+          for t in keychain_test refactor_regression_test oubliette_api_test plugin_integration_test; do
+            echo "::group::integration_test/$t.dart"
+            flutter test "integration_test/$t.dart" -d macos
+            echo "::endgroup::"
+          done

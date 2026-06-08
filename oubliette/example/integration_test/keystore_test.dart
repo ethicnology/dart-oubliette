@@ -41,7 +41,7 @@ void main() {
     testWidgets('generateKey creates key and containsAlias returns true', (
       tester,
     ) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
+      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false, requireHardwareBacking: false);
       final exists = await facade.containsAlias(alias);
       expect(exists, isTrue);
     });
@@ -49,7 +49,7 @@ void main() {
     testWidgets('encrypt returns nonce, ciphertext, version, aad, alias', (
       tester,
     ) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
+      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false, requireHardwareBacking: false);
       final payload = await facade.encrypt(
         alias: alias,
         plaintext: plaintext,
@@ -64,7 +64,7 @@ void main() {
 
     testWidgets('decrypt recovers plaintext using payload version, aad, alias',
         (tester) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
+      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false, requireHardwareBacking: false);
       final encrypted = await facade.encrypt(
         alias: alias,
         plaintext: plaintext,
@@ -81,7 +81,7 @@ void main() {
     });
 
     testWidgets('decrypt returns non-zeroed plaintext bytes', (tester) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
+      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false, requireHardwareBacking: false);
       final encrypted = await facade.encrypt(alias: alias, plaintext: plaintext, aad: aad);
       final decrypted = await facade.decrypt(
         version: encrypted.version,
@@ -95,7 +95,7 @@ void main() {
     });
 
     testWidgets('decrypt with wrong nonce throws PlatformException', (tester) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
+      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false, requireHardwareBacking: false);
       final encrypted = await facade.encrypt(alias: alias, plaintext: plaintext, aad: aad);
       final wrongNonce = Uint8List(12);
       expect(
@@ -111,7 +111,7 @@ void main() {
     });
 
     testWidgets('decrypt with wrong aad throws (GCM AAD binding)', (tester) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
+      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false, requireHardwareBacking: false);
       final encrypted = await facade.encrypt(alias: alias, plaintext: plaintext, aad: aad);
       // The AAD is authenticated by GCM: decrypting with a different AAD must
       // fail the tag check. This is the binding the Android trust boundary
@@ -129,7 +129,7 @@ void main() {
     });
 
     testWidgets('decrypt with tampered ciphertext throws (GCM integrity)', (tester) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
+      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false, requireHardwareBacking: false);
       final encrypted = await facade.encrypt(alias: alias, plaintext: plaintext, aad: aad);
       // Flip one byte of the ciphertext; the GCM tag must reject it.
       final tampered = Uint8List.fromList(encrypted.ciphertext);
@@ -151,7 +151,7 @@ void main() {
       await facade.generateKey(
         alias: authAlias,
         unlockedDeviceRequired: false,
-        strongBox: false,
+        strongBox: false, requireHardwareBacking: false,
         userAuthenticationRequired: true,
       );
       EncryptedPayload? result;
@@ -188,7 +188,7 @@ void main() {
     testWidgets('deleteEntry removes key and containsAlias returns false', (
       tester,
     ) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
+      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false, requireHardwareBacking: false);
       expect(await facade.containsAlias(alias), isTrue);
       await facade.deleteEntry(alias);
       final exists = await facade.containsAlias(alias);

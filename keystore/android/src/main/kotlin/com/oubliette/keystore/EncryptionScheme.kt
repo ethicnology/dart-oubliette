@@ -10,7 +10,8 @@ interface EncryptionScheme {
         unlockedDeviceRequired: Boolean,
         strongBox: Boolean,
         userAuthenticationRequired: Boolean,
-        invalidatedByBiometricEnrollment: Boolean
+        invalidatedByBiometricEnrollment: Boolean,
+        requireHardwareBacking: Boolean
     )
 
     fun encrypt(

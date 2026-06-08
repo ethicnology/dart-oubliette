@@ -134,6 +134,19 @@ class AndroidSecretAccess {
   /// plugin substitutes the default `"Confirm your identity"`.
   final String? promptSubtitle;
 
+  /// When `true`, key generation **refuses** a key that is not backed by secure
+  /// hardware (TEE/StrongBox) — it deletes the key and fails with
+  /// `hardware_unavailable` rather than keep a software-keystore key.
+  ///
+  /// **Required — no default** (an explicit security choice, like [strongBox]).
+  /// On a real device the Android Keystore key is hardware-backed automatically
+  /// regardless of this flag, so it only changes behaviour on a **software-only**
+  /// keystore (emulators, some rooted/old devices): `false` → use it; `true` →
+  /// refuse. Pass `true` for wallet-grade secrets that must never reside in
+  /// software; pass `false` to allow software keystores (e.g. emulator/testing).
+  /// (StrongBox remains independently fail-closed via [strongBox].)
+  final bool requireHardwareBacking;
+
   const AndroidSecretAccess._({
     required this.prefix,
     required this.keyAlias,
@@ -143,6 +156,7 @@ class AndroidSecretAccess {
     required this.invalidatedByBiometricEnrollment,
     required this.promptTitle,
     required this.promptSubtitle,
+    required this.requireHardwareBacking,
   });
 
   /// Accessible even when the device is locked, as long as it has been
@@ -151,6 +165,7 @@ class AndroidSecretAccess {
   const AndroidSecretAccess.evenLocked({
     String prefix = _evenLockedPrefix,
     required bool strongBox,
+    required bool requireHardwareBacking,
   }) : this._(
          prefix: prefix,
          keyAlias: _evenLockedKeyAlias,
@@ -160,6 +175,7 @@ class AndroidSecretAccess {
          invalidatedByBiometricEnrollment: false,
          promptTitle: null,
          promptSubtitle: null,
+         requireHardwareBacking: requireHardwareBacking,
        );
 
   /// Accessible only while the device is unlocked. Maps to
@@ -167,6 +183,7 @@ class AndroidSecretAccess {
   const AndroidSecretAccess.onlyUnlocked({
     String prefix = _onlyUnlockedPrefix,
     required bool strongBox,
+    required bool requireHardwareBacking,
   }) : this._(
          prefix: prefix,
          keyAlias: _onlyUnlockedKeyAlias,
@@ -176,6 +193,7 @@ class AndroidSecretAccess {
          invalidatedByBiometricEnrollment: false,
          promptTitle: null,
          promptSubtitle: null,
+         requireHardwareBacking: requireHardwareBacking,
        );
 
   /// Requires user authentication (biometric, PIN, pattern, or password)
@@ -189,6 +207,7 @@ class AndroidSecretAccess {
     required bool strongBox,
     required String promptTitle,
     required String promptSubtitle,
+    required bool requireHardwareBacking,
   }) : this._(
          prefix: prefix,
          keyAlias: _authenticatedKeyAlias,
@@ -198,6 +217,7 @@ class AndroidSecretAccess {
          invalidatedByBiometricEnrollment: false,
          promptTitle: promptTitle,
          promptSubtitle: promptSubtitle,
+         requireHardwareBacking: requireHardwareBacking,
        );
 
   /// Requires user authentication (biometric, PIN, pattern, or password)
@@ -212,6 +232,7 @@ class AndroidSecretAccess {
     required bool strongBox,
     required String promptTitle,
     required String promptSubtitle,
+    required bool requireHardwareBacking,
   }) : this._(
          prefix: prefix,
          keyAlias: _authenticatedFatalKeyAlias,
@@ -221,6 +242,7 @@ class AndroidSecretAccess {
          invalidatedByBiometricEnrollment: true,
          promptTitle: promptTitle,
          promptSubtitle: promptSubtitle,
+         requireHardwareBacking: requireHardwareBacking,
        );
 
   /// Full manual control. [keyAlias] and [prefix] must not collide with the
@@ -234,6 +256,7 @@ class AndroidSecretAccess {
     required this.invalidatedByBiometricEnrollment,
     required this.promptTitle,
     required this.promptSubtitle,
+    required this.requireHardwareBacking,
   }) : userAuthenticationRequired = promptTitle != null {
     validateSlotPrefix(prefix);
     if (keyAlias.isEmpty) {

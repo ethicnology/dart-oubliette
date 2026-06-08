@@ -21,11 +21,11 @@ void main() {
     testWidgets('a key stored under one profile is invisible to another',
         (tester) async {
       final onlyUnlocked = Oubliette(
-        android: const AndroidSecretAccess.onlyUnlocked(strongBox: false),
+        android: const AndroidSecretAccess.onlyUnlocked(strongBox: false, requireHardwareBacking: false),
         darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
       );
       final evenLocked = Oubliette(
-        android: const AndroidSecretAccess.evenLocked(strongBox: false),
+        android: const AndroidSecretAccess.evenLocked(strongBox: false, requireHardwareBacking: false),
         darwin: const DarwinSecretAccess.evenLocked(secureEnclave: false),
       );
 
@@ -59,7 +59,7 @@ void main() {
       final storage = Oubliette(
         android: const AndroidSecretAccess.onlyUnlocked(
           prefix: 'reg_lazy_',
-          strongBox: false,
+          strongBox: false, requireHardwareBacking: false,
         ),
         darwin: const DarwinSecretAccess.onlyUnlocked(
           prefix: 'reg_lazy_',
@@ -82,7 +82,7 @@ void main() {
       final storage = Oubliette(
         android: const AndroidSecretAccess.onlyUnlocked(
           prefix: 'reg_init_',
-          strongBox: false,
+          strongBox: false, requireHardwareBacking: false,
         ),
         darwin: const DarwinSecretAccess.onlyUnlocked(
           prefix: 'reg_init_',
@@ -115,7 +115,7 @@ void main() {
         keystore.generateKey(
           alias: alias,
           unlockedDeviceRequired: false,
-          strongBox: true,
+          strongBox: true, requireHardwareBacking: false,
         ),
         throwsA(
           isA<PlatformException>()
@@ -130,7 +130,7 @@ void main() {
       final storage = Oubliette(
         android: const AndroidSecretAccess.onlyUnlocked(
           prefix: 'reg_tamper_',
-          strongBox: false,
+          strongBox: false, requireHardwareBacking: false,
         ),
         darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
       );
@@ -171,7 +171,7 @@ void main() {
       final storage = Oubliette(
         android: const AndroidSecretAccess.onlyUnlocked(
           prefix: 'reg_ver_',
-          strongBox: false,
+          strongBox: false, requireHardwareBacking: false,
         ),
         darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
       );

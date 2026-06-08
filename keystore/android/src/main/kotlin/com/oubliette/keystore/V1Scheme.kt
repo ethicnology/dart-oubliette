@@ -51,8 +51,8 @@ class V1Scheme(
     error.get()?.let { throw it }
   }
 
-  override fun generateKey(alias: String, unlockedDeviceRequired: Boolean, strongBox: Boolean, userAuthenticationRequired: Boolean, invalidatedByBiometricEnrollment: Boolean) {
-    Aes256GcmKeyGenerator.generateKey(alias, unlockedDeviceRequired, strongBox, userAuthenticationRequired, invalidatedByBiometricEnrollment)
+  override fun generateKey(alias: String, unlockedDeviceRequired: Boolean, strongBox: Boolean, userAuthenticationRequired: Boolean, invalidatedByBiometricEnrollment: Boolean, requireHardwareBacking: Boolean) {
+    Aes256GcmKeyGenerator.generateKey(alias, unlockedDeviceRequired, strongBox, userAuthenticationRequired, invalidatedByBiometricEnrollment, requireHardwareBacking)
   }
 
   override fun encrypt(
@@ -132,17 +132,6 @@ class V1Scheme(
   private fun getKey(alias: String): SecretKey? {
     val keyStore = KeyStore.getInstance(keyStoreType)
     keyStore.load(null)
-    val key = keyStore.getKey(alias, null) as? SecretKey ?: return null
-    // Re-assert hardware backing on every use, not only at generation. This
-    // closes the orphan-reuse gap: if a key was somehow created/left in the
-    // software keystore (e.g. a failed delete on a software-only device after
-    // generation refused it), it must never be silently used for a
-    // hardware-bound secret. Fail-closed, both plain and biometric paths.
-    if (!Aes256GcmKeyGenerator.isHardwareBacked(key)) {
-      throw HardwareUnavailableException(
-        "Key \"$alias\" is not backed by secure hardware; refusing to use it."
-      )
-    }
-    return key
+    return keyStore.getKey(alias, null) as? SecretKey
   }
 }

@@ -130,6 +130,9 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 result.error("bad_args", "Missing invalidatedByBiometricEnrollment.", null)
                 return
             }
+        // Opt-in: refuse a non-hardware-backed key. Defaults to false so the
+        // library works on software-only keystores (emulators); wallets pass true.
+        val requireHardwareBacking = call.argument<Boolean>("requireHardwareBacking") ?: false
         postCrypto(result) {
             try {
                 // Fail closed: requesting StrongBox must yield StrongBox or a
@@ -157,7 +160,8 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                     unlockedDeviceRequired,
                     strongBox,
                     userAuthenticationRequired,
-                    invalidatedByBiometricEnrollment
+                    invalidatedByBiometricEnrollment,
+                    requireHardwareBacking
                 )
                 mainHandler.post { result.success(null) }
             } catch (e: StrongBoxUnavailableException) {
@@ -222,8 +226,6 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 mainHandler.post { result.error("key_not_found", e.message ?: e.toString(), null) }
             } catch (e: KeyInvalidatedException) {
                 mainHandler.post { result.error("key_invalidated", e.message ?: e.toString(), null) }
-            } catch (e: HardwareUnavailableException) {
-                mainHandler.post { result.error("hardware_unavailable", e.message ?: e.toString(), null) }
             } catch (e: Exception) {
                 mainHandler.post { result.error("encrypt_failed", e.message ?: e.toString(), null) }
             } finally {
@@ -258,8 +260,6 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 mainHandler.post { result.error("key_not_found", e.message ?: e.toString(), null) }
             } catch (e: KeyInvalidatedException) {
                 mainHandler.post { result.error("key_invalidated", e.message ?: e.toString(), null) }
-            } catch (e: HardwareUnavailableException) {
-                mainHandler.post { result.error("hardware_unavailable", e.message ?: e.toString(), null) }
             } catch (e: Exception) {
                 mainHandler.post { result.error("decrypt_failed", e.message ?: e.toString(), null) }
             } finally {

@@ -8,15 +8,15 @@ import 'package:oubliette/src/slot.dart';
 void main() {
   group('Android default prefixes are distinct (#11)', () {
     const profiles = <String, AndroidSecretAccess>{
-      'evenLocked': AndroidSecretAccess.evenLocked(strongBox: false),
-      'onlyUnlocked': AndroidSecretAccess.onlyUnlocked(strongBox: false),
+      'evenLocked': AndroidSecretAccess.evenLocked(strongBox: false, requireHardwareBacking: false),
+      'onlyUnlocked': AndroidSecretAccess.onlyUnlocked(strongBox: false, requireHardwareBacking: false),
       'authenticated': AndroidSecretAccess.authenticated(
-        strongBox: false,
+        strongBox: false, requireHardwareBacking: false,
         promptTitle: 't',
         promptSubtitle: 's',
       ),
       'authenticatedFatal': AndroidSecretAccess.authenticatedFatal(
-        strongBox: false,
+        strongBox: false, requireHardwareBacking: false,
         promptTitle: 't',
         promptSubtitle: 's',
       ),
@@ -32,7 +32,7 @@ void main() {
         () => AndroidSecretAccess.custom(
           prefix: 'oubliette_only_unlocked_',
           keyAlias: 'my_alias',
-          strongBox: false,
+          strongBox: false, requireHardwareBacking: false,
           unlockedDeviceRequired: true,
           invalidatedByBiometricEnrollment: false,
           promptTitle: null,
@@ -47,7 +47,7 @@ void main() {
         () => AndroidSecretAccess.custom(
           prefix: 'my_prefix_',
           keyAlias: 'oubliette_only_unlocked',
-          strongBox: false,
+          strongBox: false, requireHardwareBacking: false,
           unlockedDeviceRequired: true,
           invalidatedByBiometricEnrollment: false,
           promptTitle: null,
@@ -60,7 +60,7 @@ void main() {
     AndroidSecretAccess androidCustom(String prefix) => AndroidSecretAccess.custom(
           prefix: prefix,
           keyAlias: 'unique_alias',
-          strongBox: false,
+          strongBox: false, requireHardwareBacking: false,
           unlockedDeviceRequired: true,
           invalidatedByBiometricEnrollment: false,
           promptTitle: null,
@@ -97,7 +97,7 @@ void main() {
         () => AndroidSecretAccess.custom(
           prefix: 'fine_prefix_',
           keyAlias: '',
-          strongBox: false,
+          strongBox: false, requireHardwareBacking: false,
           unlockedDeviceRequired: true,
           invalidatedByBiometricEnrollment: false,
           promptTitle: null,
@@ -131,7 +131,7 @@ void main() {
       // Cross-platform symmetry: storing under "onlyUnlocked" lands in the same
       // logical slot name regardless of platform.
       expect(
-        const AndroidSecretAccess.onlyUnlocked(strongBox: false).prefix,
+        const AndroidSecretAccess.onlyUnlocked(strongBox: false, requireHardwareBacking: false).prefix,
         const DarwinSecretAccess.onlyUnlocked(secureEnclave: false).prefix,
       );
     });

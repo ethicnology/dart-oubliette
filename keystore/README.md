@@ -35,9 +35,12 @@ final plain = await keystore.decrypt(
 
 - **StrongBox is fail-closed.** Requesting `strongBox: true` on a device without
   a StrongBox element throws `strongbox_unavailable` — no silent TEE fallback.
-- **Hardware backing is verified, fail-closed.** Every key is checked
-  (`KeyInfo`: `getSecurityLevel()` on API 31+, `isInsideSecureHardware` on API 30) at generation and on every encrypt/decrypt;
-  a software-backed key is deleted/refused with `hardware_unavailable`.
+- **Hardware backing (opt-in).** Pass `requireHardwareBacking: true` to
+  `generateKey` and it verifies the new key is in secure hardware (`KeyInfo`:
+  `getSecurityLevel()` on API 31+, `isInsideSecureHardware` on API 30), deleting
+  and refusing a software key with `hardware_unavailable`. Required (no default):
+  pass `false` to allow software keystores (emulators), `true` to refuse. Real
+  devices are hardware-backed regardless.
 - The encrypted blob is stored by the caller (the `oubliette` package puts it in
   `SharedPreferences`). The payload is already AES-256-GCM encrypted, so it does
   not need a second encryption layer.

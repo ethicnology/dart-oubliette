@@ -42,15 +42,18 @@ reintroduces a specific, reviewed vulnerability. Do not "simplify" them away.
   `strongbox_unavailable` — never a silent TEE fallback. Callers who accept TEE
   branch explicitly via `isStrongBoxAvailable()`.
 
-- **Hardware backing is verified, fail-closed (Android).** Beyond StrongBox,
-  *every* key is checked via `KeyInfo` (`getSecurityLevel()` on API 31+,
-  `isInsideSecureHardware` on API 30) — at generation
-  (`Aes256GcmKeyGenerator`) **and on every key retrieval** (`V1Scheme.getKey`,
-  covering both the plain and biometric paths). A software-backed/unverifiable
-  key is deleted/refused with `hardware_unavailable`. Do not remove the per-use
-  check: it closes the orphan-reuse gap (a key left in the software keystore must
-  never be silently used for a secret). `isHardwareBacked` is fail-closed
-  (unverifiable → refused).
+- **Hardware backing is opt-in, fail-closed (Android).** On a real device the
+  Keystore key is hardware-backed automatically, so the flag only governs the
+  software-only case. When `requireHardwareBacking` is set, key **generation**
+  checks `KeyInfo` (`getSecurityLevel()` on API 31+, `isInsideSecureHardware` on
+  API 30) and, if not TEE/StrongBox-backed, deletes the key and fails with
+  `hardware_unavailable` — never a silent software-key downgrade. The flag is
+  **required (no default)**, like `strongBox` — every caller chooses explicitly.
+  Wallet apps pass `true`; tests/example pass `false` (emulators are
+  software-only, so forcing `true` everywhere would brick CI). Keep the check
+  **fail-closed** (unverifiable → refused) and keep the flag required (no hidden
+  default). Note it is checked at **generation**, not per-use. StrongBox stays
+  independently fail-closed via `strongBox`.
 
 - **Every Darwin profile is `ThisDeviceOnly`.** `DarwinSecretAccess.custom`
   rejects non-device-local accessibility (`whenUnlocked`/`afterFirstUnlock`) via

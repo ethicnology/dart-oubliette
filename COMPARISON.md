@@ -18,7 +18,7 @@ against the FSS version you use before relying on them.
 | Upgrade data-loss | Recurring class of reported issues (key reset / unreadable data after upgrades, OEM/backup edge cases) | **Designed against it**: versioned + frozen format, append-only scheme registry, frozen slot naming, golden vectors fail CI on drift |
 | On-disk format versioning | None exposed | Per-blob scheme `version` (Android) + 1-byte format header (Darwin) |
 | Security profiles | Per-call `IOSOptions`/`AndroidOptions`; easy to vary accidentally | Four named profiles (`evenLocked`/`onlyUnlocked`/`authenticated`/`authenticatedFatal`) pinning a fixed flag set; `custom` for the rest |
-| Hardware backing | Implicit / platform-dependent | **Explicit, fail-closed, runtime-verified**: StrongBox/SE never silently downgrade; Android keys are checked via `KeyInfo` (`getSecurityLevel()` on API 31+, `isInsideSecureHardware` on API 30) at generation + every use (`hardware_unavailable` if software-backed) |
+| Hardware backing | StrongBox best-effort (retries without it on failure) | Hardware-backed automatically on real devices; StrongBox/SE never silently downgrade; **opt-in `requireHardwareBacking`** verifies + refuses a software-only keystore at key generation (`hardware_unavailable`) |
 | Per-operation auth | Supported via options | Bound to the Keystore key / `SecAccessControl`; auth is cryptographic, not cosmetic |
 | Error model | Largely `PlatformException` strings | Sealed `OublietteException` with a `recoverable` flag so callers never `purge()` recoverable data |
 | Key invalidation | Often surfaces as opaque failure / silent loss | Typed `KeyInvalidatedException`; key never auto-deleted; explicit `purge()` recovery |

@@ -10,7 +10,7 @@ void main() {
 
   testWidgets('store/useAndForget/trash round-trip', (WidgetTester tester) async {
     final plugin = Oubliette(
-        android: const AndroidSecretAccess.onlyUnlocked(strongBox: false),
+        android: const AndroidSecretAccess.onlyUnlocked(strongBox: false, requireHardwareBacking: false),
       darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
     );
     const key = 'plugin_test_key';

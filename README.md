@@ -107,7 +107,7 @@ On Android the encrypted payload lives in attacker-writable `SharedPreferences`.
 
 ### The Key Never Leaves Hardware
 
-On both platforms, the cryptographic key is hardware-bound. On Android the AES-256-GCM key lives in the Keystore (TEE or StrongBox). On iOS/macOS with Secure Enclave enabled, a P-256 key pair is generated inside the SE chip. The private key never enters the application process. On Android this is **verified fail-closed**: every key is checked (`KeyInfo.isInsideSecureHardware`) at generation and on every use, and a software-backed key is refused with `hardware_unavailable` rather than silently used.
+On both platforms, the cryptographic key is hardware-bound. On Android the AES-256-GCM key lives in the Keystore (TEE or StrongBox). On iOS/macOS with Secure Enclave enabled, a P-256 key pair is generated inside the SE chip. The private key never enters the application process. On a real device the Android Keystore key is hardware-backed (TEE/StrongBox) automatically; for the software-only case (emulators, some rooted/old devices) you opt into strict mode with `requireHardwareBacking: true` (a required choice — no default; pass `false` to allow software-only keystores like emulators), which makes key **generation** verify secure-hardware backing (`KeyInfo`) and refuse with `hardware_unavailable` rather than keep a software key — recommended for wallet seeds.
 
 The Secure Enclave key's identity encodes **everything that scopes it** — service, accessibility, and access group — in a single collision-free, length-prefixed tag (`com.oubliette.enclave.…`). Two differently-scoped keys can never share a tag (so `service=nil`, `service=""`, and `service="default"` are all distinct), the SE access-control policy is threaded from the profile's accessibility (not hardcoded), and changing any scoping input regenerates the key rather than silently reusing the old policy.
 
@@ -185,9 +185,9 @@ The native codes above are platform-specific (e.g. `se_decrypt_failed` and `inte
 
 Errors still surfaced as raw `PlatformException` (operational, not data-semantic):
 `strongbox_unavailable` (StrongBox requested but absent — pre-flight with
-`isStrongBoxAvailable()`), `hardware_unavailable` (the key is not
-secure-hardware-backed — fail-closed, checked at generation and on every use;
-the device cannot safely hold a hardware-bound secret), `already_exists` (a value/key exists —
+`isStrongBoxAvailable()`), `hardware_unavailable` (only when
+`requireHardwareBacking: true` — the generated key is not secure-hardware-backed;
+the key is deleted and generation fails), `already_exists` (a value/key exists —
 `trash()` first, or treat as idempotent success during `init()`), and the
 various `*_failed` generation/IO codes.
 

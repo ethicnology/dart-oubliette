@@ -17,7 +17,8 @@ object Aes256GcmKeyGenerator {
     unlockedDeviceRequired: Boolean,
     strongBox: Boolean,
     userAuthenticationRequired: Boolean,
-    invalidatedByBiometricEnrollment: Boolean
+    invalidatedByBiometricEnrollment: Boolean,
+    requireHardwareBacking: Boolean
   ) {
     val keyStore = KeyStore.getInstance(keyStoreType)
     keyStore.load(null)
@@ -54,16 +55,20 @@ object Aes256GcmKeyGenerator {
     }
     keyGenerator.init(specBuilder.build())
     val key = keyGenerator.generateKey()
-    assertHardwareBacked(alias, key)
+    // Opt-in strict mode. On a real device the Keystore key is hardware-backed
+    // automatically, so this only changes behaviour on a software-only keystore
+    // (emulators, some rooted/old devices): if requested, refuse rather than
+    // silently keep a software key. Default is off so the library works in those
+    // environments; wallet apps set requireHardwareBacking = true. (StrongBox
+    // remains independently fail-closed via setIsStrongBoxBacked above.)
+    if (requireHardwareBacking) assertHardwareBacked(alias, key)
   }
 
   /**
-   * Fail-closed hardware check. A secret must live in secure hardware
-   * (TEE/StrongBox), never the software keystore — that is the library's whole
-   * premise. If the freshly generated key is not hardware-backed, delete it and
-   * refuse with [HardwareUnavailableException] rather than silently keep a
-   * software key. (StrongBox is already fail-closed at generation; this also
-   * covers the default TEE path and software-only devices/emulators.)
+   * Fail-closed hardware check used only when the caller sets
+   * `requireHardwareBacking`. If the freshly generated key is not hardware-backed
+   * (TEE/StrongBox), delete it and refuse with [HardwareUnavailableException]
+   * rather than keep a software key.
    */
   private fun assertHardwareBacked(alias: String, key: SecretKey) {
     if (!isHardwareBacked(key)) {
@@ -77,10 +82,8 @@ object Aes256GcmKeyGenerator {
   /**
    * Whether [key] resides in secure hardware (TEE/StrongBox). **Fail-closed:**
    * any failure to determine this returns `false`, so an unverifiable key is
-   * treated as not hardware-backed and refused. Used both right after generation
-   * AND on every key retrieval ([V1Scheme.getKey]) — so a pre-existing or
-   * orphaned software key (e.g. a `deleteEntry` that failed on a software-only
-   * device) can never be silently reused for a hardware-bound secret.
+   * treated as not hardware-backed and refused (only when the caller opted into
+   * `requireHardwareBacking`).
    */
   internal fun isHardwareBacked(key: SecretKey): Boolean = try {
     val factory = SecretKeyFactory.getInstance(key.algorithm, keyStoreType)

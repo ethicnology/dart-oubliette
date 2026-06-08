@@ -20,7 +20,7 @@ void main() {
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.evenLocked(strongBox: false),
+        android: const AndroidSecretAccess.evenLocked(strongBox: false, requireHardwareBacking: false),
         darwin: const DarwinSecretAccess.evenLocked(prefix: prefix, secureEnclave: false),
       );
     });
@@ -60,7 +60,7 @@ void main() {
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.onlyUnlocked(strongBox: false),
+        android: const AndroidSecretAccess.onlyUnlocked(strongBox: false, requireHardwareBacking: false),
         darwin: const DarwinSecretAccess.onlyUnlocked(
           prefix: prefix,
           secureEnclave: false,
@@ -103,7 +103,7 @@ void main() {
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.evenLocked(strongBox: false),
+        android: const AndroidSecretAccess.evenLocked(strongBox: false, requireHardwareBacking: false),
         darwin: const DarwinSecretAccess.authenticated(
           prefix: prefix,
           promptReason: 'Authenticate for test',
@@ -133,7 +133,7 @@ void main() {
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.evenLocked(strongBox: false),
+        android: const AndroidSecretAccess.evenLocked(strongBox: false, requireHardwareBacking: false),
         darwin: const DarwinSecretAccess.authenticatedFatal(
           prefix: prefix,
           promptReason: 'Authenticate for authenticatedFatal test',

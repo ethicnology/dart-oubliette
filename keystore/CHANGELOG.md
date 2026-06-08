@@ -25,10 +25,12 @@ self-describing `EncryptedPayload`.
   `decrypt_failed`.
 * **StrongBox fail-closed:** `strongBox: true` on a device without StrongBox
   throws `strongbox_unavailable` — never a silent TEE downgrade.
-* **Hardware-backing verified, fail-closed:** every key is checked
-  (`KeyInfo`: `getSecurityLevel()` on API 31+, `isInsideSecureHardware` on API 30) at generation **and on every encrypt/decrypt**;
-  a software-backed key is deleted/refused with `hardware_unavailable`, so an
-  orphaned software key can never be silently reused.
+* **Hardware-backing check (opt-in via the **required** `requireHardwareBacking` flag):**
+  when set, key generation verifies the key is in secure hardware (`KeyInfo`:
+  `getSecurityLevel()` on API 31+, `isInsideSecureHardware` on API 30) and
+  deletes/refuses a software key with `hardware_unavailable`. Off by default so
+  the library runs on software-only keystores (emulators); real devices are
+  hardware-backed regardless.
 * **AAD bound end-to-end** and applied natively; on-disk metadata is verify-only.
   The scheme `version` is bound into the AES-GCM AAD, so a rewritten version
   fails the tag (no scheme downgrade).

@@ -21,11 +21,13 @@ and upgrades never silently reset, re-key, or strand secrets (see
   Android authenticated profiles always apply `setUserAuthenticationParameters`.
 * **StrongBox fail-closed:** requesting `strongBox: true` on a device without
   StrongBox now throws `strongbox_unavailable` instead of silently using the TEE.
-* **Hardware-backing verified, fail-closed (Android):** every key is checked
-  (`KeyInfo`: `getSecurityLevel()` on API 31+, `isInsideSecureHardware` on API 30) at generation **and on every
-  encrypt/decrypt** — a software-backed key is deleted/refused with
-  `hardware_unavailable`, so a secret is never silently kept in (nor an orphaned
-  software key reused from) the software keystore.
+* **Hardware-backing check, opt-in (Android):** the `requireHardwareBacking`
+  flag is **required** (no default); set it `true` to make key generation verify the key is in secure hardware
+  (`KeyInfo`: `getSecurityLevel()` on API 31+, `isInsideSecureHardware` on
+  API 30) and delete/refuse a software-backed key with `hardware_unavailable`.
+  Off by default so the library runs on software-only keystores (emulators); a
+  real device's Keystore key is hardware-backed regardless. Wallet apps holding
+  seeds should enable it.
 * **Scheme `version` bound into the AES-GCM AAD (Android):** the on-disk version
   selects the decrypting scheme and is now authenticated, so a rewritten version
   byte can never force a downgrade to a weaker scheme (defeats the latent

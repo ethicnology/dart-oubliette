@@ -8,7 +8,7 @@ import 'package:oubliette/oubliette.dart';
 void main() {
   group('AndroidSecretAccess profile → flags', () {
     test('evenLocked', () {
-      const a = AndroidSecretAccess.evenLocked(strongBox: false);
+      const a = AndroidSecretAccess.evenLocked(strongBox: false, requireHardwareBacking: false);
       expect(a.keyAlias, 'oubliette_even_locked');
       expect(a.prefix, 'oubliette_even_locked_');
       expect(a.unlockedDeviceRequired, false);
@@ -19,7 +19,7 @@ void main() {
     });
 
     test('onlyUnlocked', () {
-      const a = AndroidSecretAccess.onlyUnlocked(strongBox: false);
+      const a = AndroidSecretAccess.onlyUnlocked(strongBox: false, requireHardwareBacking: false);
       expect(a.keyAlias, 'oubliette_only_unlocked');
       expect(a.prefix, 'oubliette_only_unlocked_');
       expect(a.unlockedDeviceRequired, true);
@@ -29,7 +29,7 @@ void main() {
 
     test('authenticated requires auth, survives enrollment change', () {
       const a = AndroidSecretAccess.authenticated(
-        strongBox: false,
+        strongBox: false, requireHardwareBacking: false,
         promptTitle: 't',
         promptSubtitle: 's',
       );
@@ -44,7 +44,7 @@ void main() {
 
     test('authenticatedFatal invalidates on enrollment change', () {
       const a = AndroidSecretAccess.authenticatedFatal(
-        strongBox: false,
+        strongBox: false, requireHardwareBacking: false,
         promptTitle: 't',
         promptSubtitle: 's',
       );
@@ -57,11 +57,11 @@ void main() {
 
     test('strongBox flag is carried through unchanged', () {
       expect(
-        const AndroidSecretAccess.onlyUnlocked(strongBox: true).strongBox,
+        const AndroidSecretAccess.onlyUnlocked(strongBox: true, requireHardwareBacking: false).strongBox,
         true,
       );
       expect(
-        const AndroidSecretAccess.onlyUnlocked(strongBox: false).strongBox,
+        const AndroidSecretAccess.onlyUnlocked(strongBox: false, requireHardwareBacking: false).strongBox,
         false,
       );
     });
@@ -70,7 +70,7 @@ void main() {
       final withPrompt = AndroidSecretAccess.custom(
         prefix: 'p_',
         keyAlias: 'a',
-        strongBox: false,
+        strongBox: false, requireHardwareBacking: false,
         unlockedDeviceRequired: true,
         invalidatedByBiometricEnrollment: false,
         promptTitle: 'unlock',
@@ -81,7 +81,7 @@ void main() {
       final noPrompt = AndroidSecretAccess.custom(
         prefix: 'p_',
         keyAlias: 'a',
-        strongBox: false,
+        strongBox: false, requireHardwareBacking: false,
         unlockedDeviceRequired: true,
         invalidatedByBiometricEnrollment: false,
         promptTitle: null,
