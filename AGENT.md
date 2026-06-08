@@ -132,19 +132,22 @@ reintroduces a specific, reviewed vulnerability. Do not "simplify" them away.
 
 ## Build & test
 
-Use **`fvm flutter`** — the repo is pinned to Flutter 3.44.1 / Dart 3.12.1
-(`.fvmrc`); a default-PATH `flutter` may be too old to resolve dependencies.
+This is a **Dart pub workspace** (root `pubspec.yaml` with `workspace:` + `melos:`)
+— one resolution, one root `pubspec.lock`. Use **`fvm flutter`** (the repo pins
+Flutter 3.44.1 / Dart 3.12.1 via `.fvmrc`; a default-PATH `flutter` may be too old).
 
 ```bash
-# Static analysis (whole project)
-cd oubliette && fvm flutter analyze
+# One-time: resolve the whole workspace, and activate the Melos CLI
+fvm flutter pub get                  # resolves ALL packages at once (from root)
+fvm dart pub global activate melos   # CLI on PATH (~/.pub-cache/bin); dev-dep pins the version
 
-# Dart unit tests
-cd oubliette && fvm flutter test
-cd keystore && fvm flutter test
+# Analyze + unit-test every package (run via fvm exec so Melos uses the pinned SDK)
+fvm exec melos run analyze
+fvm exec melos run test
+fvm exec melos run format            # format:fix to apply
 
-# Kotlin JVM tests (Gradle wrapper committed under keystore/android)
-cd keystore/android && ./gradlew test
+# Kotlin JVM tests — run through the example's Gradle (needs the Flutter embedding)
+cd oubliette/example/android && ./gradlew :keystore:testDebugUnitTest
 
 # Integration tests (on device/emulator — API 30+ for Android)
 cd oubliette/example && fvm flutter test integration_test/
@@ -152,6 +155,8 @@ cd oubliette/example && fvm flutter test integration_test/
 # Run the example app
 cd oubliette/example && fvm flutter run
 ```
+
+CI uses the same Melos scripts (`dart pub global activate melos` → `melos run analyze`/`test`).
 
 Biometric, Secure Enclave, and StrongBox paths cannot be exercised on
 simulators/CI — verify them manually on real devices with an enrolled credential

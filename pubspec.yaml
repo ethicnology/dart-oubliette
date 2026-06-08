@@ -1,0 +1,33 @@
+# Monorepo workspace root (Dart pub workspaces + Melos).
+# Not a publishable package — it only ties the three plugin packages and the
+# example together into one resolution (a single pubspec.lock, locally-linked
+# path deps) and hosts the Melos scripts. Use Dart >= 3.6 (we pin 3.12).
+name: oubliette_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.12.0
+
+workspace:
+  - oubliette
+  - keystore
+  - keychain
+  - oubliette/example
+
+dev_dependencies:
+  melos: ^7.0.0
+
+melos:
+  scripts:
+    analyze:
+      description: Analyze every package (fails on any issue).
+      run: melos exec -- flutter analyze
+    test:
+      description: Run Dart unit tests in every package that has a test/ dir.
+      run: melos exec --dir-exists=test -- flutter test
+    format:
+      description: Check formatting across all packages.
+      run: melos exec -- dart format --set-exit-if-changed .
+    format:fix:
+      description: Apply formatting across all packages.
+      run: melos exec -- dart format .

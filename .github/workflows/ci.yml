@@ -16,7 +16,7 @@ env:
 
 jobs:
   analyze-and-test:
-    name: Analyze & Dart tests
+    name: Analyze & Dart tests (melos workspace)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -24,21 +24,16 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
-      - name: Analyze (whole project)
-        working-directory: oubliette
-        run: flutter analyze
-      - name: Dart unit tests — oubliette
-        working-directory: oubliette
-        run: flutter test
-      - name: Dart unit tests — keystore
-        working-directory: keystore
-        run: flutter test
-      - name: Dart unit tests — keychain
-        working-directory: keychain
-        run: flutter test
-      - name: Widget tests — example
-        working-directory: oubliette/example
-        run: flutter test
+      - name: Activate Melos
+        run: |
+          dart pub global activate melos
+          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+      - name: Resolve workspace
+        run: flutter pub get
+      - name: Analyze all packages
+        run: melos run analyze
+      - name: Dart tests (all packages)
+        run: melos run test
 
   android-build:
     name: Android build (compiles plugin Kotlin)
