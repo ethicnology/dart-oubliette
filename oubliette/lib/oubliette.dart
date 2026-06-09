@@ -3,9 +3,13 @@ import 'package:oubliette/android_oubliette.dart' show AndroidOubliette;
 import 'package:oubliette/android_secret_access.dart';
 import 'package:oubliette/darwin_oubliette.dart' show DarwinOubliette;
 import 'package:oubliette/darwin_secret_access.dart';
+import 'package:oubliette/linux_oubliette.dart' show LinuxOubliette;
+import 'package:oubliette/linux_secret_access.dart';
 
 export 'android_secret_access.dart';
 export 'darwin_secret_access.dart';
+export 'linux_secret_access.dart';
+export 'src/passphrase_vault.dart' show PassphraseVault, Argon2idParams;
 export 'src/errors.dart'
     show
         OublietteException,
@@ -14,12 +18,20 @@ export 'src/errors.dart'
         KeyInvalidatedException,
         KeyNotFoundException,
         DecryptionFailedException,
-        AuthenticationFailedException;
+        AuthenticationFailedException,
+        BackendUnavailableException,
+        KeyringLockedException;
 
 abstract class Oubliette {
   factory Oubliette({
     required AndroidSecretAccess android,
     required DarwinSecretAccess darwin,
+    // Optional, with a default, unlike [android]/[darwin]. Those are required
+    // because they carry security-relevant choices (hardware backing, per-op
+    // auth) the library refuses to make for you. Linux has no such choice — the
+    // Secret Service is a single software tier with no stronger alternative —
+    // so the default only selects a storage-prefix namespace, not a posture.
+    LinuxSecretAccess linux = const LinuxSecretAccess.onlyUnlocked(),
   }) {
     switch (defaultTargetPlatform) {
       case TargetPlatform.iOS:
@@ -27,6 +39,8 @@ abstract class Oubliette {
         return DarwinOubliette(access: darwin);
       case TargetPlatform.android:
         return AndroidOubliette(access: android);
+      case TargetPlatform.linux:
+        return LinuxOubliette(access: linux);
       default:
         throw UnsupportedError('Unsupported platform: $defaultTargetPlatform');
     }

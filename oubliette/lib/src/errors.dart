@@ -192,6 +192,57 @@ final class DecryptionFailedException extends OublietteException {
       'See the cause field for diagnostics.';
 }
 
+/// Thrown on **Linux** when no Secret Service provider is reachable — there is
+/// no session D-Bus, or no `org.freedesktop.secrets` implementation (keyring
+/// daemon) is running. Typical on a headless server, a minimal window manager,
+/// or a misconfigured session.
+///
+/// **Recoverable** in the [OublietteException] sense: the stored data is intact
+/// and **must not** be `purge()`d — the fix is environmental (provide a running
+/// keyring daemon / session bus), after which the same operation succeeds.
+/// Distinct from [KeyringLockedException] (a provider exists but its collection
+/// is locked).
+final class BackendUnavailableException extends OublietteException {
+  /// The underlying platform error, for diagnostics.
+  final Object? cause;
+
+  const BackendUnavailableException({this.cause});
+
+  @override
+  bool get recoverable => true;
+
+  @override
+  String toString() =>
+      'BackendUnavailableException: no Secret Service provider is reachable '
+      '(no session D-Bus or keyring daemon). The data is intact — never purge; '
+      'provide a keyring daemon and retry. See the cause field for diagnostics.';
+}
+
+/// Thrown on **Linux** when the Secret Service keyring collection is locked and
+/// could not be unlocked — no unlock prompter is available (headless), or the
+/// user dismissed the prompt.
+///
+/// **Recoverable**: the key and data are intact. Retry once the keyring is
+/// unlocked. Never `purge()` in response.
+final class KeyringLockedException extends OublietteException {
+  /// The logical key the operation targeted, if applicable.
+  final String? key;
+
+  /// The underlying platform error, for diagnostics.
+  final Object? cause;
+
+  const KeyringLockedException({this.key, this.cause});
+
+  @override
+  bool get recoverable => true;
+
+  @override
+  String toString() =>
+      'KeyringLockedException: the Secret Service keyring is locked'
+      '${key != null ? ' for key "$key"' : ''}. The data is intact — retry '
+      'after unlocking the keyring. See the cause field for diagnostics.';
+}
+
 /// Thrown when a per-operation authentication gate is not satisfied — the user
 /// cancelled or failed the biometric/credential prompt, or the device was
 /// locked so no prompt could be shown (`interaction_not_allowed`).

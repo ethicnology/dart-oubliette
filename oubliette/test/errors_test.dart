@@ -9,6 +9,9 @@ void main() {
     final exceptions = <OublietteException, bool>{
       const AuthenticationFailedException(key: 'k'): true,
       const AuthenticationFailedException(key: 'k', cancelled: true): true,
+      // Linux software tier: data intact, never purge — recoverable.
+      const BackendUnavailableException(): true,
+      const KeyringLockedException(key: 'k'): true,
       const KeyInvalidatedException(keyAlias: 'a'): false,
       const KeyNotFoundException(keyAlias: 'a'): false,
       const DecryptionFailedException(key: 'k'): false,
@@ -30,13 +33,17 @@ void main() {
 
     test('the recoverable types are exactly the never-purge set', () {
       // Recoverable == "retry; NEVER purge in response". The data behind a
-      // recoverable error is intact (e.g. an unsatisfied authentication gate).
-      // A non-recoverable error means the secret is unreadable and
-      // purge()+init() is the only way forward.
+      // recoverable error is intact: an authentication gate, a locked keyring,
+      // or a missing Secret Service backend. A non-recoverable error means the
+      // secret is unreadable and purge()+init() is the only way forward.
       final recoverable = exceptions.keys.where((e) => e.recoverable).toSet();
       expect(
         recoverable.map((e) => e.runtimeType).toSet(),
-        {AuthenticationFailedException},
+        {
+          AuthenticationFailedException,
+          BackendUnavailableException,
+          KeyringLockedException,
+        },
         reason: 'only intact-data failures are retry-able (never purge)',
       );
     });
