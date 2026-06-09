@@ -90,6 +90,42 @@ ownership exact — a profile whose prefix nests under another's can never match
 - **Compromised build/supply chain.** Reproducible-build pinning is provided
   (see README → toolchain), but verifying it is the consuming app's job.
 
+### Linux (Secret Service tier)
+
+On Linux, Oubliette stores each secret as a separate item in the desktop Secret
+Service (gnome-keyring, KWallet, or another `org.freedesktop.secrets` provider).
+This is a **software-encrypted tier**, analogous to the macOS legacy
+file-keychain — **not** hardware-backed, and weaker than the Android Keystore
+and Apple Secure Enclave tiers.
+
+- **What it protects.** Secrets are encrypted at rest while the keyring is
+  locked (e.g. before login, or on a powered-off disk), and Oubliette's per-slot
+  envelope binds each value to its slot so a relocated or version-downgraded
+  on-disk blob fails closed (`PayloadCorruptException`) rather than decrypting
+  under the wrong slot. Per-profile slot isolation and prefix-exact `purge()`
+  hold via the reserved `U+001D` separator, identical to the other platforms.
+- **What it does NOT protect.** The keyring is unlocked automatically at login
+  (PAM) and stays unlocked for the whole session, including across screen-lock;
+  while unlocked, **any process running as your user can read every stored
+  secret** over the session bus — there is no per-application isolation outside
+  a Flatpak/Snap sandbox, and no per-operation authentication gate. The
+  encryption key is derived from your login password and lives in a user-space
+  daemon, so it lacks the "key never leaves secure hardware" guarantee of the
+  mobile tiers; the at-rest cipher also depends on which provider answers the
+  bus (gnome-keyring AES vs KWallet Blowfish) and cannot be asserted by
+  Oubliette.
+- **No silent downgrade.** There is no hardware-backing or per-operation-auth
+  option on Linux: `LinuxSecretAccess` offers only `evenLocked` / `onlyUnlocked`
+  / `custom`, so an app cannot *believe* it asked for protection that the
+  platform cannot provide. A missing/headless backend fails closed with
+  `BackendUnavailableException`; a locked keyring with `KeyringLockedException`
+  (both recoverable — never `purge()` in response).
+- **Backup hygiene.** Exclude `~/.local/share/keyrings` (and
+  `~/.local/share/kwalletd`) from cloud sync and home-directory backups: syncing
+  them leaks secrets, and restoring them onto another machine/account yields
+  ciphertext whose login-keyring master no longer matches — Oubliette surfaces
+  that as a typed decrypt/lookup failure, never silent data loss.
+
 ## Stability & upgrade contract
 
 The defining guarantee of this library: **upgrading the dependency never loses

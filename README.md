@@ -11,6 +11,7 @@ An [oubliette](https://en.wikipedia.org/wiki/Oubliette) is a secret dungeon whos
 | iOS | [Keychain Services](https://developer.apple.com/documentation/security/keychain_services) |
 | macOS | System Keychain (traditional file-based, no entitlements required) |
 | Android | [Android Keystore](https://developer.android.com/training/articles/keystore) (AES-256-GCM) + `SharedPreferences` |
+| Linux | [Secret Service](https://specifications.freedesktop.org/secret-service/latest/) via [libsecret](https://gnome.pages.gitlab.gnome.org/libsecret/) (gnome-keyring / KWallet) — **software tier, not hardware-backed** |
 
 
 ## Quick start
@@ -146,6 +147,28 @@ On Darwin, `kSecAttrSynchronizable` is explicitly set to `false` on every keycha
 ### macOS: Two Keychains, Explicit Choice
 
 Legacy file-based keychain (`useDataProtection = false`) works without code signing but **cannot enforce authentication** — the file-based keychain rejects `kSecAttrAccessControl`, so an authenticated write fails closed with `errSecParam` (-50). The Data Protection keychain (`useDataProtection = true`) is the only macOS backend that supports authentication (Touch ID/Face ID/password) and requires code signing + the `keychain-access-groups` entitlement. The `authenticated`/`authenticatedFatal` profiles set Data Protection automatically; with `custom`, pairing `authenticationRequired: true` with `useDataProtection: false` on macOS will not work.
+
+### Linux: Secret Service, a Software Tier
+
+On Linux, secrets are stored in the freedesktop Secret Service via `libsecret`
+(gnome-keyring, KWallet, or any `org.freedesktop.secrets` provider). This is a
+**software-encrypted** keyring protected by your login password — the Linux
+analog of the macOS legacy file-based keychain, and **not** hardware-backed.
+Each secret is stored as a **distinct Secret Service item** keyed by its slot
+(`prefix + U+001D + key`), never as one shared blob, so per-slot isolation,
+fail-closed `store`, and prefix-exact `purge()` all behave like the other
+platforms. The value carries the same frozen 1-byte format header as Darwin.
+
+Because the keyring is unlocked at login and readable by any same-user process,
+and because there is no hardware-backed or per-operation-auth tier on the Linux
+desktop, `LinuxSecretAccess` deliberately exposes only `evenLocked`,
+`onlyUnlocked`, and `custom` — there is **no** `authenticated`/`authenticatedFatal`
+profile and no hardware-backing knob (requesting one would only ever fail
+closed). A missing or locked keyring surfaces as a typed `BackendUnavailableException`
+/ `KeyringLockedException`, never silent data loss. See `SECURITY.md` → *Linux
+(Secret Service tier)* for the full posture. The `linux` argument to the
+`Oubliette` factory is optional (defaults to `onlyUnlocked`) since Linux has no
+security-relevant alternative to choose.
 
 ### Memory Hygiene at Every Layer
 
