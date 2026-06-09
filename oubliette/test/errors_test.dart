@@ -28,20 +28,16 @@ void main() {
       });
     });
 
-    test('AuthenticationFailedException is the ONLY recoverable type', () {
-      final recoverableCount = exceptions.keys
-          .where((e) => e.recoverable)
-          .length;
+    test('the recoverable types are exactly the never-purge set', () {
+      // Recoverable == "retry; NEVER purge in response". The data behind a
+      // recoverable error is intact (e.g. an unsatisfied authentication gate).
+      // A non-recoverable error means the secret is unreadable and
+      // purge()+init() is the only way forward.
+      final recoverable = exceptions.keys.where((e) => e.recoverable).toSet();
       expect(
-        recoverableCount,
-        2, // both AuthenticationFailedException variants
-        reason: 'only authentication failures are retry-able',
-      );
-      expect(
-        exceptions.keys
-            .where((e) => e.recoverable)
-            .every((e) => e is AuthenticationFailedException),
-        isTrue,
+        recoverable.map((e) => e.runtimeType).toSet(),
+        {AuthenticationFailedException},
+        reason: 'only intact-data failures are retry-able (never purge)',
       );
     });
 
@@ -52,6 +48,28 @@ void main() {
       );
       expect(cancelled.cancelled, isTrue);
       expect(cancelled.toString(), contains('cancelled'));
+    });
+
+    test('toString does not leak the native cause or key alias (LEAK-1)', () {
+      // toString() must stay free of the underlying cause (OEM/native text) and
+      // the profile key alias, so logging it / a crash reporter cannot
+      // exfiltrate them. The fields remain available for explicit debugging.
+      const invalidated = KeyInvalidatedException(
+        keyAlias: 'tenant-42-secret-alias',
+        cause: 'RAW NATIVE KEYMASTER TEXT',
+      );
+      final s = invalidated.toString();
+      expect(s, isNot(contains('tenant-42-secret-alias')));
+      expect(s, isNot(contains('RAW NATIVE KEYMASTER TEXT')));
+      // The field is still there for opt-in logging.
+      expect(invalidated.keyAlias, 'tenant-42-secret-alias');
+
+      const notFound = KeyNotFoundException(
+        keyAlias: 'tenant-42-secret-alias',
+        cause: 'RAW NATIVE TEXT',
+      );
+      expect(notFound.toString(), isNot(contains('tenant-42-secret-alias')));
+      expect(notFound.toString(), isNot(contains('RAW NATIVE TEXT')));
     });
   });
 }

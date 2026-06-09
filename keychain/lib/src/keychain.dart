@@ -130,6 +130,8 @@ final class Keychain {
       if (config.service != null) 'service': config.service,
       'accessibility': config.accessibility.value,
       if (config.accessGroup != null) 'accessGroup': config.accessGroup,
+      // macOS: keep the SE key in the same keychain domain as the item.
+      if (config.useDataProtection) 'useDataProtection': true,
     });
     return result ?? false;
   }

@@ -72,7 +72,13 @@ abstract class Oubliette {
   /// await vault.init();
   /// ```
   ///
-  /// Must not run concurrently with [store]/[fetch] on the same profile.
+  /// Within a single isolate, [purge] serializes against in-flight [store]
+  /// writes for the same profile — it drains them before destroying the
+  /// profile, and writes started afterwards wait for it. This is **best-effort
+  /// and isolate-scoped**: across isolates or processes there is no shared lock
+  /// (SharedPreferences/Secret Service offer no cross-process transaction), so
+  /// do not run [purge] concurrently with [store]/[fetch] on the same profile
+  /// from another isolate or process.
   Future<void> purge();
 
   /// Fetches the secret for [key], passes it to [action], then attempts to

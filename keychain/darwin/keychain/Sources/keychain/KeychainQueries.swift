@@ -40,7 +40,12 @@ struct KeychainParams {
 
   /// The subset of scoping inputs that identify the Secure Enclave key.
   var enclaveParams: EnclaveParams {
-    EnclaveParams(service: service, accessibility: accessibility, accessGroup: accessGroup)
+    EnclaveParams(
+      service: service,
+      accessibility: accessibility,
+      accessGroup: accessGroup,
+      useDataProtection: useDataProtection
+    )
   }
 
   static func from(_ args: [String: Any]) -> KeychainParams? {

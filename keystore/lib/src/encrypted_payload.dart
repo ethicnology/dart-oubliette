@@ -82,6 +82,30 @@ final class EncryptedPayload {
         'EncryptedPayload version must be >= 1, got $version',
       );
     }
+    // Defense-in-depth upper bounds on attacker-writable fields. The blob lives
+    // in MODE_PRIVATE SharedPreferences — reaching it needs root or a tampered
+    // backup, and the framework already loads the whole prefs file into memory
+    // at getInstance — so these are belt-and-suspenders against a pathological /
+    // oversized entry, not a primary control. The limits are generous:
+    // oubliette stores small secrets (mnemonics, tokens), never multi-MB blobs.
+    const maxVersion = 1 << 20; // far above any realistic shipped scheme count
+    const maxFieldChars = 64 * 1024; // base64 chars (~48 KiB decoded)
+    if (version > maxVersion) {
+      throw FormatException(
+        'EncryptedPayload version is implausibly large: $version',
+      );
+    }
+    // Applied to every attacker-writable string, including the verify-only
+    // aad/key_alias (oversized values would only fail the live tamper check
+    // downstream, but capping here is cheap symmetry).
+    if (nonce.length > maxFieldChars ||
+        ciphertext.length > maxFieldChars ||
+        aad.length > maxFieldChars ||
+        keyAlias.length > maxFieldChars) {
+      throw const FormatException(
+        'EncryptedPayload field exceeds the maximum allowed size',
+      );
+    }
     final Uint8List nonceBytes;
     final Uint8List ciphertextBytes;
     try {

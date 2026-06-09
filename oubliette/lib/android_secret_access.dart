@@ -77,13 +77,21 @@ class AndroidSecretAccess {
   /// `strongBox: await Keystore().isStrongBoxAvailable()`.
   final bool strongBox;
 
-  /// When `true`, the key is only usable while the device is unlocked,
-  /// via `KeyGenParameterSpec.Builder.setUnlockedDeviceRequired(true)`.
-  /// Once the screen locks, any in-progress cipher operation will fail
-  /// until the user unlocks again.
+  /// When `true`, the key is gated on the device being unlocked, via
+  /// `KeyGenParameterSpec.Builder.setUnlockedDeviceRequired(true)`.
   ///
-  /// When `false`, the key remains accessible after the first unlock since
-  /// boot, even if the device is subsequently locked.
+  /// **This gates decryption, not encryption.** Android allows an
+  /// `UnlockedDeviceRequired` key to *encrypt* (and verify/wrap) while the
+  /// screen is locked — only *decrypt* (and sign/unwrap) is blocked until the
+  /// device is unlocked. So on the non-authenticated `onlyUnlocked` profile,
+  /// `store()` can still succeed while the screen is locked (the secret is
+  /// written, encrypted under the hardware key), but `fetch()` fails with a
+  /// recoverable error until the user unlocks. To also gate *writes* on user
+  /// presence, use an `authenticated` profile (`userAuthenticationRequired`),
+  /// whose per-operation `BiometricPrompt` covers encrypt too.
+  ///
+  /// When `false`, the key remains usable after the first unlock since boot,
+  /// even if the device is subsequently locked.
   ///
   /// Requires API 29 (Android 10).
   final bool unlockedDeviceRequired;

@@ -21,6 +21,15 @@ class DarwinOubliette extends Oubliette {
   /// keyed by the full slot so it spans separate instances like Android's.
   static final Map<String, Future<void>> _locks = {};
 
+  /// Profile-wide purge gate, keyed by `access.prefix`. `purge()` holds it while
+  /// it drains in-flight per-slot writes and deletes the profile's items;
+  /// `store()` waits on it first so a write cannot land an item a concurrent
+  /// purge already enumerated past. Store-vs-store concurrency is preserved
+  /// (stores only wait on the gate). Best-effort within an isolate; the
+  /// documented "must not run purge concurrently" contract (see
+  /// [Oubliette.purge]) still stands.
+  static final Map<String, Future<void>> _purges = {};
+
   String _storedKey(String key) => buildSlot(access.prefix, key);
 
   /// FROZEN: the current Darwin blob format version. Every value written to the
@@ -102,18 +111,29 @@ class DarwinOubliette extends Oubliette {
   }
 
   /// Translates known native keychain error codes into typed
-  /// [OublietteException]s so callers can branch on `recoverable`. Darwin does
-  /// not raise [KeyInvalidatedException]/[KeyNotFoundException]: OS invalidation
-  /// of a keychain item deletes it, surfacing as a `null` fetch. (One nuance:
-  /// for Secure-Enclave profiles the native read path regenerates a missing SE
-  /// key, so a lost SE key makes decryption fail as `se_decrypt_failed` →
-  /// [DecryptionFailedException] rather than `null` — still fail-closed, never
-  /// wrong data.) Unknown codes pass through.
+  /// [OublietteException]s so callers can branch on `recoverable`.
+  ///
+  /// For OS invalidation of a plain keychain item (passcode/biometry change),
+  /// the item is deleted, surfacing as a `null` fetch. For Secure-Enclave
+  /// profiles the native **read** path no longer regenerates a missing SE key
+  /// (that would mint a key unable to decrypt existing data) — it returns
+  /// `se_key_missing`, mapped here to [KeyNotFoundException] (`recoverable:
+  /// false`): the SE key is gone (non-exportable, not migrated across
+  /// devices/restores), so the ciphertext under it is unreadable and the only
+  /// way forward is an explicit `purge()` + `init()` + re-entry. A genuine
+  /// cryptographic failure (key present, ciphertext bad) stays
+  /// `se_decrypt_failed` → [DecryptionFailedException]. Unknown codes pass
+  /// through.
   Future<T> _mapError<T>(String key, Future<T> Function() op) async {
     try {
       return await op();
     } on PlatformException catch (e) {
       switch (e.code) {
+        case 'se_key_missing':
+          throw KeyNotFoundException(
+            keyAlias: access.service ?? 'secureEnclave',
+            cause: e,
+          );
         case 'se_decrypt_failed':
           throw DecryptionFailedException(key: key, cause: e);
         case 'auth_failed':
@@ -136,7 +156,7 @@ class DarwinOubliette extends Oubliette {
   }
 
   @override
-  Future<void> purge() async {
+  Future<void> purge() => _withProfilePurge(() async {
     // Keychain has no "delete by account-prefix" query, so the native side
     // enumerates this profile's items (scoped by service/accessGroup) and
     // deletes those whose account begins with `prefix + slotSeparator`.
@@ -153,7 +173,7 @@ class DarwinOubliette extends Oubliette {
     // sibling profile. The key is also inert once its blobs are gone, and SE
     // keys are not subject to the `KeyInvalidatedException` wedge (they carry
     // only `.privateKeyUsage`), so there is no recovery reason to remove it.
-  }
+  });
 
   @override
   Future<bool> exists(String key) {
@@ -161,6 +181,14 @@ class DarwinOubliette extends Oubliette {
   }
 
   Future<T> _withKeyLock<T>(String key, Future<T> Function() body) async {
+    final pendingPurge = _purges[access.prefix];
+    if (pendingPurge != null) {
+      try {
+        await pendingPurge;
+      } catch (_) {
+        // A failed purge must not block subsequent writes.
+      }
+    }
     final lockKey = _storedKey(key);
     final prior = _locks[lockKey] ?? Future<void>.value();
     final release = Completer<void>();
@@ -171,6 +199,39 @@ class DarwinOubliette extends Oubliette {
     } finally {
       release.complete();
       if (identical(_locks[lockKey], release.future)) _locks.remove(lockKey);
+    }
+  }
+
+  /// Runs a profile-destroying [body] under the profile-wide purge gate:
+  /// serializes against other purges and drains in-flight per-slot writes for
+  /// this profile first. New writes wait for it (see [_withKeyLock]).
+  Future<void> _withProfilePurge(Future<void> Function() body) async {
+    final gateKey = access.prefix;
+    final prior = _purges[gateKey] ?? Future<void>.value();
+    final release = Completer<void>();
+    _purges[gateKey] = release.future;
+    try {
+      try {
+        await prior;
+      } catch (_) {
+        // Prior purge failure must not block this one.
+      }
+      final owned = access.prefix + slotSeparator;
+      final inflight = _locks.entries
+          .where((e) => e.key.startsWith(owned))
+          .map((e) => e.value)
+          .toList();
+      for (final f in inflight) {
+        try {
+          await f;
+        } catch (_) {
+          // A failed in-flight write must not block the purge.
+        }
+      }
+      await body();
+    } finally {
+      release.complete();
+      if (identical(_purges[gateKey], release.future)) _purges.remove(gateKey);
     }
   }
 }

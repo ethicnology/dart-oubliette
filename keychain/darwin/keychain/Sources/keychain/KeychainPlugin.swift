@@ -112,8 +112,19 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
           return
         }
         if params.secureEnclave {
-          guard let (privateKey, _) = ensureEnclaveKeyPair(params: params.enclaveParams),
-                var plaintext = enclaveDecrypt(data: rawData, privateKey: privateKey) else {
+          // READ PATH: fetch-only, never create. Regenerating a missing SE key
+          // here would mint a key that cannot decrypt this ciphertext (and
+          // pollute SE state) — surface a distinct, fail-closed "key missing"
+          // instead, so the Dart layer can report it as KeyNotFound rather than
+          // an opaque decrypt failure.
+          guard let (privateKey, _) = fetchEnclaveKeyPair(params: params.enclaveParams) else {
+            rawData.wipe()
+            DispatchQueue.main.async {
+              result(FlutterError(code: "se_key_missing", message: "Secure Enclave key not found for this profile.", details: nil))
+            }
+            return
+          }
+          guard var plaintext = enclaveDecrypt(data: rawData, privateKey: privateKey) else {
             rawData.wipe()
             DispatchQueue.main.async {
               result(FlutterError(code: "se_decrypt_failed", message: "Secure Enclave decryption failed.", details: nil))
@@ -156,7 +167,8 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
     let enclaveParams = EnclaveParams(
       service: args["service"] as? String,
       accessibility: SecAccessibility.fromDart(args["accessibility"] as? String),
-      accessGroup: args["accessGroup"] as? String
+      accessGroup: args["accessGroup"] as? String,
+      useDataProtection: args["useDataProtection"] as? Bool ?? false
     )
     serialQueue.async {
       let alreadyExisted = enclaveKeyExists(params: enclaveParams)

@@ -136,6 +136,28 @@ void main() {
     );
 
     test(
+      'se_key_missing → KeyNotFoundException (not recoverable, no regen)',
+      () async {
+        // DARWIN-2: the SE read path is fetch-only and never regenerates a
+        // missing key. A gone SE key (e.g. restore/migration carried the
+        // ciphertext but not the non-exportable key) surfaces as a clean
+        // KeyNotFound, not an opaque decrypt failure.
+        final s = storage();
+        mock.fetchErrorCode = 'se_key_missing';
+        await expectLater(
+          s.fetch('k'),
+          throwsA(
+            isA<KeyNotFoundException>().having(
+              (e) => e.recoverable,
+              'recoverable',
+              false,
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
       'interaction_not_allowed → AuthenticationFailedException (RECOVERABLE)',
       () async {
         // Device locked — must be recoverable so the caller retries when unlocked

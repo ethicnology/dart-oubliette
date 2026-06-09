@@ -25,6 +25,19 @@ class AndroidOubliette extends Oubliette {
   /// is no atomic put-if-absent in SharedPreferences.)
   static final Map<String, Future<void>> _locks = {};
 
+  /// Profile-wide purge gate, keyed by `access.prefix`. `purge()` holds it
+  /// while it drains in-flight per-slot writes and then destroys the profile;
+  /// `store()` (via [_withKeyLock]) waits on it first, so a write cannot land a
+  /// blob a concurrent purge already enumerated past (which would orphan it
+  /// under the just-deleted key). Store-vs-store concurrency for different keys
+  /// is preserved — stores only *wait on* the gate, they do not hold it.
+  ///
+  /// Best-effort WITHIN an isolate (like [_locks]): cross-isolate /
+  /// cross-process purge-vs-store is unguarded — SharedPreferences has no
+  /// cross-process transaction. The documented contract (see [Oubliette.purge])
+  /// still stands; this only tightens the common single-isolate case.
+  static final Map<String, Future<void>> _purges = {};
+
   String _storedKey(String key) => buildSlot(access.prefix, key);
 
   /// Generates the profile's Keystore key if it does not already exist.
@@ -177,7 +190,7 @@ class AndroidOubliette extends Oubliette {
   }
 
   @override
-  Future<void> purge() async {
+  Future<void> purge() => _withProfilePurge(() async {
     // Remove every blob in this profile's slot namespace, then the shared key.
     // Order matters only for cleanliness: even if key deletion fails, no
     // readable ciphertext is left behind.
@@ -196,7 +209,7 @@ class AndroidOubliette extends Oubliette {
     // Idempotent on the native side: deleting an absent alias is a no-op, so a
     // partially-wiped profile (e.g. dead key, blobs already gone) still clears.
     await _keystore.deleteEntry(access.keyAlias);
-  }
+  });
 
   @override
   Future<bool> exists(String key) async {
@@ -208,6 +221,16 @@ class AndroidOubliette extends Oubliette {
   /// writes are serialized. Different keys run concurrently. The lock entry is
   /// removed once this call is the tail of the chain, bounding map growth.
   Future<T> _withKeyLock<T>(String key, Future<T> Function() body) async {
+    // Wait out any in-flight purge of this profile before acquiring a slot
+    // lock, so a write cannot race past a concurrent purge's enumeration.
+    final pendingPurge = _purges[access.prefix];
+    if (pendingPurge != null) {
+      try {
+        await pendingPurge;
+      } catch (_) {
+        // A failed purge must not block subsequent writes.
+      }
+    }
     final lockKey = _storedKey(key);
     final prior = _locks[lockKey] ?? Future<void>.value();
     final release = Completer<void>();
@@ -218,6 +241,42 @@ class AndroidOubliette extends Oubliette {
     } finally {
       release.complete();
       if (identical(_locks[lockKey], release.future)) _locks.remove(lockKey);
+    }
+  }
+
+  /// Runs a profile-destroying [body] under the profile-wide purge gate: it
+  /// serializes against other purges of this profile and drains any in-flight
+  /// per-slot writes first, so no write is still mid-flight when the profile is
+  /// destroyed. New writes started after this acquires the gate wait for it
+  /// (see [_withKeyLock]).
+  Future<void> _withProfilePurge(Future<void> Function() body) async {
+    final gateKey = access.prefix;
+    final prior = _purges[gateKey] ?? Future<void>.value();
+    final release = Completer<void>();
+    _purges[gateKey] = release.future;
+    try {
+      try {
+        await prior;
+      } catch (_) {
+        // Prior purge failure must not block this one.
+      }
+      // Drain in-flight per-slot writes for this profile before destroying it.
+      final owned = access.prefix + slotSeparator;
+      final inflight = _locks.entries
+          .where((e) => e.key.startsWith(owned))
+          .map((e) => e.value)
+          .toList();
+      for (final f in inflight) {
+        try {
+          await f;
+        } catch (_) {
+          // A failed in-flight write must not block the purge.
+        }
+      }
+      await body();
+    } finally {
+      release.complete();
+      if (identical(_purges[gateKey], release.future)) _purges.remove(gateKey);
     }
   }
 }

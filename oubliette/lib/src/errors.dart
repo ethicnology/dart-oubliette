@@ -7,6 +7,15 @@
 ///
 /// Being `sealed`, a `switch` over an [OublietteException] is exhaustive — the
 /// analyzer flags any unhandled subtype if a future release adds one.
+///
+/// **Diagnostic hygiene:** `toString()` is deliberately kept free of the
+/// profile key alias and the underlying native `cause` (which can carry OEM
+/// keymaster / biometric text, and — for a `custom` alias encoding a tenant or
+/// user id — caller-sensitive identifiers). Those are retained as fields
+/// (`keyAlias`, `cause`, …) for explicit, opt-in debugging, but are not folded
+/// into `toString()` so that logging the exception — or a crash reporter
+/// capturing it — does not exfiltrate them off-device. Log the fields yourself
+/// when you intend to.
 sealed class OublietteException implements Exception {
   const OublietteException();
 
@@ -63,9 +72,9 @@ final class PayloadTamperException extends OublietteException {
   @override
   String toString() =>
       'PayloadTamperException: stored payload for key "$key" does not match '
-      'its slot (expected aad="$expectedAad" alias="$expectedAlias", '
-      'found aad="$actualAad" alias="$actualAlias"). '
-      'Refusing to decrypt attacker-relocatable data.';
+      'its slot (the recomputed AAD/alias differ from the on-disk blob). '
+      'Refusing to decrypt attacker-relocatable data. See the '
+      'expected/actual AAD and alias fields for diagnostics.';
 }
 
 /// Thrown when a stored blob cannot be parsed into a valid [EncryptedPayload]
@@ -121,10 +130,10 @@ final class KeyInvalidatedException extends OublietteException {
 
   @override
   String toString() =>
-      'KeyInvalidatedException: the hardware key "$keyAlias" was permanently '
-      'invalidated (biometric enrollment or lock-screen change). The key and '
-      'every secret under it are unrecoverable; delete the profile key and its '
-      'stored values, then re-init to resume. (cause: $cause)';
+      'KeyInvalidatedException: the profile hardware key was permanently '
+      'invalidated (biometric enrollment or lock-screen change); the key and '
+      'every secret under it are unrecoverable. Recover with purge() + init(). '
+      'See the keyAlias/cause fields for diagnostics.';
 }
 
 /// Thrown when the profile's key alias does not exist at decrypt time — e.g.
@@ -152,9 +161,9 @@ final class KeyNotFoundException extends OublietteException {
 
   @override
   String toString() =>
-      'KeyNotFoundException: the hardware key "$keyAlias" does not exist, but a '
-      'blob encrypted under it remains. The blob is unreadable; purge the '
-      'profile and re-init to resume. (cause: $cause)';
+      'KeyNotFoundException: the profile hardware key does not exist, but a '
+      'blob encrypted under it remains; the blob is unreadable. Recover with '
+      'purge() + init(). See the keyAlias/cause fields for diagnostics.';
 }
 
 /// Thrown when authenticated decryption fails because the ciphertext did not
@@ -180,7 +189,7 @@ final class DecryptionFailedException extends OublietteException {
   String toString() =>
       'DecryptionFailedException: the stored blob for key "$key" failed '
       'authenticated decryption (corruption, key mismatch, or tampering). '
-      '(cause: $cause)';
+      'See the cause field for diagnostics.';
 }
 
 /// Thrown when a per-operation authentication gate is not satisfied — the user
@@ -215,5 +224,5 @@ final class AuthenticationFailedException extends OublietteException {
       'AuthenticationFailedException: authentication was not satisfied'
       '${cancelled ? ' (cancelled by user)' : ''}'
       '${key != null ? ' for key "$key"' : ''}. The data is intact — retry '
-      'after the user authenticates. (cause: $cause)';
+      'after the user authenticates. See the cause field for diagnostics.';
 }
