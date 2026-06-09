@@ -6,7 +6,10 @@ name: oubliette_workspace
 publish_to: none
 
 environment:
-  sdk: ^3.12.0
+  # Pinned exactly to the fvm/CI toolchain (Flutter 3.44.1 → Dart 3.12.1) for
+  # reproducible, supply-chain-stable builds. A bare version is an exact pub
+  # constraint (not a caret range). fvm (.fvmrc) and CI enforce the same.
+  sdk: "3.12.1"
 
 workspace:
   - oubliette
