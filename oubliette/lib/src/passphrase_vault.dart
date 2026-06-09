@@ -91,6 +91,10 @@ final class PassphraseVault {
         'must not be empty — a passphrase vault never stores unprotected data',
       );
     }
+    // Reject bad caller params up front (developer misconfiguration), so the
+    // first store() can't surface a raw ArgumentError from the KDF that bypasses
+    // the sealed OublietteException taxonomy.
+    _checkArgon2idParams(params);
     return PassphraseVault._(
       inner,
       _modePassphrase,
@@ -113,6 +117,18 @@ final class PassphraseVault {
   static const int _nonceLen = 12; // 96-bit GCM nonce (NIST SP 800-38D)
   static const int _keyLen = 32; // AES-256
   static const int _tagBits = 128;
+
+  // Sane bounds for Argon2id params read back from the (attacker-writable)
+  // envelope. A legitimately-written envelope always falls inside these; an
+  // out-of-range value is treated as corruption and rejected BEFORE the KDF
+  // runs, so a crafted blob cannot force a multi-GB allocation (decrypt-time
+  // OOM/DoS). RFC 9106 / OWASP give defensible ceilings.
+  static const int _minMemoryKiB = 8;
+  static const int _maxMemoryKiB = 1024 * 1024; // 1 GiB
+  static const int _minIterations = 1;
+  static const int _maxIterations = 64;
+  static const int _minParallelism = 1;
+  static const int _maxParallelism = 16;
 
   /// Reserved key under which the keyring-mode random KEK is stored in the
   /// wrapped backend. Do not use this as a logical key.
@@ -185,20 +201,25 @@ final class PassphraseVault {
   // --- crypto ---
 
   Future<Uint8List> _encrypt(String key, Uint8List value) async {
-    final aad = Uint8List.fromList(utf8.encode(key));
+    final keyBytes = Uint8List.fromList(utf8.encode(key));
     final salt = _randomBytes(_saltLen);
     final nonce = _randomBytes(_nonceLen);
-    final kek = await _deriveKey(salt, aad);
+    final header = _header(salt, nonce);
+    // AAD binds the FULL header (version, mode, params, salt, nonce) plus the
+    // logical key, so any header tamper fails the GCM tag rather than being
+    // silently honored.
+    final aad = _concat(header, keyBytes);
+    final kek = await _deriveKey(salt, keyBytes);
     try {
       final ct = _gcm(true, kek, nonce, aad, value);
-      return _encode(salt, nonce, ct);
+      return _concat(header, ct);
     } finally {
       _zero(kek);
     }
   }
 
   Future<Uint8List> _decrypt(String key, Uint8List env) async {
-    final aad = Uint8List.fromList(utf8.encode(key));
+    final keyBytes = Uint8List.fromList(utf8.encode(key));
     final r = _Reader(key, env);
     if (r.byte() != _formatV1) {
       throw PayloadCorruptException(
@@ -219,11 +240,41 @@ final class PassphraseVault {
         iterations: r.uint32(),
         parallelism: r.uint32(),
       );
+      // VAULT-1: reject out-of-range cost params from the (untrusted) blob
+      // BEFORE running the KDF, so a crafted envelope cannot trigger an
+      // unbounded allocation.
+      _validateParams(key, storedParams);
     }
-    final salt = r.bytes(r.byte());
-    final nonce = r.bytes(r.byte());
+    // VAULT-2: the writer only ever emits salt==16 / nonce==12; any other
+    // length is corruption, surfaced as the typed PayloadCorruptException
+    // (never a raw ArgumentError from the crypto layer).
+    final saltLen = r.byte();
+    if (saltLen != _saltLen) {
+      throw PayloadCorruptException(
+        'vault envelope for "$key" has an invalid salt length ($saltLen)',
+      );
+    }
+    final salt = r.bytes(saltLen);
+    final nonceLen = r.byte();
+    if (nonceLen != _nonceLen) {
+      throw PayloadCorruptException(
+        'vault envelope for "$key" has an invalid nonce length ($nonceLen)',
+      );
+    }
+    final nonce = r.bytes(nonceLen);
+    final header = Uint8List.sublistView(env, 0, r.offset);
     final ct = r.rest();
-    final kek = await _deriveKey(salt, aad, paramsOverride: storedParams);
+    final aad = _concat(header, keyBytes);
+    final Uint8List kek;
+    try {
+      kek = await _deriveKey(salt, keyBytes, paramsOverride: storedParams);
+    } on ArgumentError catch (e) {
+      // Defensive: a malformed (but in-range) value reaching the KDF is still
+      // corruption, not a recoverable crypto failure.
+      throw PayloadCorruptException(
+        'vault envelope for "$key" is malformed: ${e.message}',
+      );
+    }
     try {
       return _gcm(false, kek, nonce, aad, ct);
     } on InvalidCipherTextException catch (e) {
@@ -234,9 +285,51 @@ final class PassphraseVault {
     }
   }
 
+  /// Validates caller-supplied Argon2id params at construction. Throws a
+  /// developer-facing [ArgumentError] (not the on-disk [PayloadCorruptException])
+  /// for an out-of-range preset, including pointycastle's `memory >= 2*lanes`
+  /// invariant (memoryKiB >= 2*parallelism).
+  static void _checkArgon2idParams(Argon2idParams p) {
+    final ok =
+        p.memoryKiB >= _minMemoryKiB &&
+        p.memoryKiB <= _maxMemoryKiB &&
+        p.iterations >= _minIterations &&
+        p.iterations <= _maxIterations &&
+        p.parallelism >= _minParallelism &&
+        p.parallelism <= _maxParallelism &&
+        p.memoryKiB >= 2 * p.parallelism;
+    if (!ok) {
+      throw ArgumentError.value(
+        p,
+        'params',
+        'invalid Argon2id parameters: memoryKiB in [$_minMemoryKiB, '
+            '$_maxMemoryKiB] and >= 2*parallelism, iterations in '
+            '[$_minIterations, $_maxIterations], parallelism in '
+            '[$_minParallelism, $_maxParallelism]',
+      );
+    }
+  }
+
+  void _validateParams(String key, Argon2idParams p) {
+    final ok =
+        p.memoryKiB >= _minMemoryKiB &&
+        p.memoryKiB <= _maxMemoryKiB &&
+        p.iterations >= _minIterations &&
+        p.iterations <= _maxIterations &&
+        p.parallelism >= _minParallelism &&
+        p.parallelism <= _maxParallelism;
+    if (!ok) {
+      throw PayloadCorruptException(
+        'vault envelope for "$key" has out-of-range Argon2id parameters '
+        '(memoryKiB=${p.memoryKiB}, iterations=${p.iterations}, '
+        'parallelism=${p.parallelism})',
+      );
+    }
+  }
+
   Future<Uint8List> _deriveKey(
     Uint8List salt,
-    Uint8List aad, {
+    Uint8List keyBytes, {
     Argon2idParams? paramsOverride,
   }) async {
     if (_mode == _modePassphrase) {
@@ -244,10 +337,12 @@ final class PassphraseVault {
     }
     final vaultKek = await _ensureKeyringKek();
     // Per-slot subkey: HKDF(vaultKek, salt, info = the logical key).
-    return _hkdf(vaultKek, salt, aad);
+    return _hkdf(vaultKek, salt, keyBytes);
   }
 
-  Uint8List _encode(Uint8List salt, Uint8List nonce, Uint8List ct) {
+  /// Serializes the envelope header (everything before the ciphertext). Used
+  /// both as the stored prefix and as the GCM AAD prefix.
+  Uint8List _header(Uint8List salt, Uint8List nonce) {
     final out = BytesBuilder();
     out.addByte(_formatV1);
     out.addByte(_mode);
@@ -262,8 +357,14 @@ final class PassphraseVault {
     out.add(salt);
     out.addByte(nonce.length);
     out.add(nonce);
-    out.add(ct);
     return out.toBytes();
+  }
+
+  Uint8List _concat(Uint8List a, Uint8List b) {
+    final out = Uint8List(a.length + b.length);
+    out.setRange(0, a.length, a);
+    out.setRange(a.length, out.length, b);
+    return out;
   }
 
   Future<Uint8List> _ensureKeyringKek() async {
@@ -337,6 +438,9 @@ class _Reader {
   int _off = 0;
 
   _Reader(this._key, this._b);
+
+  /// Bytes consumed so far (start offset of the ciphertext after the header).
+  int get offset => _off;
 
   void _need(int n) {
     if (_off + n > _b.length) {

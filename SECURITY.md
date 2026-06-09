@@ -120,6 +120,11 @@ and Apple Secure Enclave tiers.
   platform cannot provide. A missing/headless backend fails closed with
   `BackendUnavailableException`; a locked keyring with `KeyringLockedException`
   (both recoverable — never `purge()` in response).
+- **Headless unlock is time-bounded.** If the keyring is locked and no unlock
+  prompter is available (a headless/server session), the interactive unlock is
+  capped (a detached timer cancels it after a timeout) and surfaces the
+  recoverable `KeyringLockedException` rather than hanging forever. Run a keyring
+  agent in the session to unlock normally.
 - **Backup hygiene.** Exclude `~/.local/share/keyrings` (and
   `~/.local/share/kwalletd`) from cloud sync and home-directory backups: syncing
   them leaks secrets, and restoring them onto another machine/account yields

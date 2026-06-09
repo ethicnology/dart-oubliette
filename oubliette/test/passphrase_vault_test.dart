@@ -104,6 +104,23 @@ void main() {
       );
     });
 
+    test('invalid Argon2id params are rejected at construction (VAULT2-ENC)', () {
+      // memoryKiB < 2*parallelism violates pointycastle's invariant — must fail
+      // fast as a developer-facing ArgumentError, not a raw error from store().
+      expect(
+        () => PassphraseVault.passphrase(
+          inner: backend,
+          passphrase: _bytes([1, 2, 3]),
+          params: const Argon2idParams(
+            memoryKiB: 8,
+            iterations: 2,
+            parallelism: 16,
+          ),
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
     test('empty passphrase is rejected (no silent plaintext)', () {
       expect(
         () => PassphraseVault.passphrase(
@@ -238,6 +255,79 @@ void main() {
       await expectLater(
         keyringVault.useAndForget('k', (b) async => b),
         throwsA(isA<PayloadCorruptException>()),
+      );
+    });
+  });
+
+  group('PassphraseVault — tampered-envelope hardening (VAULT-1/2/3)', () {
+    late _FakeOubliette backend;
+    setUp(() => backend = _FakeOubliette());
+
+    // Passphrase envelope layout: [0]=ver, [1]=mode, [2..13]=argon2 params
+    // (mem,iter,par uint32), [14]=saltLen(16), [15..30]=salt, [31]=nonceLen(12),
+    // [32..43]=nonce, [44..]=ct.
+    Future<Uint8List> writeBlob() async {
+      final v = PassphraseVault.passphrase(
+        inner: backend,
+        passphrase: _bytes([1, 2, 3, 4]),
+        params: _fastParams,
+      );
+      await v.store('k', _bytes([5, 6, 7, 8]));
+      return backend.store_['k']!;
+    }
+
+    PassphraseVault reader() => PassphraseVault.passphrase(
+      inner: backend,
+      passphrase: _bytes([1, 2, 3, 4]),
+      params: _fastParams,
+    );
+
+    test(
+      'VAULT-1: an absurd memoryKiB is rejected before the KDF runs',
+      () async {
+        final raw = await writeBlob();
+        // Patch memoryKiB (bytes 2..5) to ~2 GiB → must be rejected, NOT allocated.
+        raw.buffer.asByteData().setUint32(2, 0x7FFFFFFF);
+        await expectLater(
+          reader().useAndForget('k', (b) async => b),
+          throwsA(isA<PayloadCorruptException>()),
+        );
+      },
+    );
+
+    test(
+      'VAULT-2: a bad nonce length surfaces as PayloadCorruptException',
+      () async {
+        final raw = await writeBlob();
+        raw[31] = 0; // nonceLen byte → 0 (writer always emits 12)
+        await expectLater(
+          reader().useAndForget('k', (b) async => b),
+          throwsA(isA<PayloadCorruptException>()),
+        );
+      },
+    );
+
+    test(
+      'VAULT-2: a bad salt length surfaces as PayloadCorruptException',
+      () async {
+        final raw = await writeBlob();
+        raw[14] = 8; // saltLen byte → 8 (writer always emits 16)
+        await expectLater(
+          reader().useAndForget('k', (b) async => b),
+          throwsA(isA<PayloadCorruptException>()),
+        );
+      },
+    );
+
+    test('VAULT-3: an in-range header tamper fails the GCM tag', () async {
+      final raw = await writeBlob();
+      // Flip iterations 1→2 (still in range, so it passes validation) — the
+      // header is bound into the AAD and the derived key differs, so it fails
+      // closed as a decryption failure.
+      raw[9] = 2; // low byte of iterations uint32 (bytes 6..9)
+      await expectLater(
+        reader().useAndForget('k', (b) async => b),
+        throwsA(isA<DecryptionFailedException>()),
       );
     });
   });

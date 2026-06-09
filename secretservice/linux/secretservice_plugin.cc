@@ -61,6 +61,24 @@ static inline void secret_cleanup_free(gchar** p) {
 //     unlock did not complete (RECOVERABLE — retry once unlocked).
 // We never silently treat "no backend" and "locked" as the same thing.
 // ---------------------------------------------------------------------------
+// Bound for the interactive keyring unlock. A headless / no-prompter session
+// has no agent to satisfy the prompt, so the sync unlock could otherwise block
+// forever; cap it and surface the recoverable "keyring_locked" instead.
+static const guint kUnlockTimeoutSeconds = 20;
+
+// Detached timer: sleeps, then cancels the unlock's GCancellable (a no-op if the
+// unlock already finished). It owns one ref on the cancellable and releases it
+// on exit — so there is no use-after-free, no mutex, and no condition variable
+// to deadlock. Spawned ONLY on the (rare) locked-keyring path, so the common
+// unlocked path never creates a thread.
+static gpointer unlock_timeout_thread(gpointer data) {
+  GCancellable* cancellable = static_cast<GCancellable*>(data);
+  g_usleep(static_cast<gulong>(kUnlockTimeoutSeconds) * G_USEC_PER_SEC);
+  g_cancellable_cancel(cancellable);
+  g_object_unref(cancellable);
+  return nullptr;
+}
+
 static SecretService* warmup(const char** err_code) {
   *err_code = nullptr;
   g_autoptr(GError) error = nullptr;
@@ -84,13 +102,35 @@ static SecretService* warmup(const char** err_code) {
   }
 
   if (secret_collection_get_locked(collection)) {
+    // LINUX-1: bound the interactive unlock so a headless/no-prompter session
+    // cannot hang here forever — a detached timer cancels it after a timeout.
+    GCancellable* cancellable = g_cancellable_new();
+    // g_thread_try_new (not g_thread_new) so thread-creation failure degrades
+    // to an un-timed unlock rather than aborting the host app. The timer thread
+    // receives its own ref on the cancellable and releases it on exit.
+    GThread* timer = g_thread_try_new(
+        "oubliette-unlock-timeout", unlock_timeout_thread,
+        g_object_ref(cancellable), nullptr);
+    if (timer != nullptr) {
+      g_thread_unref(timer);  // detached; it owns and releases its own ref
+    } else {
+      // Watchdog unavailable: drop the ref minted for it; unlock proceeds
+      // without a timeout (no abort, no leak).
+      g_object_unref(cancellable);
+    }
+
     GList* to_unlock = g_list_append(nullptr, collection);
     GList* unlocked = nullptr;
-    gint n = secret_service_unlock_sync(service, to_unlock, nullptr, &unlocked,
-                                        &error);
+    // Returns the count unlocked (>= 1 on success), 0 if declined, or -1 on
+    // error / cancellation (timeout). Anything but a positive count is the
+    // recoverable locked case — fail closed (SS-1: -1 must NOT read as success).
+    gint n = secret_service_unlock_sync(service, to_unlock, cancellable,
+                                        &unlocked, &error);
     g_list_free(to_unlock);
     if (unlocked) g_list_free_full(unlocked, g_object_unref);
-    if (n == 0) {
+    g_object_unref(cancellable);  // our ref; the timer thread holds its own
+
+    if (n < 1) {
       g_object_unref(collection);
       g_object_unref(service);
       *err_code = "keyring_locked";
@@ -215,7 +255,11 @@ static FlMethodResponse* handle_delete_by_prefix(const gchar* prefix) {
     return error_response("secret_service_error", search_error->message);
   }
 
-  const char* delete_error_message = nullptr;
+  // Best-effort: attempt EVERY matching item, then report. Purge is non-atomic
+  // and idempotent — on a partial failure the caller should retry, which deletes
+  // whatever remained. g_autofree frees the captured message on every path.
+  g_autofree gchar* first_error = nullptr;
+  int delete_failures = 0;
   for (GList* l = items; l != nullptr; l = l->next) {
     SecretItem* item = SECRET_ITEM(l->data);
     GHashTable* item_attrs = secret_item_get_attributes(item);
@@ -224,8 +268,9 @@ static FlMethodResponse* handle_delete_by_prefix(const gchar* prefix) {
     if (slot != nullptr && g_str_has_prefix(slot, prefix)) {
       g_autoptr(GError) del_error = nullptr;
       secret_item_delete_sync(item, nullptr, &del_error);
-      if (del_error && delete_error_message == nullptr) {
-        delete_error_message = g_strdup(del_error->message);
+      if (del_error) {
+        delete_failures++;
+        if (first_error == nullptr) first_error = g_strdup(del_error->message);
       }
     }
     g_hash_table_unref(item_attrs);
@@ -233,8 +278,14 @@ static FlMethodResponse* handle_delete_by_prefix(const gchar* prefix) {
   if (items) g_list_free_full(items, g_object_unref);
   g_object_unref(service);
 
-  if (delete_error_message != nullptr) {
-    return error_response("secret_service_error", delete_error_message);
+  if (delete_failures > 0) {
+    // Report the count so the caller knows the purge was partial (readable
+    // ciphertext may remain) and that a retry is needed.
+    g_autofree gchar* msg = g_strdup_printf(
+        "%d item(s) failed to delete during purge (first: %s); purge is "
+        "best-effort and idempotent — retry to remove the rest",
+        delete_failures, first_error);
+    return error_response("secret_service_error", msg);
   }
   return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
 }
