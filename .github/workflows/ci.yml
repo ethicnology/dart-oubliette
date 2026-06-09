@@ -31,6 +31,32 @@ jobs:
       - name: Dart tests (all packages)
         run: dart run melos run test
 
+  linux-build:
+    name: Linux build (compiles secretservice C++ plugin)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      # The Linux desktop toolchain + libsecret dev headers the plugin links.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libsecret-1-dev
+      # Building the example for Linux compiles the secretservice C++ plugin
+      # (CMake + libsecret) against the real Flutter embedding — the authoritative
+      # native gate for the Linux backend. The example has no committed linux/
+      # runner, so generate the ephemeral desktop scaffold first (does not touch
+      # lib/). This is the only automated compile gate for secretservice_plugin.cc.
+      - name: Build example for Linux (debug)
+        working-directory: oubliette/example
+        run: |
+          flutter create --platforms=linux .
+          flutter build linux --debug
+
   android-build:
     name: Android build (compiles plugin Kotlin)
     runs-on: ubuntu-latest
