@@ -1,5 +1,5 @@
-#ifndef FLUTTER_PLUGIN_SECRETSERVICE_PLUGIN_H_
-#define FLUTTER_PLUGIN_SECRETSERVICE_PLUGIN_H_
+#ifndef FLUTTER_PLUGIN_SECRET_SERVICE_PLUGIN_H_
+#define FLUTTER_PLUGIN_SECRET_SERVICE_PLUGIN_H_
 
 #include <flutter_linux/flutter_linux.h>
 
@@ -16,11 +16,11 @@ typedef struct {
   GObjectClass parent_class;
 } SecretServicePluginClass;
 
-FLUTTER_PLUGIN_EXPORT GType secretservice_plugin_get_type();
+FLUTTER_PLUGIN_EXPORT GType secret_service_plugin_get_type();
 
-FLUTTER_PLUGIN_EXPORT void secretservice_plugin_register_with_registrar(
+FLUTTER_PLUGIN_EXPORT void secret_service_plugin_register_with_registrar(
     FlPluginRegistrar* registrar);
 
 G_END_DECLS
 
-#endif  // FLUTTER_PLUGIN_SECRETSERVICE_PLUGIN_H_
+#endif  // FLUTTER_PLUGIN_SECRET_SERVICE_PLUGIN_H_

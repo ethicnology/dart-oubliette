@@ -1,4 +1,4 @@
-name: secretservice
+name: secret_service
 description: Flutter plugin exposing the freedesktop Secret Service (libsecret) on Linux via a typed Dart facade.
 version: 1.0.0
 publish_to: 'none'

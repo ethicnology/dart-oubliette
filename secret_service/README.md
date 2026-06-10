@@ -1,4 +1,4 @@
-# secretservice
+# secret_service
 
 Flutter plugin exposing the freedesktop [Secret Service](https://specifications.freedesktop.org/secret-service/latest/)
 on **Linux** via [libsecret](https://gnome.pages.gitlab.gnome.org/libsecret/),
@@ -15,7 +15,7 @@ monorepo (the Linux sibling of `keychain` for Darwin and `keystore` for Android)
 
 `flutter_secure_storage` stores **all** key/value pairs as one JSON blob in a
 single Secret Service item, rewritten on every write — concurrent writers
-clobber each other and there is no per-slot isolation. `secretservice` instead
+clobber each other and there is no per-slot isolation. `secret_service` instead
 stores **one item per slot** (keyed by the `slot` attribute), so reads/writes
 are independent, `store` fails closed on a duplicate slot, and a profile purge
 deletes exactly its own items by prefix.

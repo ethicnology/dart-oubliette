@@ -1,13 +1,15 @@
 cmake_minimum_required(VERSION 3.10)
-set(PROJECT_NAME "secretservice")
+set(PROJECT_NAME "secret_service")
 project(${PROJECT_NAME} LANGUAGES CXX)
 
-# This value is used when generating builds using this plugin, so it must
-# not be changed.
-set(PLUGIN_NAME "secretservice_plugin")
+# Flutter's generated example CMake links `${package}_plugin` and reads
+# `${package}_bundled_libraries`, so the target name is the package name +
+# "_plugin". With package "secret_service" this is secret_service_plugin —
+# matching the registrant header/symbol derived from pluginClass.
+set(PLUGIN_NAME "secret_service_plugin")
 
 add_library(${PLUGIN_NAME} SHARED
-  "secretservice_plugin.cc"
+  "secret_service_plugin.cc"
 )
 apply_standard_settings(${PLUGIN_NAME})
 
@@ -30,7 +32,7 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE PkgConfig::GTK)
 target_link_libraries(${PLUGIN_NAME} PRIVATE PkgConfig::LIBSECRET)
 
 # List of absolute paths to libraries that should be bundled with the plugin.
-set(secretservice_bundled_libraries
+set(secret_service_bundled_libraries
   ""
   PARENT_SCOPE
 )

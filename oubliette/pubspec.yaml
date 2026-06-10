@@ -19,8 +19,8 @@ dependencies:
     path: ../keychain
   keystore:
     path: ../keystore
-  secretservice:
-    path: ../secretservice
+  secret_service:
+    path: ../secret_service
   shared_preferences: ^2.5.5
   pointycastle: ^4.0.0
 
@@ -39,4 +39,4 @@ flutter:
       macos:
         default_package: keychain
       linux:
-        default_package: secretservice
+        default_package: secret_service

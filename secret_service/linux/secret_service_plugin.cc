@@ -1,4 +1,4 @@
-#include "include/secretservice/secretservice_plugin.h"
+#include "include/secret_service/secret_service_plugin.h"
 
 #include <flutter_linux/flutter_linux.h>
 #include <gtk/gtk.h>
@@ -23,7 +23,7 @@
 // this app's items.
 // ---------------------------------------------------------------------------
 static const SecretSchema kSchema = {
-    "com.oubliette.secretservice",
+    "com.oubliette.secret_service",
     SECRET_SCHEMA_NONE,
     {
         {"slot", SECRET_SCHEMA_ATTRIBUTE_STRING},
@@ -35,15 +35,15 @@ static const SecretSchema kSchema = {
 
 static const char* kFmt = "v1";
 
-#define SECRETSERVICE_PLUGIN(obj)                                     \
-  (G_TYPE_CHECK_INSTANCE_CAST((obj), secretservice_plugin_get_type(), \
+#define SECRET_SERVICE_PLUGIN(obj)                                     \
+  (G_TYPE_CHECK_INSTANCE_CAST((obj), secret_service_plugin_get_type(), \
                               SecretServicePlugin))
 
 struct _SecretServicePlugin {
   GObject parent_instance;
 };
 
-G_DEFINE_TYPE(SecretServicePlugin, secretservice_plugin, g_object_get_type())
+G_DEFINE_TYPE(SecretServicePlugin, secret_service_plugin, g_object_get_type())
 
 // Frees a gchar* secret in place (best effort).
 #define secret_autofree _GLIB_CLEANUP(secret_cleanup_free)
@@ -290,7 +290,7 @@ static FlMethodResponse* handle_delete_by_prefix(const gchar* prefix) {
   return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
 }
 
-static void secretservice_plugin_handle_method_call(
+static void secret_service_plugin_handle_method_call(
     SecretServicePlugin* self, FlMethodCall* method_call) {
   g_autoptr(FlMethodResponse) response = nullptr;
 
@@ -345,30 +345,30 @@ static void secretservice_plugin_handle_method_call(
   fl_method_call_respond(method_call, response, nullptr);
 }
 
-static void secretservice_plugin_dispose(GObject* object) {
-  G_OBJECT_CLASS(secretservice_plugin_parent_class)->dispose(object);
+static void secret_service_plugin_dispose(GObject* object) {
+  G_OBJECT_CLASS(secret_service_plugin_parent_class)->dispose(object);
 }
 
-static void secretservice_plugin_class_init(SecretServicePluginClass* klass) {
-  G_OBJECT_CLASS(klass)->dispose = secretservice_plugin_dispose;
+static void secret_service_plugin_class_init(SecretServicePluginClass* klass) {
+  G_OBJECT_CLASS(klass)->dispose = secret_service_plugin_dispose;
 }
 
-static void secretservice_plugin_init(SecretServicePlugin* self) {}
+static void secret_service_plugin_init(SecretServicePlugin* self) {}
 
 static void method_call_cb(FlMethodChannel* channel, FlMethodCall* method_call,
                            gpointer user_data) {
-  SecretServicePlugin* plugin = SECRETSERVICE_PLUGIN(user_data);
-  secretservice_plugin_handle_method_call(plugin, method_call);
+  SecretServicePlugin* plugin = SECRET_SERVICE_PLUGIN(user_data);
+  secret_service_plugin_handle_method_call(plugin, method_call);
 }
 
-void secretservice_plugin_register_with_registrar(
+void secret_service_plugin_register_with_registrar(
     FlPluginRegistrar* registrar) {
-  SecretServicePlugin* plugin = SECRETSERVICE_PLUGIN(
-      g_object_new(secretservice_plugin_get_type(), nullptr));
+  SecretServicePlugin* plugin = SECRET_SERVICE_PLUGIN(
+      g_object_new(secret_service_plugin_get_type(), nullptr));
 
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
   g_autoptr(FlMethodChannel) channel = fl_method_channel_new(
-      fl_plugin_registrar_get_messenger(registrar), "secretservice",
+      fl_plugin_registrar_get_messenger(registrar), "secret_service",
       FL_METHOD_CODEC(codec));
   fl_method_channel_set_method_call_handler(
       channel, method_call_cb, g_object_ref(plugin), g_object_unref);

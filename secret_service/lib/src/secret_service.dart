@@ -32,7 +32,7 @@ import 'package:flutter/services.dart';
 /// - `already_exists` — [add] was called for a slot that already has an item.
 /// - `bad_args` / `secret_service_error` — argument or libsecret failure.
 final class SecretService {
-  final MethodChannel _channel = const MethodChannel('secretservice');
+  final MethodChannel _channel = const MethodChannel('secret_service');
 
   /// Whether an item exists for [slot].
   Future<bool> contains(String slot) async {

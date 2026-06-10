@@ -15,7 +15,7 @@ workspace:
   - oubliette
   - keystore
   - keychain
-  - secretservice
+  - secret_service
   - oubliette/example
 
 dev_dependencies:

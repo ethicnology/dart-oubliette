@@ -6,7 +6,7 @@ import 'package:oubliette/linux_oubliette.dart';
 import 'package:oubliette/oubliette.dart';
 import 'package:oubliette/src/slot.dart';
 
-/// In-memory stand-in for the native `secretservice` MethodChannel. Keys items
+/// In-memory stand-in for the native `secret_service` MethodChannel. Keys items
 /// by the full slot (`prefix + U+001D + key`) so per-slot isolation and
 /// round-trips behave like the real Secret Service. `write` rejects duplicates
 /// with `already_exists`. Stores the base64 string the facade sends.
@@ -57,7 +57,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late _MockSecretService mock;
-  const channel = MethodChannel('secretservice');
+  const channel = MethodChannel('secret_service');
 
   setUp(() {
     mock = _MockSecretService();

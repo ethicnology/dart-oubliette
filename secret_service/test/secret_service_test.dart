@@ -2,9 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:secretservice/secretservice.dart';
+import 'package:secret_service/secret_service.dart';
 
-/// In-memory stand-in for the native `secretservice` MethodChannel. Keys items
+/// In-memory stand-in for the native `secret_service` MethodChannel. Keys items
 /// by the `slot` attribute, mirroring the per-slot item model. Stores the
 /// base64 string verbatim (as the native simple API would).
 class _MockSecretService {
@@ -45,7 +45,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late _MockSecretService mock;
-  const channel = MethodChannel('secretservice');
+  const channel = MethodChannel('secret_service');
   final service = SecretService();
 
   setUp(() {
