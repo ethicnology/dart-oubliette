@@ -99,11 +99,19 @@ file-keychain — **not** hardware-backed, and weaker than the Android Keystore
 and Apple Secure Enclave tiers.
 
 - **What it protects.** Secrets are encrypted at rest while the keyring is
-  locked (e.g. before login, or on a powered-off disk), and Oubliette's per-slot
-  envelope binds each value to its slot so a relocated or version-downgraded
-  on-disk blob fails closed (`PayloadCorruptException`) rather than decrypting
-  under the wrong slot. Per-profile slot isolation and prefix-exact `purge()`
-  hold via the reserved `U+001D` separator, identical to the other platforms.
+  locked (e.g. before login, or on a powered-off disk). Each stored value
+  carries a frozen 1-byte format header, so a blob written by a newer release
+  (or a truncated/garbled one) fails closed with `PayloadCorruptException`
+  rather than returning shifted bytes. Per-profile slot isolation and
+  prefix-exact `purge()` hold via the reserved `U+001D` separator, identical to
+  the other platforms. **Note — no cryptographic slot binding on the bare Linux
+  backend.** Unlike Android (where the slot *is* the AES-GCM AAD, so a relocated
+  blob fails the tag), the Linux backend performs no encryption of its own — the
+  value is encrypted by the keyring daemon, and the slot is not bound into it.
+  An attacker who can edit the on-disk keyring database could therefore move a
+  ciphertext from one slot to another and it would still decrypt. If you need a
+  relocated/tampered blob to fail closed on Linux, wrap the backend in
+  `PassphraseVault`, whose AES-GCM AAD binds each value to its logical key.
 - **What it does NOT protect.** The keyring is unlocked automatically at login
   (PAM) and stays unlocked for the whole session, including across screen-lock;
   while unlocked, **any process running as your user can read every stored

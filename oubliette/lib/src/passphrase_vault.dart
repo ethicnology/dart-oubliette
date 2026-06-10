@@ -155,7 +155,27 @@ final class PassphraseVault {
     }
   }
 
+  /// Guards the public API against the reserved KEK key. In keyring mode the
+  /// random KEK lives in the wrapped backend under [reservedKekKey]; letting a
+  /// caller `store`/`trash`/`useAndForget`/`exists` it would silently corrupt or
+  /// delete the master key, making every keyring-mode secret permanently
+  /// undecryptable — exactly the silent data loss this library exists to
+  /// prevent. The internal KEK management talks to `_inner` directly, so this
+  /// guard never blocks legitimate KEK access. Rejected in both modes (the key
+  /// is reserved regardless of mode), as a developer error.
+  void _rejectReservedKey(String key) {
+    if (key == reservedKekKey) {
+      throw ArgumentError.value(
+        key,
+        'key',
+        'is reserved for the vault\'s internal key material and must not be '
+            'used as a logical key',
+      );
+    }
+  }
+
   Future<void> store(String key, Uint8List value) async {
+    _rejectReservedKey(key);
     final envelope = await _encrypt(key, value);
     await _inner.store(key, envelope);
   }
@@ -168,6 +188,7 @@ final class PassphraseVault {
     String key,
     Future<T> Function(Uint8List bytes) action,
   ) {
+    _rejectReservedKey(key);
     return _inner.useAndForget(key, (envelope) async {
       final plaintext = await _decrypt(key, envelope);
       try {
@@ -178,9 +199,15 @@ final class PassphraseVault {
     });
   }
 
-  Future<void> trash(String key) => _inner.trash(key);
+  Future<void> trash(String key) {
+    _rejectReservedKey(key);
+    return _inner.trash(key);
+  }
 
-  Future<bool> exists(String key) => _inner.exists(key);
+  Future<bool> exists(String key) {
+    _rejectReservedKey(key);
+    return _inner.exists(key);
+  }
 
   /// Destroys the wrapped profile — including the keyring-mode KEK, so the
   /// profile is fully forgotten.

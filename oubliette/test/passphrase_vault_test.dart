@@ -241,6 +241,35 @@ void main() {
       await v.store('k', _bytes([1]));
       expect(backend.store_['k']![1], 0);
     });
+
+    test(
+      'the reserved KEK key is rejected on the public API (cannot brick the '
+      'vault by deleting/overwriting the master key)',
+      () async {
+        final v = PassphraseVault.keyring(inner: backend);
+        await v.init();
+        await v.store('real', _bytes([1, 2, 3]));
+        final reserved = PassphraseVault.reservedKekKey;
+
+        expect(
+          () => v.store(reserved, _bytes([0])),
+          throwsA(isA<ArgumentError>()),
+        );
+        expect(() => v.trash(reserved), throwsA(isA<ArgumentError>()));
+        expect(() => v.exists(reserved), throwsA(isA<ArgumentError>()));
+        expect(
+          () => v.useAndForget(reserved, (b) async => b),
+          throwsA(isA<ArgumentError>()),
+        );
+
+        // The KEK and existing secret survive the rejected calls.
+        expect(backend.store_.containsKey(reserved), true);
+        expect(
+          await v.useAndForget('real', (b) async => Uint8List.fromList(b)),
+          _bytes([1, 2, 3]),
+        );
+      },
+    );
   });
 
   group('PassphraseVault — modes do not silently cross', () {
