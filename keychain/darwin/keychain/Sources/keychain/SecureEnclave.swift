@@ -71,8 +71,19 @@ func enclaveKeyTag(params: EnclaveParams) -> Data? {
   return ("com.oubliette.enclave." + components.joined(separator: "|")).data(using: .utf8)
 }
 
-/// Fetches the EXISTING Secure Enclave key pair for [params], or returns nil if
-/// none exists. It NEVER creates a key.
+/// Outcome of looking up the profile's Secure Enclave key. `missing` and
+/// `failure` are deliberately distinct: "the key does not exist" leads the
+/// Dart layer to a data-destroying recovery (purge + re-entry), while a fetch
+/// *error* (entitlement, keychain-domain misrouting, transient ref failure)
+/// must never be reported as key loss — the key may be perfectly intact.
+enum EnclaveKeyFetch {
+  case found(SecKey, SecKey)
+  case missing
+  case failure(OSStatus)
+}
+
+/// Fetches the EXISTING Secure Enclave key pair for [params]. It NEVER creates
+/// a key.
 ///
 /// The read path uses this (not `ensureEnclaveKeyPair`) so that a missing SE
 /// key — e.g. after a restore/migration that carried the ciphertext item but
@@ -81,8 +92,8 @@ func enclaveKeyTag(params: EnclaveParams) -> Data? {
 /// decrypt the existing ciphertext (which would only fail later, opaquely, as a
 /// decrypt error). No-silent-fallback: regenerating a key on read is a data
 /// decision the library must not make.
-func fetchEnclaveKeyPair(params: EnclaveParams) -> (SecKey, SecKey)? {
-  guard let tag = enclaveKeyTag(params: params) else { return nil }
+func fetchEnclaveKeyPair(params: EnclaveParams) -> EnclaveKeyFetch {
+  guard let tag = enclaveKeyTag(params: params) else { return .failure(errSecParam) }
   var fetchQuery: [String: Any] = [
     kSecClass as String: kSecClassKey,
     kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
@@ -96,18 +107,44 @@ func fetchEnclaveKeyPair(params: EnclaveParams) -> (SecKey, SecKey)? {
   applyEnclaveDataProtection(&fetchQuery, params)
   var item: CFTypeRef?
   let fetchStatus = SecItemCopyMatching(fetchQuery as CFDictionary, &item)
-  if fetchStatus == errSecSuccess, let ref = item {
-    let privateKey = ref as! SecKey
-    guard let publicKey = SecKeyCopyPublicKey(privateKey) else { return nil }
-    return (privateKey, publicKey)
+  switch fetchStatus {
+  case errSecSuccess:
+    // `as?` not `as!`: a success status with a ref of an unexpected type is a
+    // backend anomaly, not key loss — report it as a fetch *failure* (which the
+    // Dart layer treats as recoverable) rather than trapping the process.
+    guard let item = item, CFGetTypeID(item) == SecKeyGetTypeID() else {
+      return .failure(errSecInvalidKeyRef)
+    }
+    let privateKey = item as! SecKey
+    guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
+      // Key present but the public-key ref could not be derived — an error,
+      // not key loss.
+      return .failure(errSecInvalidKeyRef)
+    }
+    return .found(privateKey, publicKey)
+  case errSecItemNotFound:
+    return .missing
+  default:
+    return .failure(fetchStatus)
   }
-  return nil
 }
 
 func ensureEnclaveKeyPair(params: EnclaveParams) -> (SecKey, SecKey)? {
   // Fetch-or-create. Only init()/store() (the write paths) reach the create
   // branch; the read path uses `fetchEnclaveKeyPair` and never creates.
-  if let existing = fetchEnclaveKeyPair(params: params) { return existing }
+  switch fetchEnclaveKeyPair(params: params) {
+  case .found(let privateKey, let publicKey):
+    return (privateKey, publicKey)
+  case .failure(let status):
+    // Create ONLY when the key is verifiably absent. Creating on a *failed*
+    // fetch could mint a second permanent key under the same tag (after which
+    // fetch order between the two is unspecified) and strand existing
+    // ciphertext — the same hazard the read path is hardened against.
+    NSLog("KeychainPlugin: SE key fetch failed (\(secErrorMessage(status))); refusing to create")
+    return nil
+  case .missing:
+    break
+  }
 
   guard let tag = enclaveKeyTag(params: params) else { return nil }
 
@@ -117,7 +154,12 @@ func ensureEnclaveKeyPair(params: EnclaveParams) -> (SecKey, SecKey)? {
     params.accessibility,
     .privateKeyUsage,
     &error
-  ) else { return nil }
+  ) else {
+    if let err = error?.takeRetainedValue() {
+      NSLog("KeychainPlugin: SE access control creation failed: \(err.localizedDescription)")
+    }
+    return nil
+  }
 
   var privateKeyAttrs: [String: Any] = [
     kSecAttrIsPermanent as String: true,

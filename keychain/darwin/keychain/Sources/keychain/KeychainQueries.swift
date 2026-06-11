@@ -49,11 +49,14 @@ struct KeychainParams {
   }
 
   static func from(_ args: [String: Any]) -> KeychainParams? {
-    guard let alias = args["alias"] as? String else { return nil }
+    guard let alias = args["alias"] as? String,
+          let accessibility = SecAccessibility.fromDart(args["accessibility"] as? String) else {
+      return nil
+    }
     return KeychainParams(
       alias: alias,
       service: args["service"] as? String,
-      accessibility: SecAccessibility.fromDart(args["accessibility"] as? String),
+      accessibility: accessibility,
       useDataProtection: args["useDataProtection"] as? Bool ?? false,
       authenticationRequired: args["authenticationRequired"] as? Bool ?? false,
       biometryCurrentSetOnly: args["biometryCurrentSetOnly"] as? Bool ?? false,
@@ -65,16 +68,37 @@ struct KeychainParams {
 }
 
 enum SecAccessibility {
-  static func fromDart(_ value: String?) -> CFString {
+  /// `nil` input (argument omitted) keeps the strict default; an *unknown*
+  /// string returns `nil` so the caller fails with `bad_args` instead of the
+  /// plugin silently picking an accessibility class on the caller's behalf.
+  static func fromDart(_ value: String?) -> CFString? {
     switch value {
     case "whenUnlocked": return kSecAttrAccessibleWhenUnlocked
     case "afterFirstUnlock": return kSecAttrAccessibleAfterFirstUnlock
     case "afterFirstUnlockThisDeviceOnly": return kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
     case "whenPasscodeSetThisDeviceOnly": return kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly
     case "whenUnlockedThisDeviceOnly", nil: return kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-    default: return kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    default: return nil
     }
   }
+
+  /// The accessibility classes compatible with a Secure Enclave key: the key
+  /// is hardware-bound to this device, so pairing it with a syncable /
+  /// backup-restorable item class is incoherent (and SE key generation would
+  /// fail with an opaque errSecParam anyway).
+  static let secureEnclaveCompatible: Set<String> = [
+    kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String,
+    kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String,
+    kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly as String,
+  ]
+}
+
+/// Human-readable status for error messages (numeric code kept for matching).
+func secErrorMessage(_ status: OSStatus) -> String {
+  if let message = SecCopyErrorMessageString(status, nil) as String? {
+    return "\(status): \(message)"
+  }
+  return String(status)
 }
 
 
@@ -109,12 +133,28 @@ func keychainReadQuery(params: KeychainParams, returnData: Bool) -> [String: Any
   return query
 }
 
-func secItemExists(params: KeychainParams) -> Bool {
-  let query = keychainReadQuery(params: params, returnData: false)
-  let status = Security.SecItemCopyMatching(query as CFDictionary, nil)
-  return status == errSecSuccess
+/// Existence probe. Returns the raw status so the caller can distinguish
+/// "absent" (errSecItemNotFound) from an *error* (entitlement, locked
+/// keychain, …) — collapsing every non-success status to "not present" would
+/// silently misreport a failing keychain as an empty one.
+/// `kSecUseAuthenticationUIFail` guarantees the probe can never raise an auth
+/// prompt for an access-controlled item.
+func secItemExistsStatus(params: KeychainParams) -> OSStatus {
+  var query = keychainReadQuery(params: params, returnData: false)
+  query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
+  return Security.SecItemCopyMatching(query as CFDictionary, nil)
 }
 
+/// Builds the `SecAccessControl` for an authenticated item.
+///
+/// `.biometryCurrentSet` invalidates the item when the biometric enrollment
+/// changes (the "fatal" profile); `.userPresence` accepts biometry OR the
+/// device passcode and survives enrollment changes. The accessibility class is
+/// paired in by the caller via `params.accessibility`.
+///
+/// Returns `nil` on failure (the caller fails closed). We key off the returned
+/// optional — not merely a set error — because the result is the authoritative
+/// success signal, and we drain `error` so the CFError is never leaked.
 func createAccessControl(params: KeychainParams) -> SecAccessControl? {
   let flags: SecAccessControlCreateFlags = params.biometryCurrentSetOnly
     ? .biometryCurrentSet
@@ -126,25 +166,46 @@ func createAccessControl(params: KeychainParams) -> SecAccessControl? {
     flags,
     &error
   )
-  if let error = error?.takeRetainedValue() {
-    NSLog("KeychainPlugin: Error creating access control: \(error.localizedDescription)")
+  guard let accessControl = accessControl else {
+    if let error = error?.takeRetainedValue() {
+      NSLog("KeychainPlugin: Error creating access control: \(error.localizedDescription)")
+    }
     return nil
   }
   return accessControl
 }
 
-func secItemAdd(params: KeychainParams, data: Data) -> OSStatus {
+/// Outcome of a write. The Secure-Enclave and access-control preparation steps
+/// have their own failure cases so the caller can report a distinct, actionable
+/// error instead of collapsing every failure to a bare `errSecParam` (-50) —
+/// which would conflate "SE encryption failed" with "malformed keychain query".
+/// This mirrors the read path's granular `se_*` codes.
+enum SecItemAddResult {
+  /// The keychain `SecItemAdd` ran; `status` is its raw OSStatus (which the
+  /// caller maps, e.g. `errSecDuplicateItem` → `already_exists`).
+  case completed(OSStatus)
+  /// The Secure Enclave key could not be fetched-or-created before encrypting.
+  case enclaveKeyUnavailable
+  /// Secure Enclave encryption of the plaintext failed.
+  case enclaveEncryptFailed
+  /// `authenticationRequired` was set but the `SecAccessControl` could not be
+  /// created — never fall through to an un-gated item the caller believes is
+  /// auth-protected.
+  case accessControlFailed
+}
+
+func secItemAdd(params: KeychainParams, data: Data) -> SecItemAddResult {
   // Own a mutable copy so we can zero it afterwards without mutating the
   // caller-owned (and possibly immutable) FlutterStandardTypedData buffer.
   var dataToStore = Data(data)
   if params.secureEnclave {
     guard let (_, publicKey) = ensureEnclaveKeyPair(params: params.enclaveParams) else {
       dataToStore.wipe()
-      return errSecParam
+      return .enclaveKeyUnavailable
     }
     guard let encrypted = enclaveEncrypt(data: dataToStore, publicKey: publicKey) else {
       dataToStore.wipe()
-      return errSecParam
+      return .enclaveEncryptFailed
     }
     dataToStore.wipe()        // drop the plaintext copy; store ciphertext
     dataToStore = encrypted
@@ -156,7 +217,7 @@ func secItemAdd(params: KeychainParams, data: Data) -> OSStatus {
     // caller believes is auth-gated.
     guard let accessControl = createAccessControl(params: params) else {
       dataToStore.wipe()
-      return errSecParam
+      return .accessControlFailed
     }
     query[kSecAttrAccessControl as String] = accessControl
   } else {
@@ -165,7 +226,7 @@ func secItemAdd(params: KeychainParams, data: Data) -> OSStatus {
   query[kSecValueData as String] = dataToStore
   let status = Security.SecItemAdd(query as CFDictionary, nil)
   dataToStore.wipe()
-  return status
+  return .completed(status)
 }
 
 func secItemDelete(params: KeychainParams) -> OSStatus {
