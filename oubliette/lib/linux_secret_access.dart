@@ -1,5 +1,17 @@
 import 'src/slot.dart';
 
+const _evenLockedPrefix = 'oubliette_even_locked_';
+const _onlyUnlockedPrefix = 'oubliette_only_unlocked_';
+const _authenticatedPrefix = 'oubliette_authenticated_';
+const _authenticatedFatalPrefix = 'oubliette_authenticated_fatal_';
+
+const _reservedPrefixes = [
+  _evenLockedPrefix,
+  _onlyUnlockedPrefix,
+  _authenticatedPrefix,
+  _authenticatedFatalPrefix,
+];
+
 /// Controls how secrets are stored on Linux via the freedesktop Secret Service
 /// (libsecret: gnome-keyring, KWallet, …).
 ///
@@ -34,18 +46,6 @@ import 'src/slot.dart';
 /// counterpart. The storage slot is `prefix + U+001D + key` (see `slot.dart`),
 /// so `purge()` ownership stays exact even when one profile's prefix nests
 /// under another's.
-const _evenLockedPrefix = 'oubliette_even_locked_';
-const _onlyUnlockedPrefix = 'oubliette_only_unlocked_';
-const _authenticatedPrefix = 'oubliette_authenticated_';
-const _authenticatedFatalPrefix = 'oubliette_authenticated_fatal_';
-
-const _reservedPrefixes = [
-  _evenLockedPrefix,
-  _onlyUnlockedPrefix,
-  _authenticatedPrefix,
-  _authenticatedFatalPrefix,
-];
-
 class LinuxSecretAccess {
   /// Prefix prepended to every storage slot (the Secret Service item's `slot`
   /// attribute). Each named profile defaults to a distinct prefix so the same

@@ -54,12 +54,35 @@ abstract class Oubliette {
   /// call. Subsequent calls are no-ops (idempotent).
   Future<void> init();
 
+  /// Encrypts [value] and writes it under [key].
+  ///
+  /// **Fail-closed, never overwrite:** if a value already exists for [key] this
+  /// throws a [StateError] rather than silently replacing it — call [trash]
+  /// first to deliberately overwrite. This prevents an accidental second
+  /// `store()` from destroying a secret the caller still believes is present.
+  ///
+  /// Within a single isolate, concurrent `store()` calls for the *same* slot are
+  /// serialized so exactly one first-write can win; see [purge] for the
+  /// cross-isolate / cross-process caveat.
+  ///
+  /// Throws a typed [OublietteException] for backend failures (e.g.
+  /// [KeyInvalidatedException], [AuthenticationFailedException]); branch on
+  /// [OublietteException.recoverable] rather than string-matching.
   Future<void> store(String key, Uint8List value);
 
+  /// Fetches and decrypts the raw bytes for [key], or `null` if absent.
+  ///
+  /// `@protected` because the bytes are an unmanaged plaintext buffer: read
+  /// through [useAndForget] instead, which zeroes the buffer after use.
   @protected
   Future<Uint8List?> fetch(String key);
 
+  /// Removes the single secret stored under [key]. A no-op if absent. Does not
+  /// touch the profile's key material (use [purge] to destroy the whole
+  /// profile). Backend failures surface as a typed [OublietteException].
   Future<void> trash(String key);
+
+  /// Whether a secret is currently stored under [key].
   Future<bool> exists(String key);
 
   /// Destroys the **entire profile**: every secret stored under it *and* its

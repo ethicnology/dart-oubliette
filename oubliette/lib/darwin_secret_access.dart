@@ -4,6 +4,37 @@ import 'src/slot.dart';
 
 export 'package:keychain/keychain.dart' show KeychainAccessibility;
 
+// Per-profile default keychain account prefixes. Distinct prefixes keep the
+// same logical key in different security profiles from sharing a keychain
+// slot — critical on Darwin, where the read query carries no access-control
+// attribute, so the protection bound at write time is authoritative and a
+// shared slot would let a weaker profile read a stronger profile's item with
+// no prompt. Slot isolation is a security boundary here.
+const _evenLockedPrefix = 'oubliette_even_locked_';
+const _onlyUnlockedPrefix = 'oubliette_only_unlocked_';
+const _authenticatedPrefix = 'oubliette_authenticated_';
+const _authenticatedFatalPrefix = 'oubliette_authenticated_fatal_';
+
+const _reservedPrefixes = [
+  _evenLockedPrefix,
+  _onlyUnlockedPrefix,
+  _authenticatedPrefix,
+  _authenticatedFatalPrefix,
+];
+
+/// The only accessibility classes Oubliette permits: every one keeps the item
+/// strictly on **this device** — never synced to iCloud Keychain, never
+/// restored to another device through an encrypted backup. A hardware-bound
+/// secret must not outlive the device it was minted on (its key cannot leave
+/// that device anyway, so a restored ciphertext would be undecryptable — and a
+/// synced/backed-up secret is an exfiltration path). The four named profiles
+/// already use one of these; the `custom` constructor rejects anything else.
+const _deviceLocalAccessibility = {
+  KeychainAccessibility.whenUnlockedThisDeviceOnly,
+  KeychainAccessibility.afterFirstUnlockThisDeviceOnly,
+  KeychainAccessibility.whenPasscodeSetThisDeviceOnly,
+};
+
 /// Controls how secrets are protected on iOS and macOS (Darwin).
 ///
 /// Use one of the named constructors to select a security profile:
@@ -37,37 +68,6 @@ export 'package:keychain/keychain.dart' show KeychainAccessibility;
 /// `authenticationRequired: true` with `useDataProtection: false` cannot work
 /// and fails closed with `errSecParam`. (iOS always uses the data-protection
 /// keychain, so the [useDataProtection] flag is ignored there.)
-/// Per-profile default keychain account prefixes. Distinct prefixes keep the
-/// same logical key in different security profiles from sharing a keychain
-/// slot — critical on Darwin, where the read query carries no access-control
-/// attribute, so the protection bound at write time is authoritative and a
-/// shared slot would let a weaker profile read a stronger profile's item with
-/// no prompt. Slot isolation is a security boundary here.
-const _evenLockedPrefix = 'oubliette_even_locked_';
-const _onlyUnlockedPrefix = 'oubliette_only_unlocked_';
-const _authenticatedPrefix = 'oubliette_authenticated_';
-const _authenticatedFatalPrefix = 'oubliette_authenticated_fatal_';
-
-const _reservedPrefixes = [
-  _evenLockedPrefix,
-  _onlyUnlockedPrefix,
-  _authenticatedPrefix,
-  _authenticatedFatalPrefix,
-];
-
-/// The only accessibility classes Oubliette permits: every one keeps the item
-/// strictly on **this device** — never synced to iCloud Keychain, never
-/// restored to another device through an encrypted backup. A hardware-bound
-/// secret must not outlive the device it was minted on (its key cannot leave
-/// that device anyway, so a restored ciphertext would be undecryptable — and a
-/// synced/backed-up secret is an exfiltration path). The four named profiles
-/// already use one of these; the `custom` constructor rejects anything else.
-const _deviceLocalAccessibility = {
-  KeychainAccessibility.whenUnlockedThisDeviceOnly,
-  KeychainAccessibility.afterFirstUnlockThisDeviceOnly,
-  KeychainAccessibility.whenPasscodeSetThisDeviceOnly,
-};
-
 class DarwinSecretAccess {
   /// Prefix prepended to every storage key (`kSecAttrAccount`) in the
   /// Keychain. Each named profile defaults to a distinct prefix so the same
