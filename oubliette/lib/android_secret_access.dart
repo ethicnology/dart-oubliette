@@ -1,20 +1,5 @@
 import 'src/slot.dart';
 
-/// Controls how secrets are protected on Android.
-///
-/// Use one of the named constructors to select a security profile:
-/// - [AndroidSecretAccess.evenLocked] — accessible even when the device is locked (after first unlock).
-/// - [AndroidSecretAccess.onlyUnlocked] — accessible only while the device is unlocked.
-/// - [AndroidSecretAccess.authenticated] — requires authentication (biometric/PIN/pattern/password); survives enrollment changes.
-/// - [AndroidSecretAccess.authenticatedFatal] — requires authentication; key is permanently invalidated if biometric enrollment changes.
-///
-/// Each named profile uses a dedicated, hardcoded Keystore alias **and a
-/// dedicated default storage prefix**. The prefix namespaces the
-/// SharedPreferences slot (`prefix + separator + key`, see `slot.dart`) so the
-/// same logical key stored under two different profiles never collides — slot
-/// isolation is a security
-/// boundary, not a convenience. The [custom] constructor requires a unique
-/// alias and prefix that must not collide with any reserved profile value.
 const _evenLockedKeyAlias = 'oubliette_even_locked';
 const _onlyUnlockedKeyAlias = 'oubliette_only_unlocked';
 const _authenticatedKeyAlias = 'oubliette_authenticated';
@@ -39,6 +24,21 @@ const _reservedPrefixes = [
   _authenticatedFatalPrefix,
 ];
 
+/// Controls how secrets are protected on Android.
+///
+/// Use one of the named constructors to select a security profile:
+/// - [AndroidSecretAccess.evenLocked] — accessible even when the device is locked (after first unlock).
+/// - [AndroidSecretAccess.onlyUnlocked] — accessible only while the device is unlocked.
+/// - [AndroidSecretAccess.authenticated] — requires authentication (biometric/PIN/pattern/password); survives enrollment changes.
+/// - [AndroidSecretAccess.authenticatedFatal] — requires **biometric-only** authentication (no credential fallback); key is permanently invalidated if biometric enrollment changes.
+///
+/// Each named profile uses a dedicated, hardcoded Keystore alias **and a
+/// dedicated default storage prefix**. The prefix namespaces the
+/// SharedPreferences slot (`prefix + separator + key`, see `slot.dart`) so the
+/// same logical key stored under two different profiles never collides — slot
+/// isolation is a security boundary, not a convenience. The [custom]
+/// constructor requires a unique alias and prefix that must not collide with
+/// any reserved profile value.
 class AndroidSecretAccess {
   /// Prefix prepended to every SharedPreferences key used to store the
   /// encrypted payload. The resulting slot key (`prefix + separator + key`,
@@ -113,7 +113,17 @@ class AndroidSecretAccess {
   /// whenever biometric enrollment changes — a new fingerprint is added,
   /// existing biometric data is removed, or Face data is updated.
   ///
-  /// Maps to `KeyGenParameterSpec.Builder.setInvalidatedByBiometricEnrollment(true)`.
+  /// Maps to `KeyGenParameterSpec.Builder.setInvalidatedByBiometricEnrollment(true)`
+  /// **and makes the key biometric-only** (`AUTH_BIOMETRIC_STRONG`, no
+  /// PIN/pattern/password fallback). Keymaster only enforces enrollment
+  /// invalidation for keys valid for biometric authentication *only* — a key
+  /// that also accepts the device credential stays usable through it after a
+  /// new biometric is enrolled, silently voiding the guarantee. Consequences:
+  ///
+  /// - generating the key **requires at least one enrolled biometric** (and
+  ///   biometric hardware) — keygen fails otherwise;
+  /// - the authentication prompt offers **no device-credential fallback**.
+  ///
   /// After invalidation, any attempt to use the key throws
   /// `KeyPermanentlyInvalidatedException`, which is surfaced as
   /// `KeyInvalidatedException`. The encrypted payload cannot be recovered;
@@ -228,10 +238,18 @@ class AndroidSecretAccess {
          requireHardwareBacking: requireHardwareBacking,
        );
 
-  /// Requires user authentication (biometric, PIN, pattern, or password)
+  /// Requires **biometric** authentication (no PIN/pattern/password fallback)
   /// for every encrypt/decrypt operation. The key is **permanently
   /// invalidated** if biometric enrollment changes — the secret becomes
   /// irrecoverable.
+  ///
+  /// Biometric-only is what makes the invalidation real: keymaster only
+  /// invalidates keys that are valid for biometric auth *only*, so a
+  /// credential fallback would let anyone who knows the PIN bypass the
+  /// enrollment trip-wire (see [invalidatedByBiometricEnrollment]). This
+  /// profile therefore requires biometric hardware **and at least one
+  /// enrolled biometric at key-generation time**; if biometrics may be
+  /// unavailable, use [AndroidSecretAccess.authenticated] instead.
   ///
   /// Requires `<uses-permission android:name="android.permission.USE_BIOMETRIC" />`
   /// in your app's `AndroidManifest.xml`.

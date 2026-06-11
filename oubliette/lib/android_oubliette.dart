@@ -98,6 +98,9 @@ class AndroidOubliette extends Oubliette {
           aad: storedKey,
           promptTitle: access.promptTitle,
           promptSubtitle: access.promptSubtitle,
+          // An enrollment-invalidated key is biometric-only; its prompt must
+          // not offer the device-credential path (see Keystore.encrypt).
+          biometricOnly: access.invalidatedByBiometricEnrollment,
         ),
       );
       final prefs = await SharedPreferences.getInstance();
@@ -151,6 +154,7 @@ class AndroidOubliette extends Oubliette {
         aad: storedKey, // trusted, not ep.aad
         promptTitle: access.promptTitle,
         promptSubtitle: access.promptSubtitle,
+        biometricOnly: access.invalidatedByBiometricEnrollment,
       ),
     );
   }

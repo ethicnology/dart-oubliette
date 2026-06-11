@@ -212,6 +212,10 @@ void main() {
           strongBox: false,
           requireHardwareBacking: false,
           userAuthenticationRequired: true,
+          // Explicit: false keeps the device-credential fallback, so this
+          // test can run on a device with only a PIN enrolled. (true now
+          // makes the key biometric-only — see Keystore.generateKey.)
+          invalidatedByBiometricEnrollment: false,
         );
       } on PlatformException {
         // Creating a user-auth-required key needs a secure lock screen / enrolled
