@@ -29,7 +29,29 @@ deletes exactly its own items by prefix.
 - Arch: `sudo pacman -S libsecret`
 
 A running Secret Service provider (a keyring daemon) is required at runtime; a
-headless/server session without one fails closed with `backend_unavailable`.
+headless/server session without one fails closed with `backend_unavailable`. A
+present-but-locked collection surfaces `keyring_locked` (recoverable: retry once
+unlocked) or `auth_cancelled` if the user dismisses the unlock prompt — a
+locked/erroring keyring is **never** reported as empty.
+
+## Threat model & limitations (software tier)
+
+- **Not hardware-backed.** Values are encrypted by the keyring provider with a
+  key derived from your login password. Any process running as your user can
+  read them once the keyring is unlocked; there is no per-app sandbox and no
+  per-operation authentication gate (no `SecAccessControl` / Keystore-bound
+  `setUserAuthenticationRequired` analog).
+- **No per-item AAD.** The Secret Service has no authenticated-additional-data
+  channel like an AEAD cipher. Item *attributes* (the `slot` string, `fmt`) are
+  stored **in the clear** for lookup and are **not** cryptographically bound to
+  the value — a local attacker with write access could move/relabel an item.
+  Integrity of the value itself is whatever the oubliette envelope provides;
+  this backend adds none.
+- **Blocking calls.** libsecret's `*_sync` calls run on the platform (GTK main)
+  thread and block it for the duration of the D-Bus round-trip — including, on a
+  locked keyring, the interactive unlock prompt (bounded by a ~20 s watchdog so
+  a headless session cannot hang forever). Keep stored values small and avoid
+  bursts of calls on a frame-critical path.
 
 ## API
 

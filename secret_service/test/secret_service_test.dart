@@ -116,4 +116,19 @@ void main() {
       ),
     );
   });
+
+  // A locked/erroring keyring must surface its distinct code (never read as
+  // "absent") so the Dart layer can raise the right typed exception. These two
+  // codes are emitted by the native warmup's unlock path.
+  for (final code in ['keyring_locked', 'auth_cancelled']) {
+    test('$code propagates rather than reading as absent', () async {
+      mock.errorCode = code;
+      await expectLater(
+        service.contains('x'),
+        throwsA(
+          isA<PlatformException>().having((e) => e.code, 'code', code),
+        ),
+      );
+    });
+  }
 }

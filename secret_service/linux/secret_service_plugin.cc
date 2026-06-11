@@ -121,9 +121,10 @@ static SecretService* warmup(const char** err_code) {
 
     GList* to_unlock = g_list_append(nullptr, collection);
     GList* unlocked = nullptr;
-    // Returns the count unlocked (>= 1 on success), 0 if declined, or -1 on
-    // error / cancellation (timeout). Anything but a positive count is the
-    // recoverable locked case — fail closed (SS-1: -1 must NOT read as success).
+    // Returns the count unlocked (>= 1 on success), 0 if the prompt was
+    // dismissed (no item unlocked, no GError), or -1 on error / cancellation
+    // (timeout, which sets a G_IO_ERROR_CANCELLED GError). Anything but a
+    // positive count is fail-closed (SS-1: -1 must NOT read as success).
     gint n = secret_service_unlock_sync(service, to_unlock, cancellable,
                                         &unlocked, &error);
     g_list_free(to_unlock);
@@ -133,7 +134,15 @@ static SecretService* warmup(const char** err_code) {
     if (n < 1) {
       g_object_unref(collection);
       g_object_unref(service);
-      *err_code = "keyring_locked";
+      // Distinguish the two recoverable cases so the Dart layer can raise the
+      // right typed exception (linux_oubliette._mapError):
+      //   - prompt dismissed by the user (n == 0, no GError) -> auth_cancelled
+      //     (AuthenticationFailedException, cancelled: true).
+      //   - any other failure: a timeout (our watchdog cancelled the prompt) or
+      //     a real unlock error -> keyring_locked (KeyringLockedException).
+      // Both keep data intact; neither is treated as "empty".
+      *err_code = (n == 0 && error == nullptr) ? "auth_cancelled"
+                                               : "keyring_locked";
       return nullptr;
     }
   }
@@ -303,15 +312,28 @@ static void secret_service_plugin_handle_method_call(
     return;
   }
 
+  // Extract only when the entry is actually a string: fl_value_get_string
+  // asserts (g_return_val_if_fail) on a non-string FlValue, which would abort
+  // the host process on a malformed call. A wrong-typed arg reads as nullptr
+  // and is rejected below as a bad_args error.
   FlValue* slot_value = fl_value_lookup_string(args, "slot");
   FlValue* value_value = fl_value_lookup_string(args, "value");
   FlValue* prefix_value = fl_value_lookup_string(args, "prefix");
   const gchar* slot =
-      slot_value == nullptr ? nullptr : fl_value_get_string(slot_value);
+      (slot_value != nullptr &&
+       fl_value_get_type(slot_value) == FL_VALUE_TYPE_STRING)
+          ? fl_value_get_string(slot_value)
+          : nullptr;
   const gchar* value =
-      value_value == nullptr ? nullptr : fl_value_get_string(value_value);
+      (value_value != nullptr &&
+       fl_value_get_type(value_value) == FL_VALUE_TYPE_STRING)
+          ? fl_value_get_string(value_value)
+          : nullptr;
   const gchar* prefix =
-      prefix_value == nullptr ? nullptr : fl_value_get_string(prefix_value);
+      (prefix_value != nullptr &&
+       fl_value_get_type(prefix_value) == FL_VALUE_TYPE_STRING)
+          ? fl_value_get_string(prefix_value)
+          : nullptr;
 
   if (strcmp(method, "contains") == 0) {
     if (!slot)
@@ -334,8 +356,12 @@ static void secret_service_plugin_handle_method_call(
     else
       response = handle_delete(slot);
   } else if (strcmp(method, "deleteByPrefix") == 0) {
-    if (!prefix)
-      response = error_response("bad_args", "Missing prefix.");
+    // Reject an empty prefix: g_str_has_prefix(slot, "") is always true, so an
+    // empty prefix would purge EVERY oubliette item across all profiles. The
+    // Dart layer always passes `profilePrefix + U+001D` (never empty); this is
+    // a defensive backstop so a malformed call cannot cross-profile-wipe.
+    if (!prefix || prefix[0] == '\0')
+      response = error_response("bad_args", "Missing or empty prefix.");
     else
       response = handle_delete_by_prefix(prefix);
   } else {
