@@ -70,13 +70,20 @@ class DarwinOubliette extends Oubliette {
   /// No-op when [DarwinSecretAccess.secureEnclave] is false. Idempotent.
   Future<void> _ensureKey() async {
     if (!access.secureEnclave) return;
-    await _keychain.ensureEnclaveKeyPair();
+    // _mapError like every other native call: ensure can now fail with
+    // se_key_fetch_failed / se_ensure_key_failed (environmental — locked
+    // keychain, entitlement), which must surface as a recoverable typed
+    // error, never a raw PlatformException.
+    await _mapError('<ensure-key>', () => _keychain.ensureEnclaveKeyPair());
   }
 
   @override
   Future<void> init() async {
     if (!access.secureEnclave) return;
-    final existed = await _keychain.ensureEnclaveKeyPair();
+    final existed = await _mapError(
+      '<init>',
+      () => _keychain.ensureEnclaveKeyPair(),
+    );
     debugPrint(
       existed
           ? '[Oubliette] Darwin SE key already exists (service: ${access.service})'
@@ -149,6 +156,9 @@ class DarwinOubliette extends Oubliette {
         case 'se_key_gen_failed':
         case 'se_encrypt_failed':
         case 'access_control_failed':
+        // ensureEnclaveKeyPair returned a null/absent result over the wire —
+        // the facade fails closed rather than report "key just created".
+        case 'se_ensure_key_failed':
           throw BackendUnavailableException(cause: e);
         case 'se_decrypt_failed':
           throw DecryptionFailedException(key: key, cause: e);
