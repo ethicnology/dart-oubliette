@@ -148,6 +148,24 @@ void main() {
       );
     });
 
+    // Pins the defense-in-depth bounds: an implausibly large version or an
+    // oversized field must be rejected up front as corruption, not parsed.
+    test('rejects an implausibly large version', () {
+      expect(
+        () => EncryptedPayload.fromJson(blob(version: '${(1 << 20) + 1}')),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('rejects an oversized field', () {
+      // 64 KiB + 4 chars of valid base64 — over the per-field cap.
+      final huge = 'AAAA' * (16 * 1024 + 1);
+      expect(
+        () => EncryptedPayload.fromJson(blob(nonce: huge)),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
     test('rejects a missing field', () {
       // key_alias absent.
       expect(

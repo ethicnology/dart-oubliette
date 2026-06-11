@@ -76,7 +76,11 @@ internal fun KeystorePlugin.handleAuthenticateEncrypt(call: MethodCall, result: 
                 )
               }
             } catch (e: Exception) {
-              mainHandler.post { result.error("encrypt_failed", e.message ?: e.toString(), null) }
+              // Classified, not hard-coded: keymasters that defer the
+              // enrollment-invalidation check to doFinal throw here (wrapped —
+              // see V1Scheme.isPermanentInvalidation), and that key-loss must
+              // surface as key_invalidated, not as a retryable encrypt_failed.
+              mainHandler.post { result.error(encryptErrorCode(e), e.message ?: e.toString(), null) }
             } finally {
               plaintext.fill(0)
             }
@@ -133,9 +137,20 @@ internal fun KeystorePlugin.handleAuthenticateDecrypt(call: MethodCall, result: 
               decrypted = scheme.decryptWithCipher(authenticatedCipher, ciphertext, aad)
               // Hand a copy to Flutter; the scheme's buffer is wiped below.
               val plaintextCopy = decrypted.copyOf()
-              mainHandler.post { result.success(plaintextCopy) }
+              mainHandler.post {
+                try {
+                  result.success(plaintextCopy)
+                } finally {
+                  // success() serialises into the reply buffer synchronously,
+                  // so the copy can be wiped the moment it returns — its heap
+                  // lifetime shrinks from "until GC" to "until delivery".
+                  plaintextCopy.fill(0)
+                }
+              }
             } catch (e: Exception) {
-              mainHandler.post { result.error("decrypt_failed", e.message ?: e.toString(), null) }
+              // Classified (see the encrypt path): a doFinal-deferred
+              // invalidation must map to key_invalidated, not decrypt_failed.
+              mainHandler.post { result.error(decryptErrorCode(e), e.message ?: e.toString(), null) }
             } finally {
               decrypted?.fill(0)
             }
@@ -164,6 +179,13 @@ internal fun KeystorePlugin.handleAuthenticateDecrypt(call: MethodCall, result: 
  * Exactly one terminal path fires: an internal claim guards against the platform
  * racing a late onAuthenticationError against a delivered success on some OEMs,
  * which would otherwise double-answer the Result or wipe a buffer mid-doFinal.
+ *
+ * RESIDUAL (platform contract, unguardable here): if an OEM prompt never invokes
+ * ANY callback — the documented behaviour is ERROR_CANCELED on activity
+ * destruction/rotation — the Dart Future stays pending and an encrypt-path
+ * plaintext stays unwiped until process death. There is no timeout here on
+ * purpose: a prompt legitimately waits on the user indefinitely, and a guessed
+ * deadline would cancel real authentications.
  */
 internal fun KeystorePlugin.authenticate(
   cipher: Cipher,

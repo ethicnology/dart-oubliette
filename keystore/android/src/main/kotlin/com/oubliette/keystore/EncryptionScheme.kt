@@ -33,9 +33,17 @@ interface EncryptionScheme {
     fun decryptWithCipher(cipher: Cipher, ciphertext: ByteArray, aad: String): ByteArray
 }
 
+// DIAGNOSTIC HYGIENE — these messages deliberately do NOT interpolate the
+// alias. They cross the MethodChannel as PlatformException.message, and codes
+// the Dart layer passes through unmapped (already_exists, hardware_unavailable,
+// encrypt_failed, …) reach app logs and crash reporters verbatim. An alias from
+// a `custom` profile can encode a tenant or user id, so folding it into the
+// message would exfiltrate it (mirrors the toString() rule in oubliette's
+// errors.dart). The caller already knows which alias it asked about.
+
 /** The Keystore alias does not correspond to any existing key. */
-class KeyNotFoundException(alias: String) :
-    IllegalStateException("Key not found for alias \"$alias\".")
+class KeyNotFoundException :
+    IllegalStateException("No key exists under the requested alias.")
 
 /**
  * A key already exists under the requested alias. Dedicated type so the plugin
@@ -43,12 +51,18 @@ class KeyNotFoundException(alias: String) :
  * internal might throw — to the `already_exists` code (which the Dart layer
  * treats as success in its idempotent ensure-key path).
  */
-class KeyAlreadyExistsException(alias: String) :
-    IllegalStateException("A key already exists for alias \"$alias\". Call deleteEntry() first.")
+class KeyAlreadyExistsException :
+    IllegalStateException("A key already exists under the requested alias. Call deleteEntry() first.")
 
-/** The key exists but has been permanently invalidated (e.g. biometric enrollment changed). */
-class KeyInvalidatedException(alias: String, cause: Throwable? = null) :
-    IllegalStateException("Key permanently invalidated for alias \"$alias\".", cause)
+/**
+ * The key exists but is permanently unusable: biometric enrollment changed on
+ * an enrollment-invalidated key, the secure lock screen was removed, or the
+ * key blob itself can no longer be loaded (post-OTA keymaster mismatch —
+ * surfaces as [java.security.UnrecoverableKeyException]). Retrying can never
+ * succeed; recovery is the caller's explicit, data-destroying decision.
+ */
+class KeyInvalidatedException(cause: Throwable? = null) :
+    IllegalStateException("Key permanently invalidated (enrollment change, lock-screen removal, or unrecoverable key blob).", cause)
 
 /**
  * The freshly generated key is NOT backed by secure hardware (TEE/StrongBox) —

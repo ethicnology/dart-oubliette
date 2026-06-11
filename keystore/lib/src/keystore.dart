@@ -145,10 +145,13 @@ final class Keystore {
         message: 'Native encryption returned null response.',
       );
     }
-    final version = response['version'] as int?;
-    final nonce = response['nonce'] as Uint8List?;
-    final ciphertext = response['ciphertext'] as Uint8List?;
-    if (version == null || nonce == null || ciphertext == null) {
+    final version = response['version'];
+    final nonce = response['nonce'];
+    final ciphertext = response['ciphertext'];
+    // `is!` checks, not `as` casts: a wrong-typed field from a misbehaving
+    // platform must surface as the documented PlatformException(encrypt_failed)
+    // — never as a raw TypeError that bypasses the caller's error taxonomy.
+    if (version is! int || nonce is! Uint8List || ciphertext is! Uint8List) {
       throw PlatformException(
         code: 'encrypt_failed',
         message: 'Native encryption returned invalid fields.',

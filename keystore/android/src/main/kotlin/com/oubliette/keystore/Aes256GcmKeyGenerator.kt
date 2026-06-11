@@ -34,7 +34,7 @@ object Aes256GcmKeyGenerator {
     val keyStore = KeyStore.getInstance(keyStoreType)
     keyStore.load(null)
     if (keyStore.containsAlias(alias)) {
-      throw KeyAlreadyExistsException(alias)
+      throw KeyAlreadyExistsException()
     }
     val keyGenerator = KeyGenerator.getInstance(
       KeyProperties.KEY_ALGORITHM_AES,
@@ -82,6 +82,14 @@ object Aes256GcmKeyGenerator {
     // silently keep a software key. Default is off so the library works in those
     // environments; wallet apps set requireHardwareBacking = true. (StrongBox
     // remains independently fail-closed via setIsStrongBoxBacked above.)
+    // NOTE (gen-vs-use window): the hardware check runs AFTER generateKey, so
+    // for one instant a not-yet-verified key exists under the alias. A
+    // concurrent encrypt against that alias from another engine/isolate could
+    // grab it before the fail-closed delete below, producing a blob whose key
+    // is then removed. Such concurrent use of an alias still being generated
+    // already violates the caller's serialization contract (the Dart layer
+    // holds per-key locks and awaits ensure-key); documented here, not locked,
+    // same as the cross-process caveat on [generateLock].
     if (requireHardwareBacking) assertHardwareBacked(alias, key)
   }
 
@@ -94,8 +102,10 @@ object Aes256GcmKeyGenerator {
   private fun assertHardwareBacked(alias: String, key: SecretKey) {
     if (!isHardwareBacked(key)) {
       deleteAlias(alias)
+      // No alias in the message — hardware_unavailable passes through to app
+      // logs unmapped (see the hygiene note in EncryptionScheme.kt).
       throw HardwareUnavailableException(
-        "Key \"$alias\" is not backed by secure hardware (software keystore or unverifiable)."
+        "Generated key is not backed by secure hardware (software keystore or unverifiable); it was deleted."
       )
     }
   }

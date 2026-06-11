@@ -4,6 +4,7 @@ import android.security.keystore.KeyPermanentlyInvalidatedException
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import java.security.ProviderException
+import java.security.UnrecoverableKeyException
 import java.util.concurrent.atomic.AtomicReference
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
@@ -76,12 +77,12 @@ class V1Scheme(
 
   override fun initEncryptCipher(alias: String): Cipher {
     val key = getKey(alias)
-      ?: throw KeyNotFoundException(alias)
+      ?: throw KeyNotFoundException()
     val cipher = Cipher.getInstance(aesMode)
     try {
       initCipherWithTimeout { cipher.init(Cipher.ENCRYPT_MODE, key) }
-    } catch (e: KeyPermanentlyInvalidatedException) {
-      throw KeyInvalidatedException(alias, e)
+    } catch (e: Exception) {
+      throw if (isPermanentInvalidation(e)) KeyInvalidatedException(e) else e
     }
     return cipher
   }
@@ -91,19 +92,23 @@ class V1Scheme(
       throw IllegalArgumentException("Invalid nonce size.")
     }
     val key = getKey(alias)
-      ?: throw KeyNotFoundException(alias)
+      ?: throw KeyNotFoundException()
     val cipher = Cipher.getInstance(aesMode)
     try {
       initCipherWithTimeout { cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(tagSizeBits, nonce)) }
-    } catch (e: KeyPermanentlyInvalidatedException) {
-      throw KeyInvalidatedException(alias, e)
+    } catch (e: Exception) {
+      throw if (isPermanentInvalidation(e)) KeyInvalidatedException(e) else e
     }
     return cipher
   }
 
   override fun encryptWithCipher(cipher: Cipher, plaintext: ByteArray, aad: String): EncryptResult {
     cipher.updateAAD(versionedAad(aad))
-    val ciphertext = cipher.doFinal(plaintext)
+    val ciphertext = try {
+      cipher.doFinal(plaintext)
+    } catch (e: Exception) {
+      throw if (isPermanentInvalidation(e)) KeyInvalidatedException(e) else e
+    }
     val nonce = cipher.iv
       ?: throw IllegalArgumentException("Invalid nonce.")
     if (nonce.size != ivSizeBytes) {
@@ -114,7 +119,44 @@ class V1Scheme(
 
   override fun decryptWithCipher(cipher: Cipher, ciphertext: ByteArray, aad: String): ByteArray {
     cipher.updateAAD(versionedAad(aad))
-    return cipher.doFinal(ciphertext)
+    return try {
+      cipher.doFinal(ciphertext)
+    } catch (e: Exception) {
+      throw if (isPermanentInvalidation(e)) KeyInvalidatedException(e) else e
+    }
+  }
+
+  /**
+   * Whether [t] — or anything in its cause chain — is the framework's
+   * permanent-invalidation signal.
+   *
+   * [KeyPermanentlyInvalidatedException] is documented to be thrown by
+   * `Cipher.init`, but on a number of devices the keymaster defers the check
+   * to the operation itself: `doFinal` then fails with a *wrapping* exception
+   * (typically `IllegalBlockSizeException` or `ProviderException`) whose cause
+   * chain carries the real signal. Matching only at `init` would report those
+   * as a generic — apparently transient — `encrypt_failed`/`decrypt_failed`,
+   * and the caller would retry a permanently dead key forever instead of
+   * surfacing the typed key-loss it must act on. Walking the chain classifies
+   * them correctly on both the init and doFinal paths.
+   *
+   * Deliberately conservative — only the explicit framework type counts. A
+   * `doFinal` failure caused by a bare `KeyStoreException` ("Key user not
+   * authenticated", "operation expired", …) is NOT treated as invalidation:
+   * it is indistinguishable from a prompt/key authenticator mismatch or a
+   * pruned operation slot, and misclassifying a transient failure as key-loss
+   * is the exact mistake the error taxonomy exists to prevent (the caller may
+   * respond to key_invalidated with an irreversible purge).
+   */
+  private fun isPermanentInvalidation(t: Throwable): Boolean {
+    var current: Throwable? = t
+    var depth = 0
+    while (current != null && depth < 8) { // bounded: malicious/cyclic chains
+      if (current is KeyPermanentlyInvalidatedException) return true
+      current = current.cause
+      depth++
+    }
+    return false
   }
 
   /**
@@ -132,6 +174,20 @@ class V1Scheme(
   private fun getKey(alias: String): SecretKey? {
     val keyStore = KeyStore.getInstance(keyStoreType)
     keyStore.load(null)
-    return keyStore.getKey(alias, null) as? SecretKey
+    return try {
+      keyStore.getKey(alias, null) as? SecretKey
+    } catch (e: UnrecoverableKeyException) {
+      // getKey returns null for a missing alias; UnrecoverableKeyException
+      // means the entry EXISTS but its key material can no longer be loaded —
+      // a corrupted or keymaster-undecryptable blob (classically after an OTA
+      // that changed the keymaster implementation, or vendor data wipe). The
+      // java.security contract makes this permanent: retrying can never
+      // succeed, so reporting it as a generic encrypt/decrypt failure would
+      // strand the caller in a retry loop on a dead key. Classified as
+      // key_invalidated — the same "key effectively dead, data unreachable"
+      // taxonomy as enrollment invalidation. The library still never deletes
+      // the entry on its own; that irreversible decision stays with the caller.
+      throw KeyInvalidatedException(e)
+    }
   }
 }

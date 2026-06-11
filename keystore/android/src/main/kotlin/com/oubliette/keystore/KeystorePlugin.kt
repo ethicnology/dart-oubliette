@@ -283,7 +283,17 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 }
                 plaintext = scheme.decrypt(alias, ciphertext, nonce, aad)
                 val out = plaintext.copyOf()
-                mainHandler.post { result.success(out) }
+                mainHandler.post {
+                    try {
+                        result.success(out)
+                    } finally {
+                        // success() serialises into the reply buffer synchronously,
+                        // so the copy is wiped the moment delivery returns. The
+                        // codec's own transfer buffer (and the Dart-side bytes) are
+                        // outside our reach — see SECURITY.md on plaintext lifetime.
+                        out.fill(0)
+                    }
+                }
             } catch (e: KeyNotFoundException) {
                 mainHandler.post { result.error("key_not_found", e.message ?: e.toString(), null) }
             } catch (e: KeyInvalidatedException) {
