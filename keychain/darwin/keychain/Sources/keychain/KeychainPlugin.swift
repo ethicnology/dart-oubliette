@@ -7,6 +7,37 @@ import Foundation
 import LocalAuthentication
 import Security
 
+/// Maps a raw OSStatus to a FlutterError for the generic fallback branches.
+///
+/// Two statuses get their own stable codes everywhere (not just on reads):
+/// - `errSecMissingEntitlement` (-34018): a build/configuration defect (code
+///   signing, the `keychain-access-groups` entitlement, or an `accessGroup`
+///   the app is not entitled to) — actionable by the developer, never by
+///   retrying — and must not be conflated with runtime keychain state under a
+///   catch-all `sec_item_*_failed` code.
+/// - `errSecInteractionNotAllowed`: the locked-device status. Writes and
+///   deletes hit it too (e.g. store() while locked with a `whenUnlocked`
+///   class); collapsing it into a generic failure would hide the one error
+///   whose remedy is simply "retry when unlocked".
+private func statusFlutterError(_ status: OSStatus, fallbackCode: String) -> FlutterError {
+  switch status {
+  case errSecMissingEntitlement:
+    return FlutterError(
+      code: "missing_entitlement",
+      message: "Missing keychain entitlement (\(secErrorMessage(status))). "
+        + "Check code signing and the keychain-access-groups entitlement "
+        + "for the requested accessGroup.",
+      details: nil)
+  case errSecInteractionNotAllowed:
+    return FlutterError(
+      code: "interaction_not_allowed",
+      message: "Keychain interaction not allowed (device locked?).",
+      details: nil)
+  default:
+    return FlutterError(code: fallbackCode, message: secErrorMessage(status), details: nil)
+  }
+}
+
 public class KeychainPlugin: NSObject, FlutterPlugin {
   public static func register(with registrar: FlutterPluginRegistrar) {
     #if os(iOS)
@@ -71,7 +102,10 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
     }
     #endif
     serialQueue.async {
-      let outcome = secItemAdd(params: params, data: data.data)
+      // Deterministically drain any autoreleased bridging copies made while
+      // plaintext was in flight — GCD's implicit pool drains at an unspecified
+      // time, which would leave secret-bearing CF/NSData copies alive.
+      let outcome = autoreleasepool { secItemAdd(params: params, data: data.data) }
       DispatchQueue.main.async {
         switch outcome {
         case .completed(let status) where status == errSecSuccess:
@@ -79,7 +113,7 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
         case .completed(let status) where status == errSecDuplicateItem:
           result(FlutterError(code: "already_exists", message: "A value already exists for this key.", details: nil))
         case .completed(let status):
-          result(FlutterError(code: "sec_item_add_failed", message: secErrorMessage(status), details: nil))
+          result(statusFlutterError(status, fallbackCode: "sec_item_add_failed"))
         case .enclaveKeyUnavailable:
           // Distinct from a keychain error: the SE key could not be
           // fetched-or-created, so nothing was stored.
@@ -114,7 +148,7 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
         case errSecInteractionNotAllowed:
           result(FlutterError(code: "interaction_not_allowed", message: "Keychain interaction not allowed (device locked?).", details: nil))
         default:
-          result(FlutterError(code: "sec_item_copy_failed", message: secErrorMessage(status), details: nil))
+          result(statusFlutterError(status, fallbackCode: "sec_item_copy_failed"))
         }
       }
     }
@@ -127,14 +161,25 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       return
     }
     serialQueue.async {
+    // Deterministically drain autoreleased bridging copies of the secret (see
+    // handleSecItemAdd). Kept at the same indent as the queue closure so the
+    // long body below stays diff-flat.
+    autoreleasepool {
       var query = keychainReadQuery(params: params, returnData: true)
+      var authContext: LAContext?
       if let prompt = params.authenticationPrompt {
         let context = LAContext()
         context.localizedReason = prompt
         query[kSecUseAuthenticationContext as String] = context
+        authContext = context
       }
       var item: CFTypeRef?
       let status = Security.SecItemCopyMatching(query as CFDictionary, &item)
+      // Close the authentication window deterministically: a context that has
+      // just satisfied an ACL stays pre-authorized while alive and could
+      // silently satisfy a *subsequent* keychain operation without UI. ARC
+      // would release it eventually; invalidate() is immediate and explicit.
+      authContext?.invalidate()
 
       switch status {
       case errSecSuccess:
@@ -203,9 +248,10 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
         }
       default:
         DispatchQueue.main.async {
-          result(FlutterError(code: "sec_item_copy_failed", message: secErrorMessage(status), details: nil))
+          result(statusFlutterError(status, fallbackCode: "sec_item_copy_failed"))
         }
       }
+    }
     }
   }
 
@@ -229,14 +275,32 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       useDataProtection: args["useDataProtection"] as? Bool ?? false
     )
     serialQueue.async {
-      let alreadyExisted = enclaveKeyExists(params: enclaveParams)
-      guard ensureEnclaveKeyPair(params: enclaveParams) != nil else {
-        DispatchQueue.main.async {
-          result(FlutterError(code: "se_key_gen_failed", message: "Could not ensure SE key pair.", details: nil))
+      autoreleasepool {
+        // The returned Bool ("key already existed") is the caller's
+        // restore-detection signal: `false` means a FRESH key that cannot
+        // decrypt any pre-existing ciphertext. A fetch *error* (locked
+        // keychain, entitlement, domain misrouting) must therefore surface as
+        // an error — collapsing it to `false` would report an intact key as
+        // newly created, and refusing to create on a failed fetch (see
+        // `ensureEnclaveKeyPair`) keeps a second key from ever being minted
+        // under the same tag.
+        switch fetchEnclaveKeyPair(params: enclaveParams) {
+        case .found:
+          DispatchQueue.main.async { result(true) }
+        case .failure(let status):
+          DispatchQueue.main.async {
+            result(FlutterError(code: "se_key_fetch_failed", message: secErrorMessage(status), details: nil))
+          }
+        case .missing:
+          guard createEnclaveKeyPair(params: enclaveParams) != nil else {
+            DispatchQueue.main.async {
+              result(FlutterError(code: "se_key_gen_failed", message: "Could not ensure SE key pair.", details: nil))
+            }
+            return
+          }
+          DispatchQueue.main.async { result(false) }
         }
-        return
       }
-      DispatchQueue.main.async { result(alreadyExisted) }
     }
   }
 
@@ -252,7 +316,7 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
         if status == errSecSuccess || status == errSecItemNotFound {
           result(nil)
         } else {
-          result(FlutterError(code: "sec_item_delete_failed", message: secErrorMessage(status), details: nil))
+          result(statusFlutterError(status, fallbackCode: "sec_item_delete_failed"))
         }
       }
     }
@@ -279,7 +343,7 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
         if status == errSecSuccess || status == errSecItemNotFound {
           result(nil)
         } else {
-          result(FlutterError(code: "sec_item_delete_failed", message: secErrorMessage(status), details: nil))
+          result(statusFlutterError(status, fallbackCode: "sec_item_delete_failed"))
         }
       }
     }

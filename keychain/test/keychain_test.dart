@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keychain/keychain.dart';
 
@@ -92,6 +93,134 @@ void main() {
     test('a false flag is omitted, not sent as false', () {
       final map = config(authenticationRequired: false).toMap();
       expect(map.containsKey('authenticationRequired'), isFalse);
+    });
+  });
+
+  group('Keychain method-channel contract', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    const channel = MethodChannel('keychain');
+    final binding = TestDefaultBinaryMessengerBinding.instance;
+
+    MethodCall? lastCall;
+    Object? Function(MethodCall call)? handler;
+
+    setUp(() {
+      lastCall = null;
+      handler = null;
+      binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+        lastCall = call;
+        return handler?.call(call);
+      });
+    });
+
+    tearDown(() {
+      binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null);
+    });
+
+    Keychain keychain({bool secureEnclave = false, bool auth = false}) =>
+        Keychain(
+          config: config(
+            service: 'svc',
+            secureEnclave: secureEnclave,
+            authenticationRequired: auth,
+            accessGroup: 'group.app',
+          ),
+        );
+
+    test('contains throws on a null native answer (never silent false)', () {
+      handler = (_) => null;
+      expect(
+        () => keychain().contains('k'),
+        throwsA(
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'keychain_contains_failed',
+          ),
+        ),
+      );
+    });
+
+    test(
+      // `false` ("just created") is the restore-detection signal: a fresh SE
+      // key cannot decrypt pre-existing ciphertext, and a caller acting on a
+      // bogus `false` could take a data-destroying recovery path. A null /
+      // indeterminate native answer must therefore throw, not default.
+      'ensureEnclaveKeyPair throws on a null native answer (never "just created")',
+      () {
+        handler = (_) => null;
+        expect(
+          () => keychain(secureEnclave: true).ensureEnclaveKeyPair(),
+          throwsA(
+            isA<PlatformException>().having(
+              (e) => e.code,
+              'code',
+              'se_ensure_key_failed',
+            ),
+          ),
+        );
+      },
+    );
+
+    test('ensureEnclaveKeyPair passes through the native tri-state', () async {
+      handler = (_) => true;
+      expect(
+        await keychain(secureEnclave: true).ensureEnclaveKeyPair(),
+        isTrue,
+      );
+      handler = (_) => false;
+      expect(
+        await keychain(secureEnclave: true).ensureEnclaveKeyPair(),
+        isFalse,
+      );
+    });
+
+    test('ensureEnclaveKeyPair sends only SE-key-identity scoping args', () async {
+      // The SE key identity is (service, accessibility, accessGroup) plus the
+      // macOS keychain-domain selector. Leaking item-level flags (alias,
+      // authenticationRequired, …) here would desynchronize the native tag
+      // from the one used on store/fetch.
+      handler = (_) => true;
+      await keychain(secureEnclave: true, auth: true).ensureEnclaveKeyPair();
+      final args = (lastCall!.arguments as Map).cast<String, Object?>();
+      expect(lastCall!.method, 'ensureEnclaveKeyPair');
+      expect(args, {
+        'service': 'svc',
+        'accessibility': 'whenUnlockedThisDeviceOnly',
+        'accessGroup': 'group.app',
+      });
+    });
+
+    test('secItemCopyMatching returns null for a definite not-found', () async {
+      handler = (_) => null;
+      expect(await keychain().secItemCopyMatching('k'), isNull);
+    });
+
+    test('native error codes propagate untranslated', () {
+      // The facade must not swallow or remap native codes — the oubliette
+      // layer branches on them (se_key_missing → KeyNotFound, etc.).
+      handler = (_) => throw PlatformException(code: 'se_key_missing');
+      expect(
+        () => keychain(secureEnclave: true).secItemCopyMatching('k'),
+        throwsA(
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'se_key_missing',
+          ),
+        ),
+      );
+    });
+
+    test('deleteByPrefix sends prefix, exclusions, and config scope', () async {
+      await keychain().deleteByPrefix('p_', excludePrefixes: ['q_']);
+      final args = (lastCall!.arguments as Map).cast<String, Object?>();
+      expect(lastCall!.method, 'secItemDeleteByPrefix');
+      expect(args['prefix'], 'p_');
+      expect(args['excludePrefixes'], ['q_']);
+      expect(args['service'], 'svc');
+      expect(args['accessGroup'], 'group.app');
+      expect(args.containsKey('alias'), isFalse);
     });
   });
 }

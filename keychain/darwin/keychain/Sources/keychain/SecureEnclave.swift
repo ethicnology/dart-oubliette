@@ -143,9 +143,18 @@ func ensureEnclaveKeyPair(params: EnclaveParams) -> (SecKey, SecKey)? {
     NSLog("KeychainPlugin: SE key fetch failed (\(secErrorMessage(status))); refusing to create")
     return nil
   case .missing:
-    break
+    return createEnclaveKeyPair(params: params)
   }
+}
 
+/// Generates a NEW permanent Secure Enclave key pair for [params].
+///
+/// Callers must have already established the key is verifiably absent (a
+/// `.missing` from `fetchEnclaveKeyPair`) — creating over an existing tag
+/// mints a second permanent key with unspecified fetch order between the two
+/// (see `ensureEnclaveKeyPair`). All callers run on `serialQueue`, so the
+/// absence check and the create are atomic within this process.
+func createEnclaveKeyPair(params: EnclaveParams) -> (SecKey, SecKey)? {
   guard let tag = enclaveKeyTag(params: params) else { return nil }
 
   var error: Unmanaged<CFError>?
@@ -185,23 +194,6 @@ func ensureEnclaveKeyPair(params: EnclaveParams) -> (SecKey, SecKey)? {
   }
   guard let publicKey = SecKeyCopyPublicKey(privateKey) else { return nil }
   return (privateKey, publicKey)
-}
-
-/// Returns `true` if a Secure Enclave key with this scoping already exists.
-func enclaveKeyExists(params: EnclaveParams) -> Bool {
-  guard let tag = enclaveKeyTag(params: params) else { return false }
-  var fetchQuery: [String: Any] = [
-    kSecClass as String: kSecClassKey,
-    kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
-    kSecAttrApplicationTag as String: tag,
-    kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
-    kSecReturnRef as String: false
-  ]
-  if let group = params.accessGroup {
-    fetchQuery[kSecAttrAccessGroup as String] = group
-  }
-  applyEnclaveDataProtection(&fetchQuery, params)
-  return SecItemCopyMatching(fetchQuery as CFDictionary, nil) == errSecSuccess
 }
 
 func enclaveEncrypt(data: Data, publicKey: SecKey) -> Data? {

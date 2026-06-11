@@ -103,6 +103,19 @@ final class Keychain {
     ...config.toMap(),
   };
 
+  /// Tri-state existence probe: `true`/`false` only on a definite answer;
+  /// anything else throws (never silently "false", which would misreport a
+  /// stored secret as absent and typically trigger an overwrite flow).
+  ///
+  /// The probe never raises an auth prompt, and for [KeychainConfig.secureEnclave]
+  /// profiles it checks the ciphertext *item* only — after a device migration
+  /// the item can exist while the non-migratable SE key is gone, so `true`
+  /// does not guarantee the value is decryptable (that surfaces on
+  /// [secItemCopyMatching] as `se_key_missing`).
+  ///
+  /// Throws [PlatformException]: `interaction_not_allowed` (device locked —
+  /// retry when unlocked), `missing_entitlement`, `sec_item_copy_failed`,
+  /// `bad_args`.
   Future<bool> contains(String alias) async {
     final result = await _channel.invokeMethod<bool>(
       'keychainContains',
@@ -124,7 +137,14 @@ final class Keychain {
   /// store/fetch, and so a profile change regenerates the key rather than
   /// silently reusing an old policy.
   ///
-  /// Returns `true` if the key already existed, `false` if it was just created.
+  /// Returns `true` if the key already existed, `false` if it was just
+  /// created. `false` is the restore-detection signal — a fresh key cannot
+  /// decrypt any pre-existing ciphertext — so an indeterminate outcome throws
+  /// rather than masquerading as "just created".
+  ///
+  /// Throws [PlatformException]: `se_key_fetch_failed` (lookup errored — the
+  /// key may be intact; retry, do not purge), `se_key_gen_failed`,
+  /// `se_requires_device_only_accessibility`, `bad_args`.
   Future<bool> ensureEnclaveKeyPair() async {
     final result = await _channel.invokeMethod<bool>('ensureEnclaveKeyPair', {
       if (config.service != null) 'service': config.service,
@@ -133,9 +153,24 @@ final class Keychain {
       // macOS: keep the SE key in the same keychain domain as the item.
       if (config.useDataProtection) 'useDataProtection': true,
     });
-    return result ?? false;
+    if (result != null) return result;
+
+    throw PlatformException(
+      code: 'se_ensure_key_failed',
+      message: 'Native ensureEnclaveKeyPair returned null.',
+    );
   }
 
+  /// Stores [data] under [alias]. Items are immutable — a second add for the
+  /// same alias throws `already_exists` (call [secItemDelete] first).
+  ///
+  /// Throws [PlatformException]: `already_exists`, `se_key_gen_failed`,
+  /// `se_encrypt_failed`, `access_control_failed`,
+  /// `se_requires_device_only_accessibility`,
+  /// `macos_auth_requires_data_protection` (macOS),
+  /// `interaction_not_allowed` (device locked), `missing_entitlement`,
+  /// `sec_item_add_failed`, `bad_args`. On every `se_*` /
+  /// `access_control_failed` outcome nothing was stored (fail-closed).
   Future<void> secItemAdd(String alias, Uint8List data) async {
     await _channel.invokeMethod<void>('secItemAdd', {
       ..._args(alias),
@@ -143,6 +178,14 @@ final class Keychain {
     });
   }
 
+  /// Reads the value for [alias]; `null` means definitively not found.
+  ///
+  /// Throws [PlatformException]: `se_key_missing` (item present but the SE
+  /// key is gone — e.g. after device migration; the ciphertext is permanently
+  /// unreadable), `se_key_fetch_failed` (lookup errored — key may be intact,
+  /// retry), `se_decrypt_failed`, `auth_cancelled`, `auth_failed`,
+  /// `interaction_not_allowed` (device locked), `missing_entitlement`,
+  /// `sec_item_copy_failed`, `bad_args`.
   Future<Uint8List?> secItemCopyMatching(String alias) async {
     final result = await _channel.invokeMethod<Uint8List>(
       'secItemCopyMatching',
@@ -151,6 +194,10 @@ final class Keychain {
     return result;
   }
 
+  /// Deletes the item for [alias]; deleting a missing item is a clean no-op.
+  ///
+  /// Throws [PlatformException]: `interaction_not_allowed` (device locked),
+  /// `missing_entitlement`, `sec_item_delete_failed`, `bad_args`.
   Future<void> secItemDelete(String alias) async {
     await _channel.invokeMethod<void>('secItemDelete', _args(alias));
   }
@@ -164,6 +211,10 @@ final class Keychain {
   /// can never match a nested sibling's accounts. [excludePrefixes] is an
   /// optional belt-and-suspenders list for callers that don't use a separator;
   /// it defaults to empty and is a no-op if nothing matches.
+  ///
+  /// Matching nothing is a clean no-op. Throws [PlatformException]:
+  /// `interaction_not_allowed` (device locked), `missing_entitlement`,
+  /// `sec_item_delete_failed`, `bad_args`.
   Future<void> deleteByPrefix(
     String prefix, {
     List<String> excludePrefixes = const [],

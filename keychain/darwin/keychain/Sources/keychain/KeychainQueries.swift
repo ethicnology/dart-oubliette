@@ -1,6 +1,15 @@
 import Foundation
 import Security
 
+/// PROCESS-GLOBAL (file-scope `let`, not a plugin-instance property): every
+/// Flutter engine in the process — add-to-app, multi-window macOS — funnels
+/// through this one queue, so an exists-probe and an add can never interleave
+/// across engines. Two limits remain: (1) a read that raises an auth prompt
+/// holds the queue until the user responds — every other keychain op in the
+/// process waits behind the dialog (deliberate: nothing may mutate state mid
+/// auth); (2) the queue cannot serialize against *other processes* (an app
+/// extension sharing an access group) — that residual race is inherent to the
+/// keychain API and is why writes fail closed on `errSecDuplicateItem`.
 let serialQueue = DispatchQueue(label: "com.oubliette.keychain", qos: .userInitiated)
 
 extension Data {
@@ -139,6 +148,18 @@ func keychainReadQuery(params: KeychainParams, returnData: Bool) -> [String: Any
 /// silently misreport a failing keychain as an empty one.
 /// `kSecUseAuthenticationUIFail` guarantees the probe can never raise an auth
 /// prompt for an access-controlled item.
+///
+/// DEPRECATION NOTE: `kSecUseAuthenticationUIFail` is deprecated (iOS 14 /
+/// macOS 11) in favor of `kSecUseAuthenticationContext` with
+/// `LAContext.interactionNotAllowed = true`. It is retained deliberately: the
+/// replacement attaches an LAContext to the query, whose behavior on the
+/// legacy file-based macOS keychain (this probe also runs for profiles with
+/// `useDataProtection: false`) is not documented, while the deprecated
+/// constant remains functional and well-defined on both keychains. Do NOT
+/// "modernize" to `kSecUseAuthenticationUISkip` — that silently *excludes*
+/// auth-protected items from matching, turning an existing secret into a
+/// false "not present" (the exact misreport this tri-state probe exists to
+/// prevent). Revisit only if the constant is removed from the SDK.
 func secItemExistsStatus(params: KeychainParams) -> OSStatus {
   var query = keychainReadQuery(params: params, returnData: false)
   query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail

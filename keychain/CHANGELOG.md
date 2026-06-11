@@ -28,3 +28,17 @@ Enclave ECIES wrapping.
 * **macOS backends documented:** legacy file-based keychain (no signing, no
   auth) vs. Data Protection keychain (auth; requires signing + the
   `keychain-access-groups` entitlement).
+* **`ensureEnclaveKeyPair` is tri-state:** `true` (existed) / `false` (just
+  created — the restore-detection signal) / error. A failed key lookup throws
+  `se_key_fetch_failed` instead of misreporting an intact key as "just
+  created", and the Dart facade throws on a `null` channel answer rather than
+  defaulting to `false`.
+* **Stable codes for environmental failures on every operation:**
+  `missing_entitlement` (`errSecMissingEntitlement` — a signing/entitlement
+  defect, not keychain state) and `interaction_not_allowed`
+  (`errSecInteractionNotAllowed` — device locked; writes and deletes hit it
+  too, not just reads).
+* **Memory hygiene:** secret-bearing native paths drain an explicit
+  `autoreleasepool`, and the read path's `LAContext` is invalidated
+  immediately after use so a pre-authorized context cannot satisfy a later
+  operation without UI.
