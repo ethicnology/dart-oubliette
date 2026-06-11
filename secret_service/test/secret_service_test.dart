@@ -11,10 +11,15 @@ class _MockSecretService {
   final Map<String, String> items = {};
   String? errorCode;
 
+  /// When true, `contains` replies null (a protocol violation the facade must
+  /// fail closed on, never read as "absent").
+  bool nullContainsReply = false;
+
   Future<Object?> handle(MethodCall call) async {
     if (errorCode != null) {
       throw PlatformException(code: errorCode!, message: 'forced');
     }
+    if (nullContainsReply && call.method == 'contains') return null;
     final args = (call.arguments as Map).cast<String, dynamic>();
     switch (call.method) {
       case 'contains':
@@ -112,6 +117,42 @@ void main() {
           (e) => e.code,
           'code',
           'backend_unavailable',
+        ),
+      ),
+    );
+  });
+
+  test('get on a tampered (non-base64) value throws payload_corrupt '
+      'without leaking the stored value', () async {
+    // An attacker flips one byte: the value is invalid base64 but still
+    // carries (almost all of) the secret material.
+    const tampered = 'c2VjcmV0LW1hdGVyaWFsLWhlcmU.'; // '.' is not base64
+    mock.items['t'] = tampered;
+    await expectLater(
+      service.get('t'),
+      throwsA(
+        isA<PlatformException>()
+            .having((e) => e.code, 'code', 'payload_corrupt')
+            // The slot may appear; the stored value must not (a raw
+            // FormatException would embed a snippet of it).
+            .having(
+              (e) => e.toString().contains('c2VjcmV0'),
+              'leaks stored value',
+              false,
+            ),
+      ),
+    );
+  });
+
+  test('contains fails closed on a null protocol reply', () async {
+    mock.nullContainsReply = true;
+    await expectLater(
+      service.contains('x'),
+      throwsA(
+        isA<PlatformException>().having(
+          (e) => e.code,
+          'code',
+          'secret_service_error',
         ),
       ),
     );

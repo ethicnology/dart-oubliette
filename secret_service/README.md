@@ -52,6 +52,26 @@ locked/erroring keyring is **never** reported as empty.
   locked keyring, the interactive unlock prompt (bounded by a ~20 s watchdog so
   a headless session cannot hang forever). Keep stored values small and avoid
   bursts of calls on a frame-critical path.
+- **Plaintext copies are not zeroized.** libsecret securely wipes its own
+  buffers (`secret_password_free`), but the value also transits the method
+  channel: the engine's codec buffers, the native `FlValue` copy and the Dart
+  `String`/`Uint8List` are ordinary GC/heap memory that is **not** zeroed on
+  free. A memory dump of the process while (or shortly after) a secret is in
+  flight can recover it — inherent to the platform-channel transport.
+- **Warmup unlocks only the *default* collection.** All items this plugin
+  writes live there. Lookups and the purge search pass `UNLOCK`, so an
+  externally created item in *another*, locked collection — or a keyring that
+  re-locks (daemon restart) between the warmup and the operation — can trigger
+  an unlock prompt on the operation itself, **outside** the 20 s watchdog. The
+  window is a race and requires external interference; it cannot be exercised
+  without a live keyring.
+- **No atomic put-if-absent.** `add`'s duplicate check is lookup-then-store;
+  the Secret Service offers no compare-and-set. A concurrent **external**
+  writer can race it, and `CreateItem(replace=true)` replaces on exact
+  attribute match — so the fail-closed `already_exists` guarantee is
+  per-process. Likewise an external process can create a *second* item with
+  identical attributes, in which case a lookup returns an arbitrary one. (Such
+  an attacker can already read every secret — see the first bullet.)
 
 ## API
 

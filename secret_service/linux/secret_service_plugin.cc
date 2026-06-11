@@ -272,6 +272,22 @@ static FlMethodResponse* handle_delete_by_prefix(const gchar* prefix) {
   for (GList* l = items; l != nullptr; l = l->next) {
     SecretItem* item = SECRET_ITEM(l->data);
     GHashTable* item_attrs = secret_item_get_attributes(item);
+    // A malformed/hostile provider can expose an item whose Attributes D-Bus
+    // property is missing, in which case libsecret returns nullptr here (the
+    // unguarded g_hash_table_lookup/unref below would emit GLib criticals —
+    // an abort under G_DEBUG=fatal-criticals). The item matched the fmt
+    // search server-side, so it IS an oubliette item, but its slot — and so
+    // its owning profile — cannot be verified client-side; deleting it could
+    // cross-profile-wipe. Fail closed: leave it and COUNT it, so the purge
+    // reports partial rather than silently leaving an item behind.
+    if (item_attrs == nullptr) {
+      delete_failures++;
+      if (first_error == nullptr) {
+        first_error =
+            g_strdup("item attributes unreadable; item left in place");
+      }
+      continue;
+    }
     const char* slot =
         static_cast<const char*>(g_hash_table_lookup(item_attrs, "slot"));
     if (slot != nullptr && g_str_has_prefix(slot, prefix)) {
