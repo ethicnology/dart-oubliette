@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -37,6 +38,28 @@ class _FakeOubliette extends Oubliette {
 
   @override
   Future<void> purge() async => store_.clear();
+}
+
+/// A [_FakeOubliette] whose `fetch`/`store` can be suspended per key on a
+/// [Completer] gate, to deterministically interleave a `purge()`/`dispose()`
+/// into the middle of an in-flight vault operation.
+class _GatedOubliette extends _FakeOubliette {
+  final Map<String, Completer<void>> fetchGates = {};
+  final Map<String, Completer<void>> storeGates = {};
+
+  @override
+  Future<Uint8List?> fetch(String key) async {
+    final gate = fetchGates[key];
+    if (gate != null) await gate.future;
+    return super.fetch(key);
+  }
+
+  @override
+  Future<void> store(String key, Uint8List value) async {
+    final gate = storeGates[key];
+    if (gate != null) await gate.future;
+    return super.store(key, value);
+  }
 }
 
 Uint8List _bytes(List<int> b) => Uint8List.fromList(b);
@@ -437,6 +460,229 @@ void main() {
         throwsA(isA<DecryptionFailedException>()),
       );
     });
+  });
+
+  group('PassphraseVault — hostile envelope (second pass)', () {
+    late _FakeOubliette backend;
+    setUp(() => backend = _FakeOubliette());
+
+    Future<Uint8List> writeBlob() async {
+      final v = PassphraseVault.passphrase(
+        inner: backend,
+        passphrase: _bytes([1, 2, 3, 4]),
+        params: _fastParams,
+      );
+      await v.store('k', _bytes([5, 6, 7, 8]));
+      return backend.store_['k']!;
+    }
+
+    PassphraseVault reader() => PassphraseVault.passphrase(
+      inner: backend,
+      passphrase: _bytes([1, 2, 3, 4]),
+      params: _fastParams,
+    );
+
+    test(
+      'EVERY truncation of the envelope fails typed — never RangeError/OOM',
+      () async {
+        final raw = Uint8List.fromList(await writeBlob());
+        // Envelope: 44-byte header (ver,mode,params,saltLen,salt,nonceLen,
+        // nonce) + 4-byte ct + 16-byte tag = 64 bytes.
+        expect(raw.length, 64, reason: 'frozen layout assumption');
+        final v = reader();
+        for (var cut = 0; cut < raw.length; cut++) {
+          backend.store_['k'] = Uint8List.fromList(raw.sublist(0, cut));
+          await expectLater(
+            v.useAndForget('k', (b) async => b),
+            throwsA(isA<OublietteException>()),
+            reason: 'cut at $cut must surface a typed failure',
+          );
+        }
+        // Cuts inside the header or shorter than the GCM tag are corruption,
+        // classified precisely (no KDF ever ran for them).
+        backend.store_['k'] = Uint8List.fromList(raw.sublist(0, 50));
+        await expectLater(
+          v.useAndForget('k', (b) async => b),
+          throwsA(isA<PayloadCorruptException>()),
+        );
+      },
+    );
+
+    test('a lying length field cannot read out of bounds', () async {
+      final raw = await writeBlob();
+      raw[14] = 0xFF; // saltLen byte claims 255 (buffer has 16)
+      await expectLater(
+        reader().useAndForget('k', (b) async => b),
+        throwsA(isA<PayloadCorruptException>()),
+      );
+    });
+
+    test('out-of-range iterations is rejected before the KDF', () async {
+      final raw = await writeBlob();
+      raw.buffer.asByteData().setUint32(6, 65); // ceiling is 64
+      await expectLater(
+        reader().useAndForget('k', (b) async => b),
+        throwsA(isA<PayloadCorruptException>()),
+      );
+    });
+
+    test('zero parallelism is rejected before the KDF', () async {
+      final raw = await writeBlob();
+      raw.buffer.asByteData().setUint32(10, 0); // floor is 1
+      await expectLater(
+        reader().useAndForget('k', (b) async => b),
+        throwsA(isA<PayloadCorruptException>()),
+      );
+    });
+
+    test('an unknown format version fails typed', () async {
+      final raw = await writeBlob();
+      raw[0] = 2;
+      await expectLater(
+        reader().useAndForget('k', (b) async => b),
+        throwsA(isA<PayloadCorruptException>()),
+      );
+    });
+
+    test('a flipped mode byte is refused as a cross-mode blob', () async {
+      final raw = await writeBlob();
+      raw[1] = 0; // passphrase → keyring
+      await expectLater(
+        reader().useAndForget('k', (b) async => b),
+        throwsA(isA<PayloadCorruptException>()),
+      );
+    });
+
+    test('appended garbage fails the GCM tag', () async {
+      final raw = await writeBlob();
+      backend.store_['k'] = Uint8List.fromList([...raw, 0xAA, 0xBB, 0xCC]);
+      await expectLater(
+        reader().useAndForget('k', (b) async => b),
+        throwsA(isA<DecryptionFailedException>()),
+      );
+    });
+  });
+
+  group('PassphraseVault — key validation (AAD injectivity)', () {
+    test('a lone-surrogate key is rejected on every public entry', () async {
+      // The key feeds the AAD via utf8.encode, where every lone surrogate
+      // collapses into the same U+FFFD bytes — 'a\uD800' and 'a\uDC00' would
+      // share one AAD, so a blob swapped between them would still decrypt.
+      final backend = _FakeOubliette();
+      final v = PassphraseVault.passphrase(
+        inner: backend,
+        passphrase: _bytes([1, 2]),
+        params: _fastParams,
+      );
+      const bad = 'a\uD800';
+      await expectLater(v.store(bad, _bytes([1])), throwsArgumentError);
+      expect(() => v.useAndForget(bad, (b) async => b), throwsArgumentError);
+      expect(() => v.trash(bad), throwsArgumentError);
+      expect(() => v.exists(bad), throwsArgumentError);
+      expect(backend.store_, isEmpty);
+    });
+
+    test('a well-formed surrogate PAIR (emoji key) still round-trips', () async {
+      final backend = _FakeOubliette();
+      final v = PassphraseVault.passphrase(
+        inner: backend,
+        passphrase: _bytes([1, 2]),
+        params: _fastParams,
+      );
+      await v.store('seed\u{1F4B0}', _bytes([4, 2]));
+      expect(
+        await v.useAndForget(
+          'seed\u{1F4B0}',
+          (b) async => Uint8List.fromList(b),
+        ),
+        _bytes([4, 2]),
+      );
+    });
+  });
+
+  group('PassphraseVault — purge/dispose racing in-flight ops', () {
+    test(
+      'keyring store racing purge() fails closed — never encrypts under the '
+      'zeroed KEK buffer',
+      () async {
+        final backend = _FakeOubliette();
+        final v = PassphraseVault.keyring(inner: backend);
+        await v.init(); // KEK minted and cached
+        // purge() first, store() second: purge's continuation (which zeroes
+        // the cached KEK buffer IN PLACE) runs before the store's key
+        // derivation resumes. Without the post-await liveness check the store
+        // would HKDF an all-zero KEK — producing a blob anyone can decrypt
+        // offline and no future vault can read.
+        final p = v.purge();
+        final f = v.store('k', _bytes([9, 9, 9]));
+        await expectLater(f, throwsStateError);
+        await p;
+        expect(
+          backend.store_.containsKey('k'),
+          false,
+          reason: 'the aborted store must not have written anything',
+        );
+      },
+    );
+
+    test(
+      'dispose() while the KEK fetch is in flight aborts the store and '
+      'never re-caches key material into the disposed vault',
+      () async {
+        final backend = _GatedOubliette();
+        backend.fetchGates[PassphraseVault.reservedKekKey] = Completer<void>();
+        final v = PassphraseVault.keyring(inner: backend);
+        final f = v.store('k', _bytes([1]));
+        await Future<void>.delayed(Duration.zero); // reach the gated fetch
+        v.dispose();
+        backend.fetchGates[PassphraseVault.reservedKekKey]!.complete();
+        await expectLater(f, throwsStateError);
+        expect(backend.store_.containsKey('k'), false);
+      },
+    );
+
+    test(
+      'purge() crossing a KEK mint is retried against post-purge truth — the '
+      'KEK that encrypts the data is the one persisted in the backend',
+      () async {
+        final backend = _GatedOubliette();
+        backend.storeGates[PassphraseVault.reservedKekKey] = Completer<void>();
+        final v = PassphraseVault.keyring(inner: backend);
+        final f = v.store('k', _bytes([7, 7]));
+        await Future<void>.delayed(Duration.zero); // mint reaches gated store
+        await v.purge(); // epoch bump while the mint is suspended
+        backend.storeGates[PassphraseVault.reservedKekKey]!.complete();
+        await f; // must complete coherently (retried, not wedged)
+        expect(backend.store_.containsKey(PassphraseVault.reservedKekKey), true);
+        // The acid test: a FRESH vault (no in-memory state) can decrypt with
+        // only what the backend holds — no phantom in-memory-only KEK.
+        final fresh = PassphraseVault.keyring(inner: backend);
+        expect(
+          await fresh.useAndForget('k', (b) async => Uint8List.fromList(b)),
+          _bytes([7, 7]),
+        );
+      },
+    );
+
+    test(
+      'passphrase-mode read racing dispose() surfaces StateError, not a '
+      'misleading wrong-passphrase DecryptionFailedException',
+      () async {
+        final backend = _GatedOubliette();
+        final v = PassphraseVault.passphrase(
+          inner: backend,
+          passphrase: _bytes([1, 2]),
+          params: _fastParams,
+        );
+        await v.store('k', _bytes([9]));
+        backend.fetchGates['k'] = Completer<void>();
+        final f = v.useAndForget('k', (b) async => Uint8List.fromList(b));
+        await Future<void>.delayed(Duration.zero); // suspend on the fetch
+        v.dispose(); // zeroes the passphrase in place
+        backend.fetchGates['k']!.complete();
+        await expectLater(f, throwsStateError);
+      },
+    );
   });
 
   group('PassphraseVault — delegation', () {

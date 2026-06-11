@@ -71,6 +71,16 @@ String buildSlot(String prefix, String key) {
   return '$prefix$slotSeparator$key';
 }
 
+/// Whether [s] is well-formed UTF-16 (no unpaired surrogates).
+///
+/// Exposed (package-internally) for the vault layer: `PassphraseVault` feeds
+/// the logical key through `utf8.encode` into the GCM AAD, where every lone
+/// surrogate collapses into the same U+FFFD replacement bytes — two *distinct*
+/// malformed keys would share one AAD, letting a blob swapped between them
+/// decrypt cleanly. The backends already reject such keys in `buildSlot`, but
+/// the vault is generic over any [Oubliette] and must not rely on that.
+bool isWellFormedUtf16(String s) => _isWellFormedUtf16(s);
+
 bool _isWellFormedUtf16(String s) {
   for (var i = 0; i < s.length; i++) {
     final c = s.codeUnitAt(i);

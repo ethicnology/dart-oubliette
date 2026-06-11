@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:pointycastle/export.dart';
 
 import '../oubliette.dart';
+import 'slot.dart' show isWellFormedUtf16;
 
 /// Argon2id cost parameters. Stored inside each passphrase-mode envelope so a
 /// future parameter change never strands old data (the on-disk blob always
@@ -75,12 +76,29 @@ final class PassphraseVault {
   Uint8List? _keyringKek; // cached random KEK (keyring mode)
   bool _disposed = false;
 
+  /// Bumped by [purge] and [dispose]. The KEK lifecycle ([_ensureKeyringKek])
+  /// re-reads this after every `await`: an epoch change means the state it
+  /// observed before the gap (a KEK it fetched or minted) predates a purge and
+  /// must be discarded — caching it would resurrect key material the purge
+  /// just destroyed, silently binding new data to a key that exists nowhere on
+  /// disk.
+  int _kekEpoch = 0;
+
   PassphraseVault._(this._inner, this._mode, this._passphrase, this._params);
 
   /// Passphrase-derived key (Argon2id). [passphrase] must be non-empty — there
   /// is no silent no-protection path. Pass bytes you can zero (a Dart `String`
   /// cannot be wiped). Tune [params] up to [Argon2idParams.sensitive] for a
   /// desktop wallet seed.
+  ///
+  /// **Scope of the tamper binding:** the GCM AAD binds the envelope header
+  /// and the *logical key*, not the wrapped profile's storage prefix (which
+  /// the vault never sees). If you open **two different backend profiles with
+  /// the same passphrase**, an attacker who can rewrite the backend could swap
+  /// the blob for key `k` between those profiles undetected — same key, same
+  /// passphrase, same AAD. Use distinct passphrases (or distinct logical keys)
+  /// per profile if that matters to your threat model. Keyring mode is immune:
+  /// its KEK is random per profile.
   factory PassphraseVault.passphrase({
     required Oubliette inner,
     required Uint8List passphrase,
@@ -190,9 +208,28 @@ final class PassphraseVault {
     }
   }
 
+  /// Validates a caller-supplied logical key: rejects the reserved KEK key and
+  /// malformed UTF-16. The latter is a *vault-level* injectivity requirement,
+  /// not just slot hygiene: the key is bound into the GCM AAD via
+  /// `utf8.encode`, where every unpaired surrogate encodes to the same U+FFFD
+  /// replacement bytes — two distinct malformed keys would share one AAD, so a
+  /// blob relocated between them would still authenticate. The real backends
+  /// reject such keys in `buildSlot`, but the vault accepts any [Oubliette]
+  /// implementation and must enforce this itself.
+  void _checkKey(String key) {
+    _rejectReservedKey(key);
+    if (!isWellFormedUtf16(key)) {
+      throw ArgumentError.value(
+        key,
+        'key',
+        'contains an unpaired surrogate (malformed UTF-16)',
+      );
+    }
+  }
+
   Future<void> store(String key, Uint8List value) async {
     _checkDisposed();
-    _rejectReservedKey(key);
+    _checkKey(key);
     final envelope = await _encrypt(key, value);
     await _inner.store(key, envelope);
   }
@@ -206,7 +243,7 @@ final class PassphraseVault {
     Future<T> Function(Uint8List bytes) action,
   ) {
     _checkDisposed();
-    _rejectReservedKey(key);
+    _checkKey(key);
     return _inner.useAndForget(key, (envelope) async {
       final plaintext = await _decrypt(key, envelope);
       try {
@@ -219,13 +256,13 @@ final class PassphraseVault {
 
   Future<void> trash(String key) {
     _checkDisposed();
-    _rejectReservedKey(key);
+    _checkKey(key);
     return _inner.trash(key);
   }
 
   Future<bool> exists(String key) {
     _checkDisposed();
-    _rejectReservedKey(key);
+    _checkKey(key);
     return _inner.exists(key);
   }
 
@@ -234,6 +271,12 @@ final class PassphraseVault {
   /// keeping it would let a post-purge `store()` encrypt under a key that no
   /// longer exists anywhere on disk, making that data permanently
   /// undecryptable after the next restart.
+  ///
+  /// Do **not** run [purge] concurrently with an in-flight [store] /
+  /// [useAndForget] on the same vault (the same contract as
+  /// [Oubliette.purge]). The vault fails closed if the race is detected: an
+  /// operation that crossed the purge throws [StateError] rather than encrypt
+  /// under key material the purge destroyed.
   Future<void> purge() async {
     _checkDisposed();
     await _inner.purge();
@@ -242,6 +285,7 @@ final class PassphraseVault {
       _zero(k);
       _keyringKek = null;
     }
+    _kekEpoch++;
   }
 
   /// Zeroes the in-memory passphrase / cached KEK and permanently retires this
@@ -256,6 +300,7 @@ final class PassphraseVault {
       _zero(k);
       _keyringKek = null;
     }
+    _kekEpoch++;
   }
 
   // --- crypto ---
@@ -279,6 +324,14 @@ final class PassphraseVault {
   }
 
   Future<Uint8List> _decrypt(String key, Uint8List env) async {
+    // Re-checked here (not only at the public entry): the envelope fetch in
+    // `_inner.useAndForget` is a suspension point, and `dispose()` zeroes the
+    // passphrase *in place* during it. Without this check a dispose that lands
+    // in that gap would derive a key from the all-zero passphrase and surface
+    // as a misleading DecryptionFailedException ("wrong passphrase") instead
+    // of the truthful StateError. From here to the KDF there is no further
+    // suspension, so the check cannot be raced.
+    _checkDisposed();
     final keyBytes = Uint8List.fromList(utf8.encode(key));
     final r = _Reader(key, env);
     if (r.byte() != _formatV1) {
@@ -324,6 +377,15 @@ final class PassphraseVault {
     final nonce = r.bytes(nonceLen);
     final header = Uint8List.sublistView(env, 0, r.offset);
     final ct = r.rest();
+    // A ciphertext shorter than the GCM tag cannot have been written by this
+    // library (the tag is always appended) — classify it precisely as on-disk
+    // corruption rather than letting the AEAD report a generic tag failure.
+    if (ct.length < _tagBits ~/ 8) {
+      throw PayloadCorruptException(
+        'vault envelope for "$key" is truncated (ciphertext shorter than the '
+        'GCM tag)',
+      );
+    }
     final aad = _concat(header, keyBytes);
     final Uint8List kek;
     try {
@@ -396,6 +458,21 @@ final class PassphraseVault {
       return _argon2(_passphrase!, salt, paramsOverride ?? _params);
     }
     final vaultKek = await _ensureKeyringKek();
+    // The await above is a suspension point: a concurrent purge()/dispose()
+    // may have zeroed the cached KEK buffer *in place* during the gap (and
+    // dropped it from the cache). Deriving from that zeroed buffer would be
+    // catastrophic on the encrypt path — the subkey becomes HKDF(all-zeros,
+    // public salt, public key), so the stored blob is decryptable offline by
+    // anyone AND unreadable by every future vault. Re-check synchronously
+    // (there is no further suspension before the KDF runs, so this cannot be
+    // raced within the isolate) and fail closed.
+    if (_disposed || !identical(_keyringKek, vaultKek)) {
+      throw StateError(
+        'PassphraseVault was disposed or purged during an in-flight '
+        'operation; the operation was aborted to avoid using destroyed key '
+        'material',
+      );
+    }
     // Per-slot subkey: HKDF(vaultKek, salt, info = the logical key).
     return _hkdf(vaultKek, salt, keyBytes);
   }
@@ -440,41 +517,99 @@ final class PassphraseVault {
     return kek;
   }
 
-  Future<Uint8List> _ensureKeyringKek() async {
-    final cached = _keyringKek;
-    if (cached != null) return cached;
-    final existing = await _inner.useAndForget(
-      reservedKekKey,
-      (b) async => Uint8List.fromList(b),
-    );
-    if (existing != null) {
-      _keyringKek = _checkKekLength(existing);
-      return existing;
+  /// Validates the vault is still live after an `await` inside the KEK
+  /// lifecycle, zeroing [scratch] (fetched/minted key material that must not
+  /// outlive the check) first when the vault moved on. Returns `true` when a
+  /// concurrent [purge] bumped the epoch — the caller's observations predate
+  /// the purge and it must retry from scratch. Throws after [dispose]: caching
+  /// key material into a disposed vault would resurrect bytes `dispose()`
+  /// promised to drop.
+  bool _kekStateMoved(int epoch, Uint8List? scratch) {
+    if (_disposed) {
+      if (scratch != null) _zero(scratch);
+      throw StateError(
+        'PassphraseVault was disposed during an in-flight operation; create '
+        'a new vault',
+      );
     }
-    final fresh = _randomBytes(_keyLen);
-    try {
-      await _inner.store(reservedKekKey, fresh);
-    } on Object catch (e) {
-      // Lost a concurrent mint — re-read the winner. In-isolate races surface
-      // as StateError (the backend's duplicate-store guard); cross-process
-      // races on Darwin/Linux surface as the raw native `already_exists`.
-      final lostRace =
-          e is StateError ||
-          (e is PlatformException && e.code == 'already_exists');
-      if (!lostRace) rethrow;
-      final raced = await _inner.useAndForget(
+    if (epoch != _kekEpoch) {
+      if (scratch != null) _zero(scratch);
+      return true;
+    }
+    return false;
+  }
+
+  Future<Uint8List> _ensureKeyringKek() async {
+    // Retried whenever a concurrent purge() invalidates what an await observed
+    // (epoch bump). Each pass either returns a KEK that is canonical *for the
+    // current epoch* or starts over against post-purge state — so a purge can
+    // never be straddled into caching a KEK that no longer exists on disk.
+    while (true) {
+      final cached = _keyringKek;
+      if (cached != null) return cached;
+      final epoch = _kekEpoch;
+      final existing = await _inner.useAndForget(
         reservedKekKey,
         (b) async => Uint8List.fromList(b),
       );
-      if (raced != null) {
-        _zero(fresh);
-        _keyringKek = _checkKekLength(raced);
-        return raced;
+      if (_kekStateMoved(epoch, existing)) continue;
+      final cachedNow = _keyringKek;
+      if (cachedNow != null) {
+        // A concurrent caller cached first. Keep ONE canonical buffer: callers
+        // verify `identical(_keyringKek, …)` after their awaits, so caching a
+        // second (equal-bytes) copy here would spuriously fail them.
+        if (existing != null) _zero(existing);
+        return cachedNow;
       }
-      rethrow;
+      if (existing != null) {
+        _keyringKek = _checkKekLength(existing);
+        return existing;
+      }
+      final fresh = _randomBytes(_keyLen);
+      try {
+        await _inner.store(reservedKekKey, fresh);
+      } on Object catch (e) {
+        // Lost a concurrent mint — re-read the winner. In-isolate races
+        // surface as StateError (the backend's duplicate-store guard);
+        // cross-process races on Darwin/Linux surface as the raw native
+        // `already_exists`.
+        final lostRace =
+            e is StateError ||
+            (e is PlatformException && e.code == 'already_exists');
+        if (!lostRace) {
+          _zero(fresh); // never used to encrypt anything — just hygiene
+          rethrow;
+        }
+        final raced = await _inner.useAndForget(
+          reservedKekKey,
+          (b) async => Uint8List.fromList(b),
+        );
+        _zero(fresh);
+        if (_kekStateMoved(epoch, raced)) continue;
+        if (raced != null) {
+          final cachedAfterRace = _keyringKek;
+          if (cachedAfterRace != null) {
+            _zero(raced);
+            return cachedAfterRace;
+          }
+          _keyringKek = _checkKekLength(raced);
+          return raced;
+        }
+        rethrow;
+      }
+      // The mint landed in the backend. If a purge crossed it, the stored KEK
+      // may already have been deleted (or may have landed just after the
+      // purge's enumeration) — discard our buffer and retry: the next pass
+      // re-reads the backend's post-purge truth instead of trusting ours.
+      if (_kekStateMoved(epoch, fresh)) continue;
+      final cachedAfterMint = _keyringKek;
+      if (cachedAfterMint != null) {
+        _zero(fresh);
+        return cachedAfterMint;
+      }
+      _keyringKek = fresh;
+      return fresh;
     }
-    _keyringKek = fresh;
-    return fresh;
   }
 
   Uint8List _argon2(Uint8List passphrase, Uint8List salt, Argon2idParams p) {
