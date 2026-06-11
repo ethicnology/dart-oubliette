@@ -134,6 +134,22 @@ class DarwinOubliette extends Oubliette {
             keyAlias: access.service ?? 'secureEnclave',
             cause: e,
           );
+        // The SE key *fetch* itself failed with an unexpected status (e.g. an
+        // entitlement or keychain-domain hiccup) — distinct from "not found".
+        // Mapped to a recoverable error: the key may well still exist, so the
+        // data-destroying KeyNotFound remediation (purge + re-entry) must not
+        // be suggested for a transient failure.
+        case 'se_key_fetch_failed':
+        // Write-path Secure-Enclave failures: key generation, ECIES
+        // encryption, or access-control creation failed with an unexpected
+        // status (entitlement, hardware, or keychain-domain misconfig). The
+        // secret was never written, so nothing is lost; like a fetch failure
+        // these are environmental and recoverable — fix the environment and
+        // retry. They must NOT map to the data-destroying KeyNotFound path.
+        case 'se_key_gen_failed':
+        case 'se_encrypt_failed':
+        case 'access_control_failed':
+          throw BackendUnavailableException(cause: e);
         case 'se_decrypt_failed':
           throw DecryptionFailedException(key: key, cause: e);
         case 'auth_failed':
@@ -152,7 +168,11 @@ class DarwinOubliette extends Oubliette {
 
   @override
   Future<void> trash(String key) async {
-    await _keychain.secItemDelete(_storedKey(key));
+    // _mapError on every native call (like store/fetch and the Linux backend):
+    // a delete on a locked Data Protection keychain can fail with
+    // `interaction_not_allowed`, which callers must see as a typed,
+    // recoverable error — not a raw PlatformException they may treat as fatal.
+    await _mapError(key, () => _keychain.secItemDelete(_storedKey(key)));
   }
 
   @override
@@ -164,7 +184,10 @@ class DarwinOubliette extends Oubliette {
     // so a sibling profile whose prefix nests under ours is never matched
     // (e.g. purging `authenticated` never wipes `authenticated_fatal`, nor a
     // custom `app_` ever wipe `app_admin_`). No exclude list is needed.
-    await _keychain.deleteByPrefix(access.prefix + slotSeparator);
+    await _mapError(
+      '<purge>',
+      () => _keychain.deleteByPrefix(access.prefix + slotSeparator),
+    );
     // The Secure Enclave key is deliberately NOT deleted. Its identity is
     // (service, accessibility, accessGroup) — it does not include the prefix —
     // so two profiles that differ only by prefix share one key (e.g. the
@@ -177,7 +200,7 @@ class DarwinOubliette extends Oubliette {
 
   @override
   Future<bool> exists(String key) {
-    return _keychain.contains(_storedKey(key));
+    return _mapError(key, () => _keychain.contains(_storedKey(key)));
   }
 
   Future<T> _withKeyLock<T>(String key, Future<T> Function() body) async {

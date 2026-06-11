@@ -252,4 +252,40 @@ void main() {
       );
     });
   });
+
+  group('buildSlot rejects malformed UTF-16 (slot-isolation)', () {
+    // Distinct Dart strings whose lone surrogates UTF-8-encode to the SAME
+    // replacement bytes — without the guard they collide into one native slot
+    // (and one vault AAD), so fetching one key could return the other's secret.
+    test('two keys differing only by an unpaired surrogate would collide', () {
+      expect('a\uD800' == 'a\uDC00', isFalse, reason: 'distinct in Dart');
+      expect(
+        () => buildSlot('p_', 'a\uD800'),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(
+        () => buildSlot('p_', 'a\uDC00'),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('unpaired surrogate in the prefix is rejected too', () {
+      expect(
+        () => buildSlot('p\uD800_', 'key'),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(
+        () => validateSlotPrefix('p\uDFFF_'),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('well-formed non-ASCII keys still pass', () {
+      // Properly paired surrogates (an emoji) and plain accents are fine.
+      expect(
+        buildSlot('p_', 'caf\u00e9\u{1F511}'),
+        'p_${slotSeparator}caf\u00e9\u{1F511}',
+      );
+    });
+  });
 }

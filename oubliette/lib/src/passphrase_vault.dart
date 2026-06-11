@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:pointycastle/export.dart';
 
 import '../oubliette.dart';
@@ -72,6 +73,7 @@ final class PassphraseVault {
   _passphrase; // owned copy (passphrase mode); zeroed by dispose
   final Argon2idParams _params; // passphrase mode
   Uint8List? _keyringKek; // cached random KEK (keyring mode)
+  bool _disposed = false;
 
   PassphraseVault._(this._inner, this._mode, this._passphrase, this._params);
 
@@ -149,9 +151,23 @@ final class PassphraseVault {
   /// Provisions the backend and, in keyring mode, mints the random KEK if it
   /// does not yet exist. Idempotent.
   Future<void> init() async {
+    _checkDisposed();
     await _inner.init();
     if (_mode == _modeKeyring) {
       await _ensureKeyringKek();
+    }
+  }
+
+  /// A disposed vault must never be used again: in passphrase mode the
+  /// passphrase bytes were zeroed *in place* (the field is final), so a
+  /// post-dispose `store()` would otherwise derive its key from an all-zero
+  /// passphrase — data that is both trivially decryptable offline and
+  /// unreadable by the real passphrase. Fail loudly instead.
+  void _checkDisposed() {
+    if (_disposed) {
+      throw StateError(
+        'PassphraseVault was used after dispose(); create a new vault',
+      );
     }
   }
 
@@ -175,6 +191,7 @@ final class PassphraseVault {
   }
 
   Future<void> store(String key, Uint8List value) async {
+    _checkDisposed();
     _rejectReservedKey(key);
     final envelope = await _encrypt(key, value);
     await _inner.store(key, envelope);
@@ -188,6 +205,7 @@ final class PassphraseVault {
     String key,
     Future<T> Function(Uint8List bytes) action,
   ) {
+    _checkDisposed();
     _rejectReservedKey(key);
     return _inner.useAndForget(key, (envelope) async {
       final plaintext = await _decrypt(key, envelope);
@@ -200,22 +218,37 @@ final class PassphraseVault {
   }
 
   Future<void> trash(String key) {
+    _checkDisposed();
     _rejectReservedKey(key);
     return _inner.trash(key);
   }
 
   Future<bool> exists(String key) {
+    _checkDisposed();
     _rejectReservedKey(key);
     return _inner.exists(key);
   }
 
   /// Destroys the wrapped profile — including the keyring-mode KEK, so the
-  /// profile is fully forgotten.
-  Future<void> purge() => _inner.purge();
+  /// profile is fully forgotten. The in-memory KEK cache is dropped too:
+  /// keeping it would let a post-purge `store()` encrypt under a key that no
+  /// longer exists anywhere on disk, making that data permanently
+  /// undecryptable after the next restart.
+  Future<void> purge() async {
+    _checkDisposed();
+    await _inner.purge();
+    final k = _keyringKek;
+    if (k != null) {
+      _zero(k);
+      _keyringKek = null;
+    }
+  }
 
-  /// Zeroes the in-memory passphrase / cached KEK. Call when the vault is no
-  /// longer needed. Best-effort (the Dart VM may have copied bytes).
+  /// Zeroes the in-memory passphrase / cached KEK and permanently retires this
+  /// vault — every later call throws [StateError]. Best-effort zeroing (the
+  /// Dart VM may have copied bytes).
   void dispose() {
+    _disposed = true;
     final p = _passphrase;
     if (p != null) _zero(p);
     final k = _keyringKek;
@@ -394,6 +427,19 @@ final class PassphraseVault {
     return out;
   }
 
+  /// The KEK is always written as [_keyLen] bytes; any other length read back
+  /// is on-disk corruption. Catching it here prevents a *new* store from
+  /// silently binding data to truncated/corrupt key material.
+  Uint8List _checkKekLength(Uint8List kek) {
+    if (kek.length != _keyLen) {
+      _zero(kek);
+      throw const PayloadCorruptException(
+        'the stored vault KEK has an invalid length',
+      );
+    }
+    return kek;
+  }
+
   Future<Uint8List> _ensureKeyringKek() async {
     final cached = _keyringKek;
     if (cached != null) return cached;
@@ -402,21 +448,27 @@ final class PassphraseVault {
       (b) async => Uint8List.fromList(b),
     );
     if (existing != null) {
-      _keyringKek = existing;
+      _keyringKek = _checkKekLength(existing);
       return existing;
     }
     final fresh = _randomBytes(_keyLen);
     try {
       await _inner.store(reservedKekKey, fresh);
-    } on StateError {
-      // Lost a concurrent mint — re-read the winner.
+    } on Object catch (e) {
+      // Lost a concurrent mint — re-read the winner. In-isolate races surface
+      // as StateError (the backend's duplicate-store guard); cross-process
+      // races on Darwin/Linux surface as the raw native `already_exists`.
+      final lostRace =
+          e is StateError ||
+          (e is PlatformException && e.code == 'already_exists');
+      if (!lostRace) rethrow;
       final raced = await _inner.useAndForget(
         reservedKekKey,
         (b) async => Uint8List.fromList(b),
       );
       if (raced != null) {
         _zero(fresh);
-        _keyringKek = raced;
+        _keyringKek = _checkKekLength(raced);
         return raced;
       }
       rethrow;

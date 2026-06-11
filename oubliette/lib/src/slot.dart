@@ -46,7 +46,46 @@ String buildSlot(String prefix, String key) {
       'must not contain the reserved slot separator (U+001D)',
     );
   }
+  // Reject malformed UTF-16. Every backend (method channel, Keychain account,
+  // SharedPreferences key, Secret Service attribute — and the vault's AAD)
+  // sees the slot as UTF-8, where every unpaired surrogate encodes to the same
+  // U+FFFD replacement bytes. Two *distinct* Dart strings differing only in
+  // their lone surrogate would therefore collide into one native slot — a
+  // slot-isolation hole (fetch of one key could return and cleanly decrypt the
+  // other's secret). Well-formed strings round-trip injectively; only
+  // malformed ones are rejected.
+  if (!_isWellFormedUtf16(prefix)) {
+    throw ArgumentError.value(
+      prefix,
+      'prefix',
+      'contains an unpaired surrogate (malformed UTF-16)',
+    );
+  }
+  if (!_isWellFormedUtf16(key)) {
+    throw ArgumentError.value(
+      key,
+      'key',
+      'contains an unpaired surrogate (malformed UTF-16)',
+    );
+  }
   return '$prefix$slotSeparator$key';
+}
+
+bool _isWellFormedUtf16(String s) {
+  for (var i = 0; i < s.length; i++) {
+    final c = s.codeUnitAt(i);
+    if (c >= 0xD800 && c <= 0xDBFF) {
+      // High surrogate must be followed by a low surrogate.
+      if (i + 1 >= s.length) return false;
+      final next = s.codeUnitAt(i + 1);
+      if (next < 0xDC00 || next > 0xDFFF) return false;
+      i++;
+    } else if (c >= 0xDC00 && c <= 0xDFFF) {
+      // Lone low surrogate.
+      return false;
+    }
+  }
+  return true;
 }
 
 /// Validates a custom profile [prefix]: non-empty and free of the reserved
@@ -61,6 +100,13 @@ void validateSlotPrefix(String prefix) {
       prefix,
       'prefix',
       'must not contain the reserved slot separator (U+001D)',
+    );
+  }
+  if (!_isWellFormedUtf16(prefix)) {
+    throw ArgumentError.value(
+      prefix,
+      'prefix',
+      'contains an unpaired surrogate (malformed UTF-16)',
     );
   }
 }

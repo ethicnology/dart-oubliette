@@ -13,8 +13,9 @@ class _MockKeychain {
   int ensureEnclaveCalls = 0;
   int deleteEnclaveCalls = 0;
 
-  /// When set, secItemCopyMatching throws a PlatformException with this code —
-  /// exercises the Darwin typed-error mapping.
+  /// When set, secItemCopyMatching and secItemDelete throw a PlatformException
+  /// with this code — exercises the Darwin typed-error mapping on both the read
+  /// and the delete path.
   String? fetchErrorCode;
 
   Future<Object?> handle(MethodCall call) async {
@@ -35,6 +36,9 @@ class _MockKeychain {
         }
         return items[args['alias'] as String];
       case 'secItemDelete':
+        if (fetchErrorCode != null) {
+          throw PlatformException(code: fetchErrorCode!, message: 'forced');
+        }
         items.remove(args['alias']);
         return null;
       case 'secItemDeleteByPrefix':
@@ -189,6 +193,83 @@ void main() {
             true,
           ),
         ),
+      );
+    });
+
+    test('auth_failed → AuthenticationFailedException (RECOVERABLE)', () async {
+      // A failed (not cancelled) prompt must stay recoverable: the data is
+      // intact, the user simply hasn't authenticated — never purge in response.
+      final s = storage();
+      mock.fetchErrorCode = 'auth_failed';
+      await expectLater(
+        s.fetch('k'),
+        throwsA(
+          isA<AuthenticationFailedException>()
+              .having((e) => e.cancelled, 'cancelled', false)
+              .having((e) => e.recoverable, 'recoverable', true),
+        ),
+      );
+    });
+
+    test(
+      'se_key_fetch_failed → BackendUnavailableException (RECOVERABLE, never '
+      'purge)',
+      () async {
+        // DARWIN: an SE key *fetch* that fails with an unexpected status (a
+        // missing entitlement / keychain-domain hiccup) is environmental — the
+        // key may well still exist. It must be recoverable and NEVER trigger the
+        // data-destroying KeyNotFound remediation.
+        final s = storage();
+        mock.fetchErrorCode = 'se_key_fetch_failed';
+        await expectLater(
+          s.fetch('k'),
+          throwsA(
+            isA<BackendUnavailableException>().having(
+              (e) => e.recoverable,
+              'recoverable',
+              true,
+            ),
+          ),
+        );
+      },
+    );
+
+    for (final code in [
+      'se_key_gen_failed',
+      'se_encrypt_failed',
+      'access_control_failed',
+    ]) {
+      test('$code → BackendUnavailableException (RECOVERABLE, never purge)', () async {
+        // DARWIN: write-path SE failures (key gen, ECIES encrypt, access-control
+        // creation) are environmental — the secret was never stored, nothing is
+        // lost. They must be recoverable and NEVER map to the data-destroying
+        // KeyNotFound remediation.
+        final s = storage();
+        mock.fetchErrorCode = code;
+        await expectLater(
+          s.fetch('k'),
+          throwsA(
+            isA<BackendUnavailableException>().having(
+              (e) => e.recoverable,
+              'recoverable',
+              true,
+            ),
+          ),
+        );
+      });
+    }
+
+    test('trash surfaces interaction_not_allowed as a typed error', () async {
+      // DARWIN: a delete on a locked Data Protection keychain fails with
+      // interaction_not_allowed; trash() routes through _mapError so the caller
+      // sees a recoverable AuthenticationFailedException, never a raw
+      // PlatformException it might treat as fatal (and purge in response).
+      final s = storage();
+      await s.store('k', Uint8List.fromList([1]));
+      mock.fetchErrorCode = 'interaction_not_allowed';
+      await expectLater(
+        s.trash('k'),
+        throwsA(isA<AuthenticationFailedException>()),
       );
     });
 

@@ -270,6 +270,84 @@ void main() {
         );
       },
     );
+
+    test(
+      'purge() drops the cached KEK — post-purge data is readable by a FRESH '
+      'vault (the documented purge → init recovery flow)',
+      () async {
+        final v = PassphraseVault.keyring(inner: backend);
+        await v.init();
+        await v.store('seed', _bytes([1, 2, 3]));
+
+        await v.purge();
+        await v.init(); // re-provision: must mint & PERSIST a new KEK
+        await v.store('seed', _bytes([4, 5, 6]));
+
+        expect(
+          backend.store_.containsKey(PassphraseVault.reservedKekKey),
+          true,
+          reason:
+              'the KEK encrypting post-purge data must exist in the backend — '
+              'a stale in-memory KEK would strand the data on restart',
+        );
+
+        // Simulates an app restart: a fresh vault has no in-memory cache and
+        // must decrypt using only what the backend holds.
+        final fresh = PassphraseVault.keyring(inner: backend);
+        expect(
+          await fresh.useAndForget('seed', (b) async => Uint8List.fromList(b)),
+          _bytes([4, 5, 6]),
+        );
+      },
+    );
+
+    test('a corrupt (wrong-length) stored KEK is refused, not used', () async {
+      final v1 = PassphraseVault.keyring(inner: backend);
+      await v1.init();
+      // Corrupt the KEK behind the vault's back.
+      backend.store_[PassphraseVault.reservedKekKey] = _bytes([1, 2, 3]);
+      final v2 = PassphraseVault.keyring(inner: backend); // no cache
+      await expectLater(
+        v2.store('k', _bytes([9])),
+        throwsA(isA<PayloadCorruptException>()),
+      );
+    });
+  });
+
+  group('PassphraseVault — lifecycle (dispose)', () {
+    test('every operation throws StateError after dispose()', () async {
+      final backend = _FakeOubliette();
+      final v = PassphraseVault.passphrase(
+        inner: backend,
+        passphrase: _bytes([1, 2, 3, 4]),
+        params: _fastParams,
+      );
+      await v.store('k', _bytes([9]));
+      v.dispose();
+
+      // store() after dispose is the dangerous one: the passphrase bytes were
+      // zeroed in place, so it would otherwise encrypt under an all-zero
+      // passphrase — trivially derivable offline AND unreadable by the real
+      // passphrase.
+      await expectLater(v.store('k2', _bytes([1])), throwsStateError);
+      // The non-async methods throw synchronously — assert via closures.
+      expect(() => v.useAndForget('k', (b) async => b), throwsStateError);
+      expect(() => v.trash('k'), throwsStateError);
+      expect(() => v.exists('k'), throwsStateError);
+      await expectLater(v.purge(), throwsStateError);
+      await expectLater(v.init(), throwsStateError);
+
+      // Nothing was written by the rejected post-dispose store.
+      expect(backend.store_.containsKey('k2'), false);
+    });
+
+    test('keyring mode is equally dead after dispose()', () async {
+      final backend = _FakeOubliette();
+      final v = PassphraseVault.keyring(inner: backend);
+      await v.init();
+      v.dispose();
+      await expectLater(v.store('k', _bytes([1])), throwsStateError);
+    });
   });
 
   group('PassphraseVault — modes do not silently cross', () {

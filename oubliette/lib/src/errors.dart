@@ -192,16 +192,24 @@ final class DecryptionFailedException extends OublietteException {
       'See the cause field for diagnostics.';
 }
 
-/// Thrown on **Linux** when no Secret Service provider is reachable — there is
-/// no session D-Bus, or no `org.freedesktop.secrets` implementation (keyring
-/// daemon) is running. Typical on a headless server, a minimal window manager,
-/// or a misconfigured session.
+/// Thrown when the platform secret backend is reachable in principle but a
+/// backend-level operation failed for an environmental reason:
+///
+/// - **Linux** — no Secret Service provider is reachable: no session D-Bus, or
+///   no `org.freedesktop.secrets` implementation (keyring daemon) is running.
+///   Typical on a headless server, a minimal window manager, or a
+///   misconfigured session.
+/// - **Darwin** — the Secure Enclave key *fetch* failed with an unexpected
+///   status (`se_key_fetch_failed`, e.g. a missing entitlement or a
+///   keychain-domain misconfiguration). Distinct from [KeyNotFoundException]:
+///   the key may well still exist, so the data-destroying recovery flow must
+///   not be applied.
 ///
 /// **Recoverable** in the [OublietteException] sense: the stored data is intact
 /// and **must not** be `purge()`d — the fix is environmental (provide a running
-/// keyring daemon / session bus), after which the same operation succeeds.
-/// Distinct from [KeyringLockedException] (a provider exists but its collection
-/// is locked).
+/// keyring daemon / fix the entitlement), after which the same operation
+/// succeeds. Distinct from [KeyringLockedException] (a provider exists but its
+/// collection is locked).
 final class BackendUnavailableException extends OublietteException {
   /// The underlying platform error, for diagnostics.
   final Object? cause;
@@ -213,9 +221,11 @@ final class BackendUnavailableException extends OublietteException {
 
   @override
   String toString() =>
-      'BackendUnavailableException: no Secret Service provider is reachable '
-      '(no session D-Bus or keyring daemon). The data is intact — never purge; '
-      'provide a keyring daemon and retry. See the cause field for diagnostics.';
+      'BackendUnavailableException: the platform secret backend failed for an '
+      'environmental reason (no keyring daemon / session bus on Linux, or a '
+      'Secure Enclave key fetch failure on Darwin). The data is intact — '
+      'never purge; fix the environment and retry. See the cause field for '
+      'diagnostics.';
 }
 
 /// Thrown on **Linux** when the Secret Service keyring collection is locked and

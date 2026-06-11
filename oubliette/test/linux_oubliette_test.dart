@@ -203,6 +203,29 @@ void main() {
       mock.errorCode = 'keyring_locked';
       await expectLater(s.trash('k'), throwsA(isA<KeyringLockedException>()));
     });
+
+    test(
+      'trash on an unreachable backend throws (never a silent no-op)',
+      () async {
+        // A delete against a missing keyring daemon / session bus must surface
+        // the recoverable BackendUnavailableException, not silently succeed and
+        // let the caller believe the secret was removed.
+        final s = storage();
+        mock.errorCode = 'backend_unavailable';
+        await expectLater(
+          s.trash('k'),
+          throwsA(isA<BackendUnavailableException>()),
+        );
+      },
+    );
+
+    test('init surfaces a locked keyring as a typed error (fail fast)', () async {
+      // init() probes the backend so a locked/headless environment fails here
+      // with a typed, recoverable error rather than on the first store/fetch.
+      final s = storage();
+      mock.errorCode = 'keyring_locked';
+      await expectLater(s.init(), throwsA(isA<KeyringLockedException>()));
+    });
   });
 
   group('per-key store lock', () {
