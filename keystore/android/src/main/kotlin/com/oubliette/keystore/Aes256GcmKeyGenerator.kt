@@ -12,6 +12,17 @@ import javax.crypto.SecretKeyFactory
 object Aes256GcmKeyGenerator {
   private const val keyStoreType = "AndroidKeyStore"
 
+  /**
+   * Serializes the exists-check and the generation. AndroidKeyStore silently
+   * REPLACES an existing entry when generating under an existing alias, so an
+   * unguarded check-then-generate race (two Flutter engines in one process —
+   * add-to-app, background isolates) could overwrite a live key and make every
+   * blob encrypted under it permanently undecryptable. Process-wide because
+   * this object is a singleton; cross-process generation remains the caller's
+   * documented contract, as with the Dart-side locks.
+   */
+  private val generateLock = Any()
+
   fun generateKey(
     alias: String,
     unlockedDeviceRequired: Boolean,
@@ -19,11 +30,11 @@ object Aes256GcmKeyGenerator {
     userAuthenticationRequired: Boolean,
     invalidatedByBiometricEnrollment: Boolean,
     requireHardwareBacking: Boolean
-  ) {
+  ): Unit = synchronized(generateLock) {
     val keyStore = KeyStore.getInstance(keyStoreType)
     keyStore.load(null)
     if (keyStore.containsAlias(alias)) {
-      throw IllegalStateException("A key already exists for alias \"$alias\". Call deleteEntry() first.")
+      throw KeyAlreadyExistsException(alias)
     }
     val keyGenerator = KeyGenerator.getInstance(
       KeyProperties.KEY_ALGORITHM_AES,
@@ -48,10 +59,20 @@ object Aes256GcmKeyGenerator {
     if (userAuthenticationRequired) {
       specBuilder.setUserAuthenticationRequired(true)
       specBuilder.setInvalidatedByBiometricEnrollment(invalidatedByBiometricEnrollment)
-      specBuilder.setUserAuthenticationParameters(
-        0,
+      // Keymaster only enforces enrollment-invalidation for keys that are
+      // valid for biometric authentication ONLY. If AUTH_DEVICE_CREDENTIAL is
+      // included, the key stays bound to the lock-screen SID and remains fully
+      // usable via PIN/pattern/password after a new biometric is enrolled —
+      // silently defeating the requested invalidation. So the requested
+      // invalidation semantics decide the authenticator set: fatal profiles
+      // get BIOMETRIC_STRONG only (no credential fallback — that fallback IS
+      // the bypass), non-fatal authenticated profiles keep both.
+      val authTypes = if (invalidatedByBiometricEnrollment) {
+        KeyProperties.AUTH_BIOMETRIC_STRONG
+      } else {
         KeyProperties.AUTH_DEVICE_CREDENTIAL or KeyProperties.AUTH_BIOMETRIC_STRONG
-      )
+      }
+      specBuilder.setUserAuthenticationParameters(0, authTypes)
     }
     keyGenerator.init(specBuilder.build())
     val key = keyGenerator.generateKey()

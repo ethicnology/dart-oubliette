@@ -12,6 +12,16 @@ final class Keystore {
     return result ?? false;
   }
 
+  /// When [userAuthenticationRequired] is `true`,
+  /// [invalidatedByBiometricEnrollment] also selects the key's authenticator
+  /// set: `true` makes the key **biometric-only** (`AUTH_BIOMETRIC_STRONG`,
+  /// no PIN/pattern/password) — keymaster only enforces enrollment
+  /// invalidation for biometric-only keys, so a credential fallback would
+  /// silently void it. Biometric-only keygen requires biometric hardware and
+  /// at least one enrolled biometric. `false` keeps the credential fallback
+  /// (`AUTH_DEVICE_CREDENTIAL | AUTH_BIOMETRIC_STRONG`). Pass
+  /// `biometricOnly: invalidatedByBiometricEnrollment` to [encrypt]/[decrypt]
+  /// so the prompt matches the key.
   Future<void> generateKey({
     required String alias,
     required bool unlockedDeviceRequired,
@@ -41,12 +51,17 @@ final class Keystore {
   /// - `"key_invalidated"` if the key was permanently invalidated
   ///   (e.g. biometric enrollment changed).
   /// - `"encrypt_failed"` for other encryption errors.
+  /// [biometricOnly] must mirror how the key was generated: a key created with
+  /// `invalidatedByBiometricEnrollment: true` is biometric-only (no device
+  /// credential), so its prompt must not offer the PIN/pattern/password path —
+  /// a credential auth could never authorize that key's cipher.
   Future<EncryptedPayload> encrypt({
     required String alias,
     required Uint8List plaintext,
     required String aad,
     String? promptTitle,
     String? promptSubtitle,
+    bool biometricOnly = false,
   }) async {
     final authenticate = promptTitle != null;
     final args = <String, dynamic>{
@@ -56,6 +71,7 @@ final class Keystore {
       if (authenticate) 'promptTitle': promptTitle,
       if (authenticate)
         'promptSubtitle': promptSubtitle ?? 'Confirm your identity',
+      if (authenticate) 'biometricOnly': biometricOnly,
     };
     return _parseEncryptResponse(
       await _channel.invokeMethod<Map>(
@@ -74,6 +90,7 @@ final class Keystore {
   /// - `"key_invalidated"` if the key was permanently invalidated
   ///   (e.g. biometric enrollment changed).
   /// - `"decrypt_failed"` for other decryption errors.
+  /// See [encrypt] for the [biometricOnly] contract.
   Future<Uint8List> decrypt({
     required int version,
     required String alias,
@@ -82,6 +99,7 @@ final class Keystore {
     required String aad,
     String? promptTitle,
     String? promptSubtitle,
+    bool biometricOnly = false,
   }) async {
     final authenticate = promptTitle != null;
     final args = <String, dynamic>{
@@ -93,6 +111,7 @@ final class Keystore {
       if (authenticate) 'promptTitle': promptTitle,
       if (authenticate)
         'promptSubtitle': promptSubtitle ?? 'Confirm your identity',
+      if (authenticate) 'biometricOnly': biometricOnly,
     };
     final plaintext = await _channel.invokeMethod<Uint8List>(
       authenticate ? 'authenticateDecrypt' : 'decrypt',

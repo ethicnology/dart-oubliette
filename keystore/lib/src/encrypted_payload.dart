@@ -70,8 +70,13 @@ final class EncryptedPayload {
         ciphertext is! String ||
         aad is! String ||
         keyAlias is! String) {
-      throw FormatException(
-        'Malformed EncryptedPayload: missing or wrong-typed field(s) in $map',
+      // Deliberately does NOT interpolate the map: it carries the key alias,
+      // the AAD slot string, and ciphertext — folding them into the message
+      // would leak them through PayloadCorruptException.toString() into logs
+      // and crash reporters (see the diagnostic-hygiene doctrine in
+      // oubliette's errors.dart).
+      throw const FormatException(
+        'Malformed EncryptedPayload: missing or wrong-typed field(s)',
       );
     }
     // A version below the first shipped scheme can never be decrypted. Reject
@@ -111,9 +116,11 @@ final class EncryptedPayload {
     try {
       nonceBytes = base64Decode(nonce);
       ciphertextBytes = base64Decode(ciphertext);
-    } on FormatException catch (e) {
-      throw FormatException(
-        'EncryptedPayload has non-base64 nonce/ciphertext: $e',
+    } on FormatException {
+      // The cause is not chained: base64Decode's FormatException embeds the
+      // offending source string, which is blob content (same hygiene rule).
+      throw const FormatException(
+        'EncryptedPayload has non-base64 nonce/ciphertext',
       );
     }
     // Structural integrity only — exact nonce/tag sizes are the scheme's
@@ -138,7 +145,8 @@ final class EncryptedPayload {
   factory EncryptedPayload.fromJson(String json) {
     final decoded = jsonDecode(json);
     if (decoded is! Map<String, dynamic>) {
-      throw FormatException('EncryptedPayload JSON is not an object: $json');
+      // No `$json` interpolation — same hygiene rationale as in [fromMap].
+      throw const FormatException('EncryptedPayload JSON is not an object');
     }
     return EncryptedPayload.fromMap(decoded);
   }

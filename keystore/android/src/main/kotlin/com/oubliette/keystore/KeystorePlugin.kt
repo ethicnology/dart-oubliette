@@ -15,7 +15,17 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import java.security.KeyStore
-import javax.crypto.SecretKey
+
+/**
+ * Reads the scheme-version argument without silent Long→Int truncation: a Dart
+ * int above 2^31−1 arrives over the channel as a Long, and a bare `toInt()`
+ * would wrap it into a small — wrong — scheme version instead of rejecting it.
+ * Returns null when the argument is absent or out of the valid range.
+ */
+internal fun MethodCall.versionArgument(): Int? {
+    val raw = argument<Number>("version")?.toLong() ?: return null
+    return if (raw in 1L..Int.MAX_VALUE.toLong()) raw.toInt() else null
+}
 
 class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
@@ -98,7 +108,15 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             }
         postCrypto(result) {
             try {
-                val exists = getKey(alias) != null
+                // containsAlias, not getKey(): getKey actually loads the entry
+                // and can throw UnrecoverableKeyException for a half-invalidated
+                // key on some devices — turning "does it exist?" into an error.
+                // An invalidated-but-present key must report true so the ensure-
+                // key path doesn't try to regenerate it; the invalidation then
+                // surfaces properly as key_invalidated at encrypt/decrypt.
+                val keyStore = KeyStore.getInstance(keyStoreType)
+                keyStore.load(null)
+                val exists = keyStore.containsAlias(alias)
                 mainHandler.post { result.success(exists) }
             } catch (e: Exception) {
                 mainHandler.post { result.error("contains_alias_failed", e.message ?: e.toString(), null) }
@@ -107,8 +125,15 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     private fun handleGenerateKey(call: MethodCall, result: Result) {
-        val versionRaw = call.argument<Number>("version") ?: call.argument<Int>("version")
-        val version = versionRaw?.toInt() ?: SchemeRegistry.CURRENT_VERSION
+        val version = if (!call.hasArgument("version")) {
+            SchemeRegistry.CURRENT_VERSION
+        } else {
+            call.versionArgument()
+                ?: run {
+                    result.error("bad_args", "Invalid version.", null)
+                    return
+                }
+        }
         val alias = call.argument<String>("alias")
             ?: run {
                 result.error("bad_args", "Missing alias.", null)
@@ -168,7 +193,11 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 mainHandler.post { result.error("strongbox_unavailable", e.message ?: e.toString(), null) }
             } catch (e: HardwareUnavailableException) {
                 mainHandler.post { result.error("hardware_unavailable", e.message ?: e.toString(), null) }
-            } catch (e: IllegalStateException) {
+            } catch (e: KeyAlreadyExistsException) {
+                // Exactly the duplicate-alias signal — never a broader
+                // IllegalStateException, which would let an unrelated keystore
+                // failure masquerade as "already exists" (treated as success
+                // by the Dart ensure-key path).
                 mainHandler.post { result.error("already_exists", e.message ?: e.toString(), null) }
             } catch (e: Exception) {
                 mainHandler.post { result.error("generate_key_failed", e.message ?: e.toString(), null) }
@@ -235,8 +264,7 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     private fun handleDecrypt(call: MethodCall, result: Result) {
-        val versionRaw = call.argument<Number>("version") ?: call.argument<Int>("version")
-        val version = versionRaw?.toInt()
+        val version = call.versionArgument()
         val ciphertext = call.argument<ByteArray>("ciphertext")
         val nonce = call.argument<ByteArray>("nonce")
         val aad = call.argument<String>("aad")
@@ -278,12 +306,6 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 mainHandler.post { result.error("is_strongbox_available_failed", e.message ?: e.toString(), null) }
             }
         }
-    }
-
-    private fun getKey(alias: String): SecretKey? {
-        val keyStore = KeyStore.getInstance(keyStoreType)
-        keyStore.load(null)
-        return keyStore.getKey(alias, null) as? SecretKey
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {

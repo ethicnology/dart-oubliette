@@ -11,13 +11,16 @@ void main() {
 
   const channel = MethodChannel('keystore');
   String? lastMethod;
+  Map<Object?, Object?>? lastArgs;
   late Object? Function(MethodCall) responder;
 
   setUp(() {
     lastMethod = null;
+    lastArgs = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           lastMethod = call.method;
+          lastArgs = call.arguments as Map<Object?, Object?>?;
           return responder(call);
         });
   });
@@ -53,6 +56,29 @@ void main() {
       await ks.encrypt(alias: 'a', plaintext: plaintext, aad: 'aad');
       expect(lastMethod, 'encrypt');
     });
+
+    // The biometricOnly flag MUST cross the wire on the authenticating path so
+    // the native prompt's allowed authenticators match a biometric-only key.
+    // Dropping it would offer a device-credential fallback the key cannot honor.
+    test('forwards biometricOnly to authenticateEncrypt', () async {
+      responder = (_) => validEncryptResponse();
+      await ks.encrypt(
+        alias: 'a',
+        plaintext: plaintext,
+        aad: 'aad',
+        promptTitle: 'Unlock',
+        biometricOnly: true,
+      );
+      expect(lastArgs!['biometricOnly'], true);
+    });
+
+    // No prompt means no auth metadata leaks onto the plain encrypt call.
+    test('omits prompt/biometricOnly args on plain encrypt', () async {
+      responder = (_) => validEncryptResponse();
+      await ks.encrypt(alias: 'a', plaintext: plaintext, aad: 'aad');
+      expect(lastArgs!.containsKey('biometricOnly'), isFalse);
+      expect(lastArgs!.containsKey('promptTitle'), isFalse);
+    });
   });
 
   group('decrypt method routing', () {
@@ -79,6 +105,20 @@ void main() {
         aad: 'aad',
       );
       expect(lastMethod, 'decrypt');
+    });
+
+    test('forwards biometricOnly to authenticateDecrypt', () async {
+      responder = (_) => plaintext;
+      await ks.decrypt(
+        version: 1,
+        alias: 'a',
+        ciphertext: Uint8List.fromList([9]),
+        nonce: Uint8List(12),
+        aad: 'aad',
+        promptTitle: 'Unlock',
+        biometricOnly: true,
+      );
+      expect(lastArgs!['biometricOnly'], true);
     });
   });
 

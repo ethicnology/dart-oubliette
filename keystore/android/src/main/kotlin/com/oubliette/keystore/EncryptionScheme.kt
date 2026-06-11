@@ -37,6 +37,15 @@ interface EncryptionScheme {
 class KeyNotFoundException(alias: String) :
     IllegalStateException("Key not found for alias \"$alias\".")
 
+/**
+ * A key already exists under the requested alias. Dedicated type so the plugin
+ * maps exactly this — and not every [IllegalStateException] a keystore
+ * internal might throw — to the `already_exists` code (which the Dart layer
+ * treats as success in its idempotent ensure-key path).
+ */
+class KeyAlreadyExistsException(alias: String) :
+    IllegalStateException("A key already exists for alias \"$alias\". Call deleteEntry() first.")
+
 /** The key exists but has been permanently invalidated (e.g. biometric enrollment changed). */
 class KeyInvalidatedException(alias: String, cause: Throwable? = null) :
     IllegalStateException("Key permanently invalidated for alias \"$alias\".", cause)
