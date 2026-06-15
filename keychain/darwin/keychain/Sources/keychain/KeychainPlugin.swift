@@ -264,16 +264,25 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
         // (recoverable, never purge), but the distinct `biometry_lockout` code
         // lets the caller show the right hint ("unlock with your passcode to
         // re-enable biometrics") instead of "try again".
-        let probe = LAContext()
-        var probeError: NSError?
-        let biometryUsable = probe.canEvaluatePolicy(
-          .deviceOwnerAuthenticationWithBiometrics, error: &probeError)
-        probe.invalidate()
-        if !biometryUsable, probeError?.code == LAError.biometryLockout.rawValue {
-          box.deliver(FlutterError(code: "biometry_lockout", message: "Biometry is locked out; unlock the device with the passcode to re-enable it.", details: nil))
-        } else {
-          box.deliver(FlutterError(code: "auth_failed", message: "Authentication failed.", details: nil))
+        //
+        // Only meaningful for a biometry-ONLY item (the fatal
+        // `biometryCurrentSetOnly` profile). A `.userPresence` item accepts the
+        // device passcode as a fallback, so a biometry lockout does NOT block its
+        // access — reporting `biometry_lockout` there would wrongly tell the user
+        // biometrics are their only path. Probe only when the item is
+        // biometry-only; otherwise the failure is an ordinary `auth_failed`.
+        if params.biometryCurrentSetOnly {
+          let probe = LAContext()
+          var probeError: NSError?
+          let biometryUsable = probe.canEvaluatePolicy(
+            .deviceOwnerAuthenticationWithBiometrics, error: &probeError)
+          probe.invalidate()
+          if !biometryUsable, probeError?.code == LAError.biometryLockout.rawValue {
+            box.deliver(FlutterError(code: "biometry_lockout", message: "Biometry is locked out; unlock the device with the passcode to re-enable it.", details: nil))
+            return
+          }
         }
+        box.deliver(FlutterError(code: "auth_failed", message: "Authentication failed.", details: nil))
       case errSecInteractionNotAllowed:
         box.deliver(FlutterError(code: "interaction_not_allowed", message: "Keychain interaction not allowed (device locked?).", details: nil))
       default:
