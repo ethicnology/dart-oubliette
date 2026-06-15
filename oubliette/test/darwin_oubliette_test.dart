@@ -218,28 +218,42 @@ void main() {
       );
     });
 
-    test(
-      'se_key_fetch_failed → BackendUnavailableException (RECOVERABLE, never '
-      'purge)',
-      () async {
-        // DARWIN: an SE key *fetch* that fails with an unexpected status (a
-        // missing entitlement / keychain-domain hiccup) is environmental — the
-        // key may well still exist. It must be recoverable and NEVER trigger the
-        // data-destroying KeyNotFound remediation.
-        final s = storage();
-        mock.fetchErrorCode = 'se_key_fetch_failed';
-        await expectLater(
-          s.fetch('k'),
-          throwsA(
-            isA<BackendUnavailableException>().having(
-              (e) => e.recoverable,
-              'recoverable',
-              true,
-            ),
+    test('biometry_lockout → AuthenticationFailedException(lockout)', () async {
+      // Biometry locked out after too many failed attempts: still recoverable
+      // (data intact, never purge), but flagged so the caller can tell the user
+      // to unlock with the passcode to re-enable biometrics rather than "retry".
+      final s = storage();
+      mock.fetchErrorCode = 'biometry_lockout';
+      await expectLater(
+        s.fetch('k'),
+        throwsA(
+          isA<AuthenticationFailedException>()
+              .having((e) => e.lockout, 'lockout', true)
+              .having((e) => e.cancelled, 'cancelled', false)
+              .having((e) => e.recoverable, 'recoverable', true),
+        ),
+      );
+    });
+
+    test('se_key_fetch_failed → BackendUnavailableException (RECOVERABLE, never '
+        'purge)', () async {
+      // DARWIN: an SE key *fetch* that fails with an unexpected status (a
+      // missing entitlement / keychain-domain hiccup) is environmental — the
+      // key may well still exist. It must be recoverable and NEVER trigger the
+      // data-destroying KeyNotFound remediation.
+      final s = storage();
+      mock.fetchErrorCode = 'se_key_fetch_failed';
+      await expectLater(
+        s.fetch('k'),
+        throwsA(
+          isA<BackendUnavailableException>().having(
+            (e) => e.recoverable,
+            'recoverable',
+            true,
           ),
-        );
-      },
-    );
+        ),
+      );
+    });
 
     for (final code in [
       'se_key_gen_failed',
@@ -254,26 +268,29 @@ void main() {
       // (locked keychain / entitlement / transient framework error).
       'sec_item_copy_failed',
     ]) {
-      test('$code → BackendUnavailableException (RECOVERABLE, never purge)', () async {
-        // DARWIN: write-path SE failures (key gen, ECIES encrypt, access-control
-        // creation), an entitlement/build defect (missing_entitlement), or a
-        // generic fetch failure (sec_item_copy_failed) are environmental — the
-        // stored data is intact / the secret was never written, nothing is
-        // lost. They must be recoverable and NEVER map to the data-destroying
-        // KeyNotFound remediation.
-        final s = storage();
-        mock.fetchErrorCode = code;
-        await expectLater(
-          s.fetch('k'),
-          throwsA(
-            isA<BackendUnavailableException>().having(
-              (e) => e.recoverable,
-              'recoverable',
-              true,
+      test(
+        '$code → BackendUnavailableException (RECOVERABLE, never purge)',
+        () async {
+          // DARWIN: write-path SE failures (key gen, ECIES encrypt, access-control
+          // creation), an entitlement/build defect (missing_entitlement), or a
+          // generic fetch failure (sec_item_copy_failed) are environmental — the
+          // stored data is intact / the secret was never written, nothing is
+          // lost. They must be recoverable and NEVER map to the data-destroying
+          // KeyNotFound remediation.
+          final s = storage();
+          mock.fetchErrorCode = code;
+          await expectLater(
+            s.fetch('k'),
+            throwsA(
+              isA<BackendUnavailableException>().having(
+                (e) => e.recoverable,
+                'recoverable',
+                true,
+              ),
             ),
-          ),
-        );
-      });
+          );
+        },
+      );
     }
 
     test('trash surfaces interaction_not_allowed as a typed error', () async {
@@ -290,28 +307,25 @@ void main() {
       );
     });
 
-    test(
-      'sec_item_add_failed → BackendUnavailableException (RECOVERABLE, never '
-      'purge)',
-      () async {
-        // The add path's generic OSStatus fallback (locked keychain /
-        // entitlement / transient framework error). Nothing was written, so
-        // the stored data is intact — it must surface as a recoverable typed
-        // error, never a raw PlatformException a caller might answer with purge.
-        final s = storage();
-        mock.addErrorCode = 'sec_item_add_failed';
-        await expectLater(
-          s.store('k', Uint8List.fromList([1])),
-          throwsA(
-            isA<BackendUnavailableException>().having(
-              (e) => e.recoverable,
-              'recoverable',
-              true,
-            ),
+    test('sec_item_add_failed → BackendUnavailableException (RECOVERABLE, never '
+        'purge)', () async {
+      // The add path's generic OSStatus fallback (locked keychain /
+      // entitlement / transient framework error). Nothing was written, so
+      // the stored data is intact — it must surface as a recoverable typed
+      // error, never a raw PlatformException a caller might answer with purge.
+      final s = storage();
+      mock.addErrorCode = 'sec_item_add_failed';
+      await expectLater(
+        s.store('k', Uint8List.fromList([1])),
+        throwsA(
+          isA<BackendUnavailableException>().having(
+            (e) => e.recoverable,
+            'recoverable',
+            true,
           ),
-        );
-      },
-    );
+        ),
+      );
+    });
 
     test(
       'sec_item_delete_failed → BackendUnavailableException (RECOVERABLE)',

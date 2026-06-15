@@ -176,6 +176,27 @@ void main() {
       );
     });
 
+    test(
+      'keyring_timeout → BackendUnavailableException (recoverable)',
+      () async {
+        // The per-op watchdog cancelled the call (the keyring did not respond in
+        // the bounded window). Transient/environmental like any backend stall:
+        // recoverable, retry, never purge.
+        final s = storage();
+        mock.errorCode = 'keyring_timeout';
+        await expectLater(
+          s.fetch('k'),
+          throwsA(
+            isA<BackendUnavailableException>().having(
+              (e) => e.recoverable,
+              'recoverable',
+              true,
+            ),
+          ),
+        );
+      },
+    );
+
     test('auth_cancelled → AuthenticationFailedException(cancelled)', () async {
       final s = storage();
       mock.errorCode = 'auth_cancelled';
@@ -219,13 +240,16 @@ void main() {
       },
     );
 
-    test('init surfaces a locked keyring as a typed error (fail fast)', () async {
-      // init() probes the backend so a locked/headless environment fails here
-      // with a typed, recoverable error rather than on the first store/fetch.
-      final s = storage();
-      mock.errorCode = 'keyring_locked';
-      await expectLater(s.init(), throwsA(isA<KeyringLockedException>()));
-    });
+    test(
+      'init surfaces a locked keyring as a typed error (fail fast)',
+      () async {
+        // init() probes the backend so a locked/headless environment fails here
+        // with a typed, recoverable error rather than on the first store/fetch.
+        final s = storage();
+        mock.errorCode = 'keyring_locked';
+        await expectLater(s.init(), throwsA(isA<KeyringLockedException>()));
+      },
+    );
   });
 
   group('per-key store lock', () {
