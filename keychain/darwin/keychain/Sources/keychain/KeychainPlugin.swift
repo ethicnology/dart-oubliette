@@ -249,6 +249,16 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       case errSecUserCanceled:
         box.deliver(FlutterError(code: "auth_cancelled", message: "User cancelled authentication.", details: nil))
       case errSecAuthFailed:
+        // NOTE: biometry *lockout* (too many failed Touch/Face ID attempts,
+        // which on the device requires a passcode unlock to clear) also surfaces
+        // here as `errSecAuthFailed` — SecItemCopyMatching does not expose the
+        // underlying LAError domain, so it cannot be told apart from a single
+        // mismatched attempt by OSStatus alone. Both therefore fold into
+        // `auth_failed` (oubliette → AuthenticationFailedException, recoverable
+        // by retry). If the lockout case ever needs its own recovery hint, the
+        // read query would have to carry an LAContext whose `error` is inspected
+        // after the call, and a new `biometry_lockout` code added (and mapped in
+        // oubliette). Documented here so the fold-in is intentional, not a gap.
         box.deliver(FlutterError(code: "auth_failed", message: "Authentication failed.", details: nil))
       case errSecInteractionNotAllowed:
         box.deliver(FlutterError(code: "interaction_not_allowed", message: "Keychain interaction not allowed (device locked?).", details: nil))

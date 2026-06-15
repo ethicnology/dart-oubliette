@@ -17,6 +17,15 @@ let enclaveAlgorithm = SecKeyAlgorithm.eciesEncryptionCofactorVariableIVX963SHA2
 /// SE-key SecItem queries target so they match the item's domain (the item path
 /// sets `kSecUseDataProtectionKeychain` on macOS) — it is not a scoping input.
 /// It defaults to `false` so the SE tag-regression tests can omit it.
+///
+/// HAZARD (macOS only): because the tag is domain-independent but the *lookup*
+/// is domain-scoped, flipping `useDataProtection` for an existing profile makes
+/// `fetchEnclaveKeyPair` query the other domain, return `.missing`, and (on the
+/// write path) mint a SECOND permanent SE key under the same tag in that domain
+/// — stranding any ciphertext encrypted under the first. The `oubliette` layer
+/// freezes a profile's `useDataProtection` for exactly this reason (the slot/key
+/// naming schema is immutable); this library does not re-key across domains. iOS
+/// is immune (single data-protection domain).
 struct EnclaveParams {
   let service: String?
   let accessibility: CFString
