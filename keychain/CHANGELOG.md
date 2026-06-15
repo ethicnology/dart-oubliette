@@ -5,6 +5,21 @@
 [`oubliette/CHANGELOG.md`](../oubliette/CHANGELOG.md); this file records the
 changes scoped to this package.
 
+## Unreleased
+
+* **Biometry lockout is now a distinct error.** Too-many-failed-attempts
+  lockout previously folded into `auth_failed` (indistinguishable by `OSStatus`).
+  The read path now probes a fresh `LAContext` with `canEvaluatePolicy` on
+  `errSecAuthFailed` and emits `biometry_lockout` when `LAError.biometryLockout`
+  is reported — still recoverable, but the caller can prompt the user to unlock
+  with the passcode to re-enable biometry instead of a bare retry.
+* **Read auth-context reuse window pinned to zero.** The read `LAContext` now
+  sets `touchIDAuthenticationAllowableReuseDuration = 0` explicitly so a
+  successful evaluation can never pre-authorize a later operation, regardless of
+  a future SDK default.
+* **`ensureEnclaveKeyPair` rejects a non-map argument** as `bad_args`, matching
+  the strict arg-guard of every other handler.
+
 ## 1.0.0
 
 First release. Keychain `SecItem` facade with a shared Darwin source and Secure
