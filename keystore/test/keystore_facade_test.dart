@@ -137,6 +137,55 @@ void main() {
     });
   });
 
+  group('native auth-type errors propagate as PlatformException', () {
+    // The native layer now derives the prompt's authenticators from the key's
+    // own KeyInfo and fails closed with `key_auth_type_unknown` when it can't
+    // (unreadable type, or a non-auth key on the authenticating path). The
+    // facade must surface that code untouched so the oubliette layer can map it
+    // — never swallow it into a generic encrypt/decrypt failure.
+    test('encrypt surfaces key_auth_type_unknown from the auth path', () async {
+      responder = (_) =>
+          throw PlatformException(code: 'key_auth_type_unknown');
+      await expectLater(
+        ks.encrypt(
+          alias: 'a',
+          plaintext: plaintext,
+          aad: 'aad',
+          promptTitle: 'Unlock',
+        ),
+        throwsA(
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'key_auth_type_unknown',
+          ),
+        ),
+      );
+    });
+
+    test('decrypt surfaces key_auth_type_unknown from the auth path', () async {
+      responder = (_) =>
+          throw PlatformException(code: 'key_auth_type_unknown');
+      await expectLater(
+        ks.decrypt(
+          version: 1,
+          alias: 'a',
+          ciphertext: Uint8List.fromList([9]),
+          nonce: Uint8List(12),
+          aad: 'aad',
+          promptTitle: 'Unlock',
+        ),
+        throwsA(
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'key_auth_type_unknown',
+          ),
+        ),
+      );
+    });
+  });
+
   group('response error mapping', () {
     test('encrypt with null native response throws encrypt_failed', () async {
       responder = (_) => null;

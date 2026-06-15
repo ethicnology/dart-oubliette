@@ -19,9 +19,9 @@ final class Keystore {
   /// invalidation for biometric-only keys, so a credential fallback would
   /// silently void it. Biometric-only keygen requires biometric hardware and
   /// at least one enrolled biometric. `false` keeps the credential fallback
-  /// (`AUTH_DEVICE_CREDENTIAL | AUTH_BIOMETRIC_STRONG`). Pass
-  /// `biometricOnly: invalidatedByBiometricEnrollment` to [encrypt]/[decrypt]
-  /// so the prompt matches the key.
+  /// (`AUTH_DEVICE_CREDENTIAL | AUTH_BIOMETRIC_STRONG`). The [encrypt]/[decrypt]
+  /// prompt no longer needs to be told which: the native layer reads the key's
+  /// own `KeyInfo` and restricts the prompt to match (see [encrypt]).
   Future<void> generateKey({
     required String alias,
     required bool unlockedDeviceRequired,
@@ -51,10 +51,17 @@ final class Keystore {
   /// - `"key_invalidated"` if the key was permanently invalidated
   ///   (e.g. biometric enrollment changed).
   /// - `"encrypt_failed"` for other encryption errors.
-  /// [biometricOnly] must mirror how the key was generated: a key created with
-  /// `invalidatedByBiometricEnrollment: true` is biometric-only (no device
-  /// credential), so its prompt must not offer the PIN/pattern/password path —
-  /// a credential auth could never authorize that key's cipher.
+  /// - `"key_auth_type_unknown"` if a prompt was requested but the key's
+  ///   accepted authenticator set could not be read from its `KeyInfo`, or the
+  ///   key is not auth-bound (fail-closed: the prompt is refused rather than
+  ///   shown with a guessed authenticator set).
+  ///
+  /// [biometricOnly] is now **advisory only**: the native layer derives the
+  /// prompt's allowed authenticators authoritatively from the key's own
+  /// `KeyInfo` (`getUserAuthenticationType()`), so a biometric-only key always
+  /// gets a `BIOMETRIC_STRONG`-only prompt and a credential-capable key gets the
+  /// `DEVICE_CREDENTIAL` fallback — the two can no longer disagree. The flag is
+  /// retained for source compatibility; it does not influence the prompt.
   Future<EncryptedPayload> encrypt({
     required String alias,
     required Uint8List plaintext,
@@ -90,7 +97,8 @@ final class Keystore {
   /// - `"key_invalidated"` if the key was permanently invalidated
   ///   (e.g. biometric enrollment changed).
   /// - `"decrypt_failed"` for other decryption errors.
-  /// See [encrypt] for the [biometricOnly] contract.
+  /// - `"key_auth_type_unknown"` — see [encrypt].
+  /// See [encrypt] for the (advisory) [biometricOnly] contract.
   Future<Uint8List> decrypt({
     required int version,
     required String alias,

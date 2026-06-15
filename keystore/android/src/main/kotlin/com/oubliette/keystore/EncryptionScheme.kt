@@ -2,6 +2,21 @@ package com.oubliette.keystore
 
 import javax.crypto.Cipher
 
+/**
+ * The authenticator set a key's own keymaster record will accept, read from its
+ * [android.security.keystore.KeyInfo] at crypto time. The BiometricPrompt's
+ * allowed authenticators MUST be derived from this — never from a caller-supplied
+ * flag — so the auth token the prompt produces can always authorize the key's
+ * cipher (see [KeystorePlugin.authenticate]).
+ */
+enum class KeyAuthenticators {
+    /** `AUTH_BIOMETRIC_STRONG` only — credential fallback would void enrollment invalidation. */
+    BIOMETRIC_ONLY,
+
+    /** `AUTH_DEVICE_CREDENTIAL` is set — PIN/pattern/password may authorize the key. */
+    DEVICE_CREDENTIAL_ALLOWED
+}
+
 interface EncryptionScheme {
     val version: Int
 
@@ -13,6 +28,15 @@ interface EncryptionScheme {
         invalidatedByBiometricEnrollment: Boolean,
         requireHardwareBacking: Boolean
     )
+
+    /**
+     * The authenticator set the key under [alias] will accept, read from its
+     * `KeyInfo`. Returns null when the key does not require user authentication
+     * (no prompt is needed). Throws [KeyNotFoundException] if the alias is
+     * absent and [KeyAuthTypeUnknownException] if the key requires auth but its
+     * authenticator type cannot be determined (fail-closed: never guess).
+     */
+    fun keyAuthenticators(alias: String): KeyAuthenticators?
 
     fun encrypt(
         alias: String,
@@ -63,6 +87,20 @@ class KeyAlreadyExistsException :
  */
 class KeyInvalidatedException(cause: Throwable? = null) :
     IllegalStateException("Key permanently invalidated (enrollment change, lock-screen removal, or unrecoverable key blob).", cause)
+
+/**
+ * A BiometricPrompt was requested, but a usable allowed-authenticator set could
+ * not be derived from the key's `KeyInfo` — either the auth type is unreadable,
+ * or the key does not require user authentication at all (so a prompt would not
+ * actually gate it). Fail-closed: rather than guess (and risk offering
+ * DEVICE_CREDENTIAL on a biometric-only key, whose auth token cannot authorize
+ * the cipher — an opaque failure AFTER a successful PIN entry) or show a prompt
+ * that protects nothing, the operation is refused. Recoverable — the key is
+ * intact; the read may succeed on retry, or the caller should use the
+ * non-authenticating path for a non-auth key.
+ */
+class KeyAuthTypeUnknownException(cause: Throwable? = null) :
+    IllegalStateException("Cannot derive the prompt's authenticator set from the key (auth type unreadable or key is not auth-bound).", cause)
 
 /**
  * The freshly generated key is NOT backed by secure hardware (TEE/StrongBox) —

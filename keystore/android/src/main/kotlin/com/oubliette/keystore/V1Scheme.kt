@@ -1,6 +1,8 @@
 package com.oubliette.keystore
 
+import android.security.keystore.KeyInfo
 import android.security.keystore.KeyPermanentlyInvalidatedException
+import android.security.keystore.KeyProperties
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import java.security.ProviderException
@@ -8,6 +10,7 @@ import java.security.UnrecoverableKeyException
 import java.util.concurrent.atomic.AtomicReference
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
+import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
 
 class V1Scheme(
@@ -54,6 +57,40 @@ class V1Scheme(
 
   override fun generateKey(alias: String, unlockedDeviceRequired: Boolean, strongBox: Boolean, userAuthenticationRequired: Boolean, invalidatedByBiometricEnrollment: Boolean, requireHardwareBacking: Boolean) {
     Aes256GcmKeyGenerator.generateKey(alias, unlockedDeviceRequired, strongBox, userAuthenticationRequired, invalidatedByBiometricEnrollment, requireHardwareBacking)
+  }
+
+  /**
+   * Derives the key's accepted authenticator set from its `KeyInfo`
+   * (`getUserAuthenticationType()`, available since API 30 = minSdk). This is
+   * the source of truth for the BiometricPrompt's allowed authenticators — the
+   * caller cannot mismatch it. A key whose type carries `AUTH_DEVICE_CREDENTIAL`
+   * accepts PIN/pattern/password; one carrying only `AUTH_BIOMETRIC_STRONG` is
+   * biometric-only (credential fallback would void its enrollment invalidation,
+   * see Aes256GcmKeyGenerator). Fail-closed: a key that requires auth but whose
+   * type cannot be read throws [KeyAuthTypeUnknownException] rather than letting
+   * a guessed authenticator set produce a post-PIN opaque failure.
+   */
+  override fun keyAuthenticators(alias: String): KeyAuthenticators? {
+    val key = getKey(alias) ?: throw KeyNotFoundException()
+    val info = try {
+      val factory = SecretKeyFactory.getInstance(key.algorithm, keyStoreType)
+      factory.getKeySpec(key, KeyInfo::class.java) as KeyInfo
+    } catch (e: Exception) {
+      // Unreadable KeyInfo on a key we know exists. Do NOT assume "no auth" —
+      // fall through to the auth-required, type-unknown fail-closed branch.
+      throw KeyAuthTypeUnknownException(e)
+    }
+    if (!info.isUserAuthenticationRequired) return null
+    val type = info.userAuthenticationType
+    return if (type and KeyProperties.AUTH_DEVICE_CREDENTIAL != 0) {
+      KeyAuthenticators.DEVICE_CREDENTIAL_ALLOWED
+    } else if (type and KeyProperties.AUTH_BIOMETRIC_STRONG != 0) {
+      KeyAuthenticators.BIOMETRIC_ONLY
+    } else {
+      // Auth required but neither bit set (defensive: should not occur for keys
+      // this library generates). Fail-closed rather than guess an authenticator.
+      throw KeyAuthTypeUnknownException()
+    }
   }
 
   override fun encrypt(

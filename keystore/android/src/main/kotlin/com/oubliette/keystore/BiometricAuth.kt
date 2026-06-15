@@ -13,12 +13,14 @@ import javax.crypto.Cipher
 private fun encryptErrorCode(t: Throwable): String = when (t) {
   is KeyNotFoundException -> "key_not_found"
   is KeyInvalidatedException -> "key_invalidated"
+  is KeyAuthTypeUnknownException -> "key_auth_type_unknown"
   else -> "encrypt_failed"
 }
 
 private fun decryptErrorCode(t: Throwable): String = when (t) {
   is KeyNotFoundException -> "key_not_found"
   is KeyInvalidatedException -> "key_invalidated"
+  is KeyAuthTypeUnknownException -> "key_auth_type_unknown"
   else -> "decrypt_failed"
 }
 
@@ -28,7 +30,6 @@ internal fun KeystorePlugin.handleAuthenticateEncrypt(call: MethodCall, result: 
   val alias = call.argument<String>("alias")
   val title = call.argument<String>("promptTitle") ?: "Authenticate"
   val subtitle = call.argument<String>("promptSubtitle") ?: "Confirm your identity"
-  val biometricOnly = call.argument<Boolean>("biometricOnly") ?: false
   if (plaintext == null || aad == null || alias == null) {
     plaintext?.fill(0)
     result.error("bad_args", "Missing plaintext, aad, or alias.", null)
@@ -47,8 +48,15 @@ internal fun KeystorePlugin.handleAuthenticateEncrypt(call: MethodCall, result: 
       mainHandler.post { result.error("encrypt_failed", "Unsupported version.", null) }
       return@postCrypto
     }
-    val cipher = try {
-      scheme.initEncryptCipher(alias)
+    val cipher: Cipher
+    val authenticators: KeyAuthenticators
+    try {
+      cipher = scheme.initEncryptCipher(alias)
+      // Derive the prompt's authenticators from the KEY's own KeyInfo, never
+      // from the caller — this is the only way they cannot mismatch. A null
+      // (non-auth key) is a misuse of the authenticating path: fail closed.
+      authenticators = scheme.keyAuthenticators(alias)
+        ?: throw KeyAuthTypeUnknownException()
     } catch (e: Throwable) {
       plaintext.fill(0)
       mainHandler.post { result.error(encryptErrorCode(e), e.message ?: e.toString(), null) }
@@ -56,7 +64,7 @@ internal fun KeystorePlugin.handleAuthenticateEncrypt(call: MethodCall, result: 
     }
     mainHandler.post {
       authenticate(
-        cipher, title, subtitle, biometricOnly, result,
+        cipher, title, subtitle, authenticators, result,
         onError = { plaintext.fill(0) },
         onSuccess = { authenticatedCipher ->
           // doFinal is a keymaster Binder call; keep it off the platform thread
@@ -108,7 +116,6 @@ internal fun KeystorePlugin.handleAuthenticateDecrypt(call: MethodCall, result: 
   val alias = call.argument<String>("alias")
   val title = call.argument<String>("promptTitle") ?: "Authenticate"
   val subtitle = call.argument<String>("promptSubtitle") ?: "Confirm your identity"
-  val biometricOnly = call.argument<Boolean>("biometricOnly") ?: false
   if (version == null || ciphertext == null || nonce == null || aad == null || alias == null) {
     result.error("bad_args", "Missing version, ciphertext, nonce, aad, or alias.", null)
     return
@@ -120,15 +127,20 @@ internal fun KeystorePlugin.handleAuthenticateDecrypt(call: MethodCall, result: 
       mainHandler.post { result.error("decrypt_failed", "Unsupported version.", null) }
       return@postCrypto
     }
-    val cipher = try {
-      scheme.initDecryptCipher(alias, nonce)
+    val cipher: Cipher
+    val authenticators: KeyAuthenticators
+    try {
+      cipher = scheme.initDecryptCipher(alias, nonce)
+      // Authenticators derived from the key (see handleAuthenticateEncrypt).
+      authenticators = scheme.keyAuthenticators(alias)
+        ?: throw KeyAuthTypeUnknownException()
     } catch (e: Throwable) {
       mainHandler.post { result.error(decryptErrorCode(e), e.message ?: e.toString(), null) }
       return@postCrypto
     }
     mainHandler.post {
       authenticate(
-        cipher, title, subtitle, biometricOnly, result,
+        cipher, title, subtitle, authenticators, result,
         onSuccess = { authenticatedCipher ->
           // doFinal off the main thread (see handleAuthenticateEncrypt).
           val posted = cryptoHandler.post {
@@ -191,7 +203,7 @@ internal fun KeystorePlugin.authenticate(
   cipher: Cipher,
   title: String,
   subtitle: String,
-  biometricOnly: Boolean,
+  authenticators: KeyAuthenticators,
   result: Result,
   onSuccess: (Cipher) -> Unit,
   onError: () -> Unit = {}
@@ -218,29 +230,33 @@ internal fun KeystorePlugin.authenticate(
   val executor = currentActivity.mainExecutor
   val cancellationSignal = CancellationSignal()
 
-  // The prompt's allowed authenticators must match the KEY's authenticator
-  // set. A key generated with enrollment-invalidation is biometric-only (see
-  // Aes256GcmKeyGenerator); offering DEVICE_CREDENTIAL on its prompt would
-  // produce an auth token that cannot authorize the cipher, failing as an
-  // opaque encrypt/decrypt error after a "successful" PIN entry.
+  // The prompt's allowed authenticators are DERIVED from the KEY's own KeyInfo
+  // (see V1Scheme.keyAuthenticators), never from a caller flag — so they can
+  // never mismatch the key. A key generated with enrollment-invalidation is
+  // biometric-only (see Aes256GcmKeyGenerator); offering DEVICE_CREDENTIAL on
+  // its prompt would produce an auth token that cannot authorize the cipher,
+  // failing as an opaque encrypt/decrypt error after a "successful" PIN entry.
   // minSdk is 30 (R), so setAllowedAuthenticators is always available.
   val builder = BiometricPrompt.Builder(currentActivity)
     .setTitle(title)
     .setSubtitle(subtitle)
-  if (biometricOnly) {
-    builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-    // Without DEVICE_CREDENTIAL the platform prompt REQUIRES a negative
-    // button. Tapping it cancels the signal, which routes the outcome through
-    // onAuthenticationError(BIOMETRIC_ERROR_CANCELED) → auth_cancelled — a
-    // single delivery path for the Result.
-    builder.setNegativeButton("Cancel", executor) { _, _ ->
-      cancellationSignal.cancel()
+  when (authenticators) {
+    KeyAuthenticators.BIOMETRIC_ONLY -> {
+      builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+      // Without DEVICE_CREDENTIAL the platform prompt REQUIRES a negative
+      // button. Tapping it cancels the signal, which routes the outcome through
+      // onAuthenticationError(BIOMETRIC_ERROR_CANCELED) → auth_cancelled — a
+      // single delivery path for the Result.
+      builder.setNegativeButton("Cancel", executor) { _, _ ->
+        cancellationSignal.cancel()
+      }
     }
-  } else {
-    builder.setAllowedAuthenticators(
-      BiometricManager.Authenticators.BIOMETRIC_STRONG or
-          BiometricManager.Authenticators.DEVICE_CREDENTIAL
-    )
+    KeyAuthenticators.DEVICE_CREDENTIAL_ALLOWED -> {
+      builder.setAllowedAuthenticators(
+        BiometricManager.Authenticators.BIOMETRIC_STRONG or
+            BiometricManager.Authenticators.DEVICE_CREDENTIAL
+      )
+    }
   }
   val prompt = builder.build()
 

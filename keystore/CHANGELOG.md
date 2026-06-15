@@ -5,6 +5,30 @@ project ships a single consolidated changelog in
 [`oubliette/CHANGELOG.md`](../oubliette/CHANGELOG.md); this file records the
 changes scoped to this package.
 
+## Unreleased
+
+* **BiometricPrompt authenticators are derived from the key, not the caller
+  (closes the `biometricOnly` coupling footgun).** The authenticating
+  encrypt/decrypt paths now read the key's own `KeyInfo`
+  (`getUserAuthenticationType()`, API 30 = minSdk) and restrict the prompt to
+  match: a biometric-only key (enrollment-invalidated → `AUTH_BIOMETRIC_STRONG`
+  only) always gets a `BIOMETRIC_STRONG`-only prompt, and a credential-capable
+  key gets the `DEVICE_CREDENTIAL` fallback. The Dart `biometricOnly` flag is
+  now advisory only — it can no longer disagree with the key, so a mismatched
+  caller can no longer trigger an opaque post-PIN cipher failure. **Fail-closed:**
+  if the key requires auth but its authenticator type is unreadable (or the
+  authenticating path is used on a non-auth key), the prompt is refused with a
+  new `key_auth_type_unknown` error rather than shown with a guessed set. The
+  security never silently weakens (a biometric-only key is never downgraded to
+  accept device credential).
+* **Test harness fix:** the JVM unit tests now bind to JUnit 5 via
+  `kotlin-test-junit5`. Previously `kotlin-test` (JUnit4-default) ran under
+  `useJUnitPlatform()` with no engine on the classpath, so the append-only
+  `SchemeRegistry` contract tests were silently not executed.
+* **Build hygiene:** dropped the unused `mockito-core` test dependency and the
+  legacy `package` attribute from `AndroidManifest.xml` (AGP 9 errors on it; the
+  namespace is declared in `build.gradle`).
+
 ## 1.0.0
 
 First release. Android Keystore AES-256-GCM facade with a versioned,
