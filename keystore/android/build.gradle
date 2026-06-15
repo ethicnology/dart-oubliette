@@ -46,8 +46,11 @@ android {
     }
 
     dependencies {
-        testImplementation("org.jetbrains.kotlin:kotlin-test")
-        testImplementation("org.mockito:mockito-core:5.23.0")
+        // kotlin-test-junit5 binds the kotlin.test `@Test` annotations to the
+        // JUnit 5 Jupiter engine. Plain `kotlin-test` defaults to JUnit4, which
+        // the `useJUnitPlatform()` runner below cannot discover without an
+        // engine on the classpath — the contract test would silently not run.
+        testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     }
 
     testOptions {

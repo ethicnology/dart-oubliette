@@ -1,3 +1,7 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-  package="com.oubliette.keystore">
+<!-- No `package` attribute: the namespace lives in build.gradle (`namespace =
+     "com.oubliette.keystore"`). AGP 8+ removed the manifest `package` attribute
+     and AGP 9 errors on it. No permissions are declared: the platform
+     BiometricPrompt (API 28+) needs none — USE_BIOMETRIC / USE_FINGERPRINT
+     applied only to the removed FingerprintManager. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 </manifest>
