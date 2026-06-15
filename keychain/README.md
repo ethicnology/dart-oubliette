@@ -38,6 +38,29 @@ await keychain.ensureEnclaveKeyPair();          // when secureEnclave: true
   access control can't be created, the item is not stored.
 - The Secure Enclave key identity is scoped by service + accessibility + access
   group via a collision-free tag.
+- Secure Enclave wrapping and `authenticationRequired` are **independent
+  layers**: the keychain item's `SecAccessControl` gates *access* (biometry /
+  passcode on read), while the SE key (`.privateKeyUsage` only) binds the
+  ciphertext to this device's hardware. A profile may use either, both, or
+  neither.
+
+## Error codes
+
+Native failures surface as `PlatformException`s with stable codes (the
+`oubliette` layer branches on them):
+
+| code | meaning | recoverable |
+|------|---------|-------------|
+| `already_exists` | `store()` on an existing alias (items are immutable) | n/a |
+| `se_key_missing` | SE-profile item present but its SE key is gone (e.g. after device migration) — ciphertext is permanently unreadable | no |
+| `se_key_fetch_failed` | SE key lookup errored (entitlement / locked / domain) — key may be intact | yes, retry |
+| `se_key_gen_failed` / `se_encrypt_failed` / `se_decrypt_failed` | SE generate / ECIES encrypt / decrypt failed | yes (nothing stored on the write-side codes) |
+| `access_control_failed` | `authenticationRequired` set but `SecAccessControl` could not be created — fail-closed, nothing stored | yes |
+| `auth_cancelled` / `auth_failed` | user cancelled / failed the auth prompt on read | yes |
+| `interaction_not_allowed` | device locked | yes, retry when unlocked |
+| `missing_entitlement` | code-signing / `keychain-access-groups` defect | no (fix the build) |
+| `se_requires_device_only_accessibility` | SE paired with a non-`*ThisDeviceOnly` class | no (fix config) |
+| `macos_auth_requires_data_protection` | macOS auth without `useDataProtection: true` | no (fix config) |
 
 ## Requirements
 
