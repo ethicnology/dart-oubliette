@@ -19,8 +19,12 @@
 //   payload version — the payload carries its own 1-byte header inside the
 //   encrypted value (mirroring the Darwin format header).
 //
-// SECRET_SCHEMA_NONE matches the schema *name*, scoping lookups/searches to
-// this app's items.
+// SECRET_SCHEMA_NONE means libsecret does NOT add or match the implicit
+// `xdg:schema` name attribute — items are matched purely on the attributes we
+// pass. So the schema name is documentation only; it does NOT scope lookups.
+// App-scoping is therefore carried entirely by the `fmt` attribute, which every
+// store writes and every lookup/search below matches on (alongside `slot`), so
+// a foreign item that merely reuses an attribute named `slot` cannot collide.
 // ---------------------------------------------------------------------------
 static const SecretSchema kSchema = {
     "com.oubliette.secret_service",
@@ -79,6 +83,31 @@ static gpointer unlock_timeout_thread(gpointer data) {
   return nullptr;
 }
 
+// LINUX-2: returns a fresh GCancellable already armed with the detached timeout
+// watchdog above, so ANY sync call that can trigger an interactive unlock prompt
+// (not just the warmup) is bounded — e.g. a keyring that re-locks (daemon
+// restart) between the warmup and the operation, or an externally created item
+// in another locked collection reached via SECRET_SEARCH_UNLOCK, would otherwise
+// re-prompt with no cancellable and hang the platform thread forever. The caller
+// owns the returned ref and unrefs it after the bounded call; the timer thread
+// holds and releases its own ref. Thread-creation failure degrades to an un-timed
+// (but still correct) call rather than aborting the host app — identical to the
+// warmup path. Cheap on the common path: a cancelled-by-timeout call returns a
+// G_IO_ERROR_CANCELLED GError that every handler already surfaces as an error
+// (never as "absent" / success).
+static GCancellable* armed_timeout_cancellable() {
+  GCancellable* cancellable = g_cancellable_new();
+  GThread* timer = g_thread_try_new("oubliette-op-timeout",
+                                    unlock_timeout_thread,
+                                    g_object_ref(cancellable), nullptr);
+  if (timer != nullptr) {
+    g_thread_unref(timer);  // detached; it owns and releases its own ref
+  } else {
+    g_object_unref(cancellable);  // drop the ref minted for the absent timer
+  }
+  return cancellable;
+}
+
 static SecretService* warmup(const char** err_code) {
   *err_code = nullptr;
   g_autoptr(GError) error = nullptr;
@@ -104,20 +133,7 @@ static SecretService* warmup(const char** err_code) {
   if (secret_collection_get_locked(collection)) {
     // LINUX-1: bound the interactive unlock so a headless/no-prompter session
     // cannot hang here forever — a detached timer cancels it after a timeout.
-    GCancellable* cancellable = g_cancellable_new();
-    // g_thread_try_new (not g_thread_new) so thread-creation failure degrades
-    // to an un-timed unlock rather than aborting the host app. The timer thread
-    // receives its own ref on the cancellable and releases it on exit.
-    GThread* timer = g_thread_try_new(
-        "oubliette-unlock-timeout", unlock_timeout_thread,
-        g_object_ref(cancellable), nullptr);
-    if (timer != nullptr) {
-      g_thread_unref(timer);  // detached; it owns and releases its own ref
-    } else {
-      // Watchdog unavailable: drop the ref minted for it; unlock proceeds
-      // without a timeout (no abort, no leak).
-      g_object_unref(cancellable);
-    }
+    GCancellable* cancellable = armed_timeout_cancellable();
 
     GList* to_unlock = g_list_append(nullptr, collection);
     GList* unlocked = nullptr;
@@ -165,8 +181,15 @@ static FlMethodResponse* handle_contains(const gchar* slot) {
   g_object_unref(service);
 
   g_autoptr(GError) error = nullptr;
+  // Match BOTH attributes: `slot` identifies the item, `fmt` scopes it to this
+  // app (SECRET_SCHEMA_NONE means the schema name is not matched, so without
+  // `fmt` a foreign item reusing a `slot` attribute could match). Bound the call
+  // (LINUX-2): a keyring that re-locked since warmup re-prompts here, outside the
+  // warmup watchdog.
+  GCancellable* cancellable = armed_timeout_cancellable();
   secret_autofree gchar* value = secret_password_lookup_sync(
-      &kSchema, nullptr, &error, "slot", slot, nullptr);
+      &kSchema, cancellable, &error, "slot", slot, "fmt", kFmt, nullptr);
+  g_object_unref(cancellable);
   if (error) {
     return error_response("secret_service_error", error->message);
   }
@@ -182,8 +205,14 @@ static FlMethodResponse* handle_write(const gchar* slot, const gchar* value) {
   g_object_unref(service);
 
   g_autoptr(GError) lookup_error = nullptr;
+  // Scope the duplicate check to this app's items (slot + fmt) — see
+  // handle_contains for why `fmt` is required alongside `slot`. Bound both the
+  // lookup and the store (LINUX-2): either can re-prompt if the keyring relocked.
+  GCancellable* lookup_cancellable = armed_timeout_cancellable();
   secret_autofree gchar* existing = secret_password_lookup_sync(
-      &kSchema, nullptr, &lookup_error, "slot", slot, nullptr);
+      &kSchema, lookup_cancellable, &lookup_error, "slot", slot, "fmt", kFmt,
+      nullptr);
+  g_object_unref(lookup_cancellable);
   if (lookup_error) {
     return error_response("secret_service_error", lookup_error->message);
   }
@@ -193,9 +222,11 @@ static FlMethodResponse* handle_write(const gchar* slot, const gchar* value) {
   }
 
   g_autoptr(GError) store_error = nullptr;
+  GCancellable* store_cancellable = armed_timeout_cancellable();
   gboolean ok = secret_password_store_sync(
-      &kSchema, SECRET_COLLECTION_DEFAULT, "Oubliette", value, nullptr,
+      &kSchema, SECRET_COLLECTION_DEFAULT, "Oubliette", value, store_cancellable,
       &store_error, "slot", slot, "fmt", kFmt, nullptr);
+  g_object_unref(store_cancellable);
   if (store_error) {
     return error_response("secret_service_error", store_error->message);
   }
@@ -213,8 +244,13 @@ static FlMethodResponse* handle_read(const gchar* slot) {
   g_object_unref(service);
 
   g_autoptr(GError) error = nullptr;
+  // Match slot + fmt so a foreign item reusing a `slot` attribute is not read
+  // back as ours (see handle_contains). Bound the call (LINUX-2): a relocked
+  // keyring re-prompts here, outside the warmup watchdog.
+  GCancellable* cancellable = armed_timeout_cancellable();
   secret_autofree gchar* value = secret_password_lookup_sync(
-      &kSchema, nullptr, &error, "slot", slot, nullptr);
+      &kSchema, cancellable, &error, "slot", slot, "fmt", kFmt, nullptr);
+  g_object_unref(cancellable);
   if (error) {
     return error_response("secret_service_error", error->message);
   }
@@ -234,7 +270,14 @@ static FlMethodResponse* handle_delete(const gchar* slot) {
   g_object_unref(service);
 
   g_autoptr(GError) error = nullptr;
-  secret_password_clear_sync(&kSchema, nullptr, &error, "slot", slot, nullptr);
+  // Scope the clear to this app's items (slot + fmt): without `fmt` a foreign
+  // item that reused a `slot` attribute could be deleted out from under another
+  // application (see handle_contains). Bound the call (LINUX-2): a relocked
+  // keyring re-prompts here, outside the warmup watchdog.
+  GCancellable* cancellable = armed_timeout_cancellable();
+  secret_password_clear_sync(&kSchema, cancellable, &error, "slot", slot, "fmt",
+                             kFmt, nullptr);
+  g_object_unref(cancellable);
   if (error) {
     return error_response("secret_service_error", error->message);
   }
@@ -253,10 +296,17 @@ static FlMethodResponse* handle_delete_by_prefix(const gchar* prefix) {
   g_hash_table_insert(attrs, const_cast<char*>("fmt"), const_cast<char*>(kFmt));
 
   g_autoptr(GError) search_error = nullptr;
+  // Bound the search (LINUX-2): SECRET_SEARCH_UNLOCK actively unlocks any matching
+  // collection, so an externally created item in another locked collection — or a
+  // keyring relocked since warmup — would re-prompt here with no timeout. The
+  // detached watchdog cancels it; a cancellation surfaces as secret_service_error
+  // (never a silent empty purge).
+  GCancellable* search_cancellable = armed_timeout_cancellable();
   GList* items = secret_service_search_sync(
       service, &kSchema, attrs,
       static_cast<SecretSearchFlags>(SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK),
-      nullptr, &search_error);
+      search_cancellable, &search_error);
+  g_object_unref(search_cancellable);
   g_hash_table_unref(attrs);
 
   if (search_error) {
@@ -292,7 +342,10 @@ static FlMethodResponse* handle_delete_by_prefix(const gchar* prefix) {
         static_cast<const char*>(g_hash_table_lookup(item_attrs, "slot"));
     if (slot != nullptr && g_str_has_prefix(slot, prefix)) {
       g_autoptr(GError) del_error = nullptr;
-      secret_item_delete_sync(item, nullptr, &del_error);
+      // Bound each delete (LINUX-2): a relocked collection re-prompts per item.
+      GCancellable* del_cancellable = armed_timeout_cancellable();
+      secret_item_delete_sync(item, del_cancellable, &del_error);
+      g_object_unref(del_cancellable);
       if (del_error) {
         delete_failures++;
         if (first_error == nullptr) first_error = g_strdup(del_error->message);

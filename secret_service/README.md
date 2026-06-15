@@ -46,25 +46,54 @@ locked/erroring keyring is **never** reported as empty.
   stored **in the clear** for lookup and are **not** cryptographically bound to
   the value — a local attacker with write access could move/relabel an item.
   Integrity of the value itself is whatever the oubliette envelope provides;
-  this backend adds none.
+  this backend adds none. (The Darwin/Android backends bind the storage-slot
+  version into the cipher's AAD; the Secret Service has no equivalent, so this
+  backend deliberately carries none.)
+- **App scoping is by attribute, not by schema.** The schema is declared
+  `SECRET_SCHEMA_NONE`, so libsecret does **not** match the implicit
+  `xdg:schema` name — items match purely on attributes. Every store writes
+  `fmt=v1`, and every lookup/delete/search matches on it, so an item is treated
+  as ours only when both `slot` **and** `fmt` match. A foreign application that
+  merely reuses an attribute named `slot` therefore cannot collide with, be read
+  as, or be deleted as one of our items.
+- **Transport session.** `secret_service_get_sync` negotiates a DH-encrypted
+  session (`dh-ietf1024-sha256-aes128-cbc-pkcs7`) when the provider supports it
+  (gnome-keyring and KWallet do), so the secret is **not** in cleartext on the
+  bus in the common case; it falls back to the `plain` algorithm only against a
+  daemon that lacks DH. Either way, transport encryption guards only against
+  passive bus snooping — it does **not** protect against the keyring daemon
+  itself or any other process running as your user (which can read the value
+  once the keyring is unlocked).
 - **Blocking calls.** libsecret's `*_sync` calls run on the platform (GTK main)
   thread and block it for the duration of the D-Bus round-trip — including, on a
-  locked keyring, the interactive unlock prompt (bounded by a ~20 s watchdog so
-  a headless session cannot hang forever). Keep stored values small and avoid
-  bursts of calls on a frame-critical path.
-- **Plaintext copies are not zeroized.** libsecret securely wipes its own
-  buffers (`secret_password_free`), but the value also transits the method
-  channel: the engine's codec buffers, the native `FlValue` copy and the Dart
-  `String`/`Uint8List` are ordinary GC/heap memory that is **not** zeroed on
-  free. A memory dump of the process while (or shortly after) a secret is in
-  flight can recover it — inherent to the platform-channel transport.
+  locked keyring, the interactive unlock prompt. **Every** call that can trigger
+  a prompt is bounded by a ~20 s watchdog (a detached timer that cancels the
+  call's `GCancellable`): the warmup unlock, and each per-operation
+  lookup/store/clear/search/delete — so a re-locked keyring or a
+  `SECRET_SEARCH_UNLOCK`-reached collection cannot hang the thread forever. Keep
+  stored values small and avoid bursts of calls on a frame-critical path.
+- **Native secret buffers are wiped; transit copies are not.** Every
+  secret-bearing buffer the native plugin *owns* is freed with
+  `secret_password_free`, which wipes it (libsecret allocates lookup results in
+  non-pageable secure memory and zeroes on free): the value returned by every
+  `secret_password_lookup_sync` in `contains`/`read`/`write` is wiped, not merely
+  `g_free`d. The `value` passed to `store` is libsecret-owned once handed off and
+  is wiped by libsecret internally. What the plugin does **not** control: the
+  value also transits the method channel — the engine's codec buffers, the native
+  `FlValue` copy and the Dart `String`/`Uint8List` are ordinary GC/heap memory
+  that is **not** zeroed on free (Dart's GC gives no reliable zeroization hook). A
+  memory dump while (or shortly after) a secret is in flight can recover it —
+  inherent to the platform-channel transport, not something the native layer can
+  close.
 - **Warmup unlocks only the *default* collection.** All items this plugin
-  writes live there. Lookups and the purge search pass `UNLOCK`, so an
-  externally created item in *another*, locked collection — or a keyring that
-  re-locks (daemon restart) between the warmup and the operation — can trigger
-  an unlock prompt on the operation itself, **outside** the 20 s watchdog. The
-  window is a race and requires external interference; it cannot be exercised
-  without a live keyring.
+  writes live there. The purge search passes `UNLOCK`, so an externally created
+  item in *another*, locked collection — or a keyring that re-locks (daemon
+  restart) between the warmup and the operation — can trigger an unlock prompt on
+  the operation itself. That per-operation prompt is now **also** bounded by the
+  same ~20 s watchdog (the cancellable is threaded through every
+  lookup/store/clear/search/delete), so it can no longer hang the platform thread
+  past the timeout; a timed-out call fails closed with `secret_service_error`
+  rather than blocking or being read as empty.
 - **No atomic put-if-absent.** `add`'s duplicate check is lookup-then-store;
   the Secret Service offers no compare-and-set. A concurrent **external**
   writer can race it, and `CreateItem(replace=true)` replaces on exact
