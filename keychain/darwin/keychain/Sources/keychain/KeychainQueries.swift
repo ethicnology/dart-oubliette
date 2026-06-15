@@ -128,7 +128,7 @@ func keychainQuery(params: KeychainParams) -> [String: Any] {
     query[kSecAttrAccessGroup as String] = group
   }
   #if os(macOS)
-  if params.useDataProtection, #available(macOS 10.15, *) {
+  if params.useDataProtection {
     query[kSecUseDataProtectionKeychain as String] = true
   }
   #endif
@@ -295,7 +295,7 @@ func secItemDeleteByPrefix(
     listQuery[kSecAttrAccessGroup as String] = group
   }
   #if os(macOS)
-  if scope.useDataProtection, #available(macOS 10.15, *) {
+  if scope.useDataProtection {
     listQuery[kSecUseDataProtectionKeychain as String] = true
   }
   #endif
@@ -324,7 +324,7 @@ func secItemDeleteByPrefix(
       deleteQuery[kSecAttrAccessGroup as String] = group
     }
     #if os(macOS)
-    if scope.useDataProtection, #available(macOS 10.15, *) {
+    if scope.useDataProtection {
       deleteQuery[kSecUseDataProtectionKeychain as String] = true
     }
     #endif

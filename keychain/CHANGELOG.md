@@ -42,3 +42,9 @@ Enclave ECIES wrapping.
   `autoreleasepool`, and the read path's `LAContext` is invalidated
   immediately after use so a pre-authorized context cannot satisfy a later
   operation without UI.
+* **Swift 6 strict-concurrency clean:** the native plugin builds under the
+  Swift 6 language mode. The `@escaping FlutterResult` (a non-`Sendable`
+  Objective-C block) is carried across the work-queue → main-thread hop in a
+  `Sendable` wrapper that always delivers on the main thread, so the
+  result is still invoked exactly once on main with no behavior change. The
+  SPM manifest now pins the Swift 6 language mode to match the podspec.

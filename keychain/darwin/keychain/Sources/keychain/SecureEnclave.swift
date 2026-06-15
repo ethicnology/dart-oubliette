@@ -44,7 +44,7 @@ struct EnclaveParams {
 /// explicitly. No-op on iOS (always the data-protection keychain there).
 func applyEnclaveDataProtection(_ query: inout [String: Any], _ params: EnclaveParams) {
   #if os(macOS)
-  if params.useDataProtection, #available(macOS 10.15, *) {
+  if params.useDataProtection {
     query[kSecUseDataProtectionKeychain as String] = true
   }
   #endif

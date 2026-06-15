@@ -7,6 +7,27 @@ import Foundation
 import LocalAuthentication
 import Security
 
+/// Sendable carrier for a `@escaping FlutterResult`.
+///
+/// `FlutterResult` is an Objective-C block (`void (^)(id)`) and therefore
+/// non-`Sendable`; capturing it directly across the `serialQueue.async` →
+/// `DispatchQueue.main.async` hops trips Swift 6 strict-concurrency. The
+/// runtime contract is unchanged and enforced *by construction* here: the
+/// boxed result is delivered through `deliver(_:)`, which always hops to the
+/// main thread, and the call sites still invoke it exactly once per request.
+/// `@unchecked Sendable` is sound because the box is only ever read (the block
+/// is invoked, never mutated) and every invocation is funnelled onto the main
+/// thread.
+private struct SendableResult: @unchecked Sendable {
+  private let result: FlutterResult
+  init(_ result: @escaping FlutterResult) { self.result = result }
+
+  /// Delivers [value] to the Flutter result on the main thread.
+  func deliver(_ value: Any?) {
+    DispatchQueue.main.async { self.result(value) }
+  }
+}
+
 /// Maps a raw OSStatus to a FlutterError for the generic fallback branches.
 ///
 /// Two statuses get their own stable codes everywhere (not just on reads):
@@ -101,28 +122,27 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       return
     }
     #endif
+    let box = SendableResult(result)
     serialQueue.async {
       // Deterministically drain any autoreleased bridging copies made while
       // plaintext was in flight — GCD's implicit pool drains at an unspecified
       // time, which would leave secret-bearing CF/NSData copies alive.
       let outcome = autoreleasepool { secItemAdd(params: params, data: data.data) }
-      DispatchQueue.main.async {
-        switch outcome {
-        case .completed(let status) where status == errSecSuccess:
-          result(nil)
-        case .completed(let status) where status == errSecDuplicateItem:
-          result(FlutterError(code: "already_exists", message: "A value already exists for this key.", details: nil))
-        case .completed(let status):
-          result(statusFlutterError(status, fallbackCode: "sec_item_add_failed"))
-        case .enclaveKeyUnavailable:
-          // Distinct from a keychain error: the SE key could not be
-          // fetched-or-created, so nothing was stored.
-          result(FlutterError(code: "se_key_gen_failed", message: "Could not ensure the Secure Enclave key pair.", details: nil))
-        case .enclaveEncryptFailed:
-          result(FlutterError(code: "se_encrypt_failed", message: "Secure Enclave encryption failed.", details: nil))
-        case .accessControlFailed:
-          result(FlutterError(code: "access_control_failed", message: "Could not create the access control policy for an authenticated item.", details: nil))
-        }
+      switch outcome {
+      case .completed(let status) where status == errSecSuccess:
+        box.deliver(nil)
+      case .completed(let status) where status == errSecDuplicateItem:
+        box.deliver(FlutterError(code: "already_exists", message: "A value already exists for this key.", details: nil))
+      case .completed(let status):
+        box.deliver(statusFlutterError(status, fallbackCode: "sec_item_add_failed"))
+      case .enclaveKeyUnavailable:
+        // Distinct from a keychain error: the SE key could not be
+        // fetched-or-created, so nothing was stored.
+        box.deliver(FlutterError(code: "se_key_gen_failed", message: "Could not ensure the Secure Enclave key pair.", details: nil))
+      case .enclaveEncryptFailed:
+        box.deliver(FlutterError(code: "se_encrypt_failed", message: "Secure Enclave encryption failed.", details: nil))
+      case .accessControlFailed:
+        box.deliver(FlutterError(code: "access_control_failed", message: "Could not create the access control policy for an authenticated item.", details: nil))
       }
     }
   }
@@ -133,23 +153,22 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       result(FlutterError(code: "bad_args", message: "Missing alias or unknown accessibility.", details: nil))
       return
     }
+    let box = SendableResult(result)
     serialQueue.async {
       let status = secItemExistsStatus(params: params)
-      DispatchQueue.main.async {
-        // Tri-state: only a definite present/absent answers the question.
-        // Anything else (locked keychain, missing entitlement, …) is an error
-        // — answering "false" there would tell the caller a stored secret does
-        // not exist and typically trigger a re-prompt/overwrite flow.
-        switch status {
-        case errSecSuccess:
-          result(true)
-        case errSecItemNotFound:
-          result(false)
-        case errSecInteractionNotAllowed:
-          result(FlutterError(code: "interaction_not_allowed", message: "Keychain interaction not allowed (device locked?).", details: nil))
-        default:
-          result(statusFlutterError(status, fallbackCode: "sec_item_copy_failed"))
-        }
+      // Tri-state: only a definite present/absent answers the question.
+      // Anything else (locked keychain, missing entitlement, …) is an error
+      // — answering "false" there would tell the caller a stored secret does
+      // not exist and typically trigger a re-prompt/overwrite flow.
+      switch status {
+      case errSecSuccess:
+        box.deliver(true)
+      case errSecItemNotFound:
+        box.deliver(false)
+      case errSecInteractionNotAllowed:
+        box.deliver(FlutterError(code: "interaction_not_allowed", message: "Keychain interaction not allowed (device locked?).", details: nil))
+      default:
+        box.deliver(statusFlutterError(status, fallbackCode: "sec_item_copy_failed"))
       }
     }
   }
@@ -160,6 +179,7 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       result(FlutterError(code: "bad_args", message: "Missing alias or unknown accessibility.", details: nil))
       return
     }
+    let box = SendableResult(result)
     serialQueue.async {
     // Deterministically drain autoreleased bridging copies of the secret (see
     // handleSecItemAdd). Kept at the same indent as the queue closure so the
@@ -186,9 +206,7 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
         guard var rawData = item as? Data else {
           // A success status without Data is corruption, not absence — never
           // report it as a clean "not found".
-          DispatchQueue.main.async {
-            result(FlutterError(code: "sec_item_copy_failed", message: "Keychain returned success without data.", details: nil))
-          }
+          box.deliver(FlutterError(code: "sec_item_copy_failed", message: "Keychain returned success without data.", details: nil))
           return
         }
         if params.secureEnclave {
@@ -205,51 +223,37 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
             privateKey = key
           case .missing:
             rawData.wipe()
-            DispatchQueue.main.async {
-              result(FlutterError(code: "se_key_missing", message: "Secure Enclave key not found for this profile.", details: nil))
-            }
+            box.deliver(FlutterError(code: "se_key_missing", message: "Secure Enclave key not found for this profile.", details: nil))
             return
           case .failure(let fetchStatus):
             rawData.wipe()
-            DispatchQueue.main.async {
-              result(FlutterError(code: "se_key_fetch_failed", message: secErrorMessage(fetchStatus), details: nil))
-            }
+            box.deliver(FlutterError(code: "se_key_fetch_failed", message: secErrorMessage(fetchStatus), details: nil))
             return
           }
           guard var plaintext = enclaveDecrypt(data: rawData, privateKey: privateKey) else {
             rawData.wipe()
-            DispatchQueue.main.async {
-              result(FlutterError(code: "se_decrypt_failed", message: "Secure Enclave decryption failed.", details: nil))
-            }
+            box.deliver(FlutterError(code: "se_decrypt_failed", message: "Secure Enclave decryption failed.", details: nil))
             return
           }
           rawData.wipe()
           let typedData = FlutterStandardTypedData(bytes: plaintext)
           plaintext.wipe()
-          DispatchQueue.main.async { result(typedData) }
+          box.deliver(typedData)
         } else {
           let typedData = FlutterStandardTypedData(bytes: rawData)
           rawData.wipe()
-          DispatchQueue.main.async { result(typedData) }
+          box.deliver(typedData)
         }
       case errSecItemNotFound:
-        DispatchQueue.main.async { result(nil) }
+        box.deliver(nil)
       case errSecUserCanceled:
-        DispatchQueue.main.async {
-          result(FlutterError(code: "auth_cancelled", message: "User cancelled authentication.", details: nil))
-        }
+        box.deliver(FlutterError(code: "auth_cancelled", message: "User cancelled authentication.", details: nil))
       case errSecAuthFailed:
-        DispatchQueue.main.async {
-          result(FlutterError(code: "auth_failed", message: "Authentication failed.", details: nil))
-        }
+        box.deliver(FlutterError(code: "auth_failed", message: "Authentication failed.", details: nil))
       case errSecInteractionNotAllowed:
-        DispatchQueue.main.async {
-          result(FlutterError(code: "interaction_not_allowed", message: "Keychain interaction not allowed (device locked?).", details: nil))
-        }
+        box.deliver(FlutterError(code: "interaction_not_allowed", message: "Keychain interaction not allowed (device locked?).", details: nil))
       default:
-        DispatchQueue.main.async {
-          result(statusFlutterError(status, fallbackCode: "sec_item_copy_failed"))
-        }
+        box.deliver(statusFlutterError(status, fallbackCode: "sec_item_copy_failed"))
       }
     }
     }
@@ -274,6 +278,7 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       accessGroup: args["accessGroup"] as? String,
       useDataProtection: args["useDataProtection"] as? Bool ?? false
     )
+    let box = SendableResult(result)
     serialQueue.async {
       autoreleasepool {
         // The returned Bool ("key already existed") is the caller's
@@ -286,19 +291,15 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
         // under the same tag.
         switch fetchEnclaveKeyPair(params: enclaveParams) {
         case .found:
-          DispatchQueue.main.async { result(true) }
+          box.deliver(true)
         case .failure(let status):
-          DispatchQueue.main.async {
-            result(FlutterError(code: "se_key_fetch_failed", message: secErrorMessage(status), details: nil))
-          }
+          box.deliver(FlutterError(code: "se_key_fetch_failed", message: secErrorMessage(status), details: nil))
         case .missing:
           guard createEnclaveKeyPair(params: enclaveParams) != nil else {
-            DispatchQueue.main.async {
-              result(FlutterError(code: "se_key_gen_failed", message: "Could not ensure SE key pair.", details: nil))
-            }
+            box.deliver(FlutterError(code: "se_key_gen_failed", message: "Could not ensure SE key pair.", details: nil))
             return
           }
-          DispatchQueue.main.async { result(false) }
+          box.deliver(false)
         }
       }
     }
@@ -310,14 +311,13 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       result(FlutterError(code: "bad_args", message: "Missing alias or unknown accessibility.", details: nil))
       return
     }
+    let box = SendableResult(result)
     serialQueue.async {
       let status = secItemDelete(params: params)
-      DispatchQueue.main.async {
-        if status == errSecSuccess || status == errSecItemNotFound {
-          result(nil)
-        } else {
-          result(statusFlutterError(status, fallbackCode: "sec_item_delete_failed"))
-        }
+      if status == errSecSuccess || status == errSecItemNotFound {
+        box.deliver(nil)
+      } else {
+        box.deliver(statusFlutterError(status, fallbackCode: "sec_item_delete_failed"))
       }
     }
   }
@@ -336,15 +336,14 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       useDataProtection: args["useDataProtection"] as? Bool ?? false
     )
     let excludePrefixes = (args["excludePrefixes"] as? [String]) ?? []
+    let box = SendableResult(result)
     serialQueue.async {
       let status = secItemDeleteByPrefix(scope: scope, prefix: prefix, excludePrefixes: excludePrefixes)
-      DispatchQueue.main.async {
-        // errSecItemNotFound means nothing matched — a clean no-op for a wipe.
-        if status == errSecSuccess || status == errSecItemNotFound {
-          result(nil)
-        } else {
-          result(statusFlutterError(status, fallbackCode: "sec_item_delete_failed"))
-        }
+      // errSecItemNotFound means nothing matched — a clean no-op for a wipe.
+      if status == errSecSuccess || status == errSecItemNotFound {
+        box.deliver(nil)
+      } else {
+        box.deliver(statusFlutterError(status, fallbackCode: "sec_item_delete_failed"))
       }
     }
   }
