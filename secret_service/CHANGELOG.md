@@ -1,5 +1,15 @@
 ## Unreleased
 
+- Existence checks no longer load the secret. `contains` and `add`'s
+  duplicate check now use an attribute-only `secret_service_search_sync` (no
+  `SECRET_SEARCH_LOAD_SECRETS`) instead of `secret_password_lookup_sync`, so a
+  matching item's value is never decrypted or transferred over the bus merely to
+  test for its presence. Only `read` (the `useAndForget` fetch) loads a value.
+- Watchdog-cancelled calls surface a distinct `keyring_timeout` code. A call
+  the per-op watchdog cancels (the keyring did not respond within the bounded
+  window) is now reported as `keyring_timeout` (recoverable) instead of folding
+  into the generic `secret_service_error`, so a caller can distinguish a
+  transient stall from a hard provider fault.
 - Watchdog no longer lingers a full ~20 s after every fast call. Since the
   watchdog was extended to EVERY per-operation call, the previous detached timer
   `g_usleep`d the whole timeout regardless of when the operation finished, so a

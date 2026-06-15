@@ -227,29 +227,59 @@ static FlMethodResponse* error_response(const char* code, const char* message) {
       fl_method_error_response_new(code, message, nullptr));
 }
 
+// Maps a libsecret/D-Bus GError to a stable error code. A call cancelled by the
+// per-op watchdog (the timeout fired) comes back as G_IO_ERROR_CANCELLED — that
+// is operationally distinct from a hard bus/provider fault, so surface it as the
+// recoverable `keyring_timeout` (the keyring did not respond in the bounded
+// window, typically a pending unlock prompt with no agent). Every other GError
+// is a generic `secret_service_error`. Both are recoverable on the Dart side
+// (never purge); the split lets a caller back off / message differently.
+static const char* error_code_for(GError* error) {
+  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    return "keyring_timeout";
+  }
+  return "secret_service_error";
+}
+
 // contains(slot) -> bool
 static FlMethodResponse* handle_contains(const gchar* slot) {
   const char* code = nullptr;
   SecretService* service = warmup(&code);
   if (!service) return error_response(code, "Secret Service is not ready.");
-  g_object_unref(service);
 
-  g_autoptr(GError) error = nullptr;
+  // Existence is an ATTRIBUTE-only question — never load (decrypt + bus-transfer)
+  // the secret value just to test for a matching item. `secret_service_search_sync`
+  // without SECRET_SEARCH_LOAD_SECRETS returns the matching SecretItem(s) with no
+  // secret payload, so the plaintext never enters this process. (The old
+  // `secret_password_lookup_sync` loaded the full secret merely to check non-NULL.)
   // Match BOTH attributes: `slot` identifies the item, `fmt` scopes it to this
   // app (SECRET_SCHEMA_NONE means the schema name is not matched, so without
-  // `fmt` a foreign item reusing a `slot` attribute could match). Bound the call
-  // (LINUX-2): a keyring that re-locked since warmup re-prompts here, outside the
-  // warmup watchdog.
+  // `fmt` a foreign item reusing a `slot` attribute could match).
+  GHashTable* attrs = g_hash_table_new(g_str_hash, g_str_equal);
+  g_hash_table_insert(attrs, const_cast<char*>("slot"),
+                      const_cast<char*>(slot));
+  g_hash_table_insert(attrs, const_cast<char*>("fmt"), const_cast<char*>(kFmt));
+
+  g_autoptr(GError) error = nullptr;
+  // Bound the call (LINUX-2): SECRET_SEARCH_UNLOCK matches the old lookup's
+  // unlock-on-access behaviour, so a keyring that re-locked since warmup
+  // re-prompts here, outside the warmup watchdog — cap it.
   OpWatchdog* watchdog = op_watchdog_arm();
-  secret_autofree gchar* value = secret_password_lookup_sync(
-      &kSchema, watchdog->cancellable, &error, "slot", slot, "fmt", kFmt,
-      nullptr);
+  GList* items = secret_service_search_sync(
+      service, &kSchema, attrs,
+      static_cast<SecretSearchFlags>(SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK),
+      watchdog->cancellable, &error);
   op_watchdog_finish(watchdog);
+  g_hash_table_unref(attrs);
+  g_object_unref(service);
+
   if (error) {
-    return error_response("secret_service_error", error->message);
+    return error_response(error_code_for(error), error->message);
   }
+  gboolean found = (items != nullptr);
+  if (items) g_list_free_full(items, g_object_unref);
   return FL_METHOD_RESPONSE(
-      fl_method_success_response_new(fl_value_new_bool(value != nullptr)));
+      fl_method_success_response_new(fl_value_new_bool(found)));
 }
 
 // write(slot, value) -> null. Fail-closed if the slot already exists.
@@ -257,24 +287,36 @@ static FlMethodResponse* handle_write(const gchar* slot, const gchar* value) {
   const char* code = nullptr;
   SecretService* service = warmup(&code);
   if (!service) return error_response(code, "Secret Service is not ready.");
-  g_object_unref(service);
+
+  // Duplicate check is an ATTRIBUTE-only question: search (no LOAD_SECRETS) so
+  // the existing item's secret value is never decrypted/transferred just to test
+  // for its presence — see handle_contains. Scope to this app's items (slot +
+  // fmt). Bound both the search and the store (LINUX-2): either can re-prompt if
+  // the keyring relocked.
+  GHashTable* attrs = g_hash_table_new(g_str_hash, g_str_equal);
+  g_hash_table_insert(attrs, const_cast<char*>("slot"),
+                      const_cast<char*>(slot));
+  g_hash_table_insert(attrs, const_cast<char*>("fmt"), const_cast<char*>(kFmt));
 
   g_autoptr(GError) lookup_error = nullptr;
-  // Scope the duplicate check to this app's items (slot + fmt) — see
-  // handle_contains for why `fmt` is required alongside `slot`. Bound both the
-  // lookup and the store (LINUX-2): either can re-prompt if the keyring relocked.
   OpWatchdog* lookup_watchdog = op_watchdog_arm();
-  secret_autofree gchar* existing = secret_password_lookup_sync(
-      &kSchema, lookup_watchdog->cancellable, &lookup_error, "slot", slot,
-      "fmt", kFmt, nullptr);
+  GList* existing = secret_service_search_sync(
+      service, &kSchema, attrs,
+      static_cast<SecretSearchFlags>(SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK),
+      lookup_watchdog->cancellable, &lookup_error);
   op_watchdog_finish(lookup_watchdog);
+  g_hash_table_unref(attrs);
   if (lookup_error) {
-    return error_response("secret_service_error", lookup_error->message);
+    g_object_unref(service);
+    return error_response(error_code_for(lookup_error), lookup_error->message);
   }
   if (existing != nullptr) {
+    g_list_free_full(existing, g_object_unref);
+    g_object_unref(service);
     return error_response("already_exists",
                           "A value already exists for this slot.");
   }
+  g_object_unref(service);
 
   g_autoptr(GError) store_error = nullptr;
   OpWatchdog* store_watchdog = op_watchdog_arm();
@@ -284,7 +326,7 @@ static FlMethodResponse* handle_write(const gchar* slot, const gchar* value) {
       nullptr);
   op_watchdog_finish(store_watchdog);
   if (store_error) {
-    return error_response("secret_service_error", store_error->message);
+    return error_response(error_code_for(store_error), store_error->message);
   }
   if (!ok) {
     return error_response("secret_service_error", "Store returned false.");
@@ -293,6 +335,12 @@ static FlMethodResponse* handle_write(const gchar* slot, const gchar* value) {
 }
 
 // read(slot) -> string | null
+//
+// INTERNAL ONLY. Despite the name, this is not a public plain-read API: the
+// oubliette layer exposes the stored value solely through `useAndForget`
+// (a fetch that zeroes the plaintext after the caller's callback). There is no
+// public read() — see the AGENTS.md "No read() API" invariant. Do not promote
+// this method into a directly-callable public surface.
 static FlMethodResponse* handle_read(const gchar* slot) {
   const char* code = nullptr;
   SecretService* service = warmup(&code);
@@ -309,7 +357,7 @@ static FlMethodResponse* handle_read(const gchar* slot) {
       nullptr);
   op_watchdog_finish(watchdog);
   if (error) {
-    return error_response("secret_service_error", error->message);
+    return error_response(error_code_for(error), error->message);
   }
   if (value == nullptr) {
     return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
@@ -336,7 +384,7 @@ static FlMethodResponse* handle_delete(const gchar* slot) {
                              slot, "fmt", kFmt, nullptr);
   op_watchdog_finish(watchdog);
   if (error) {
-    return error_response("secret_service_error", error->message);
+    return error_response(error_code_for(error), error->message);
   }
   return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
 }
@@ -356,7 +404,7 @@ static FlMethodResponse* handle_delete_by_prefix(const gchar* prefix) {
   // Bound the search (LINUX-2): SECRET_SEARCH_UNLOCK actively unlocks any matching
   // collection, so an externally created item in another locked collection — or a
   // keyring relocked since warmup — would re-prompt here with no timeout. The
-  // detached watchdog cancels it; a cancellation surfaces as secret_service_error
+  // detached watchdog cancels it; a cancellation surfaces as keyring_timeout
   // (never a silent empty purge).
   OpWatchdog* search_watchdog = op_watchdog_arm();
   GList* items = secret_service_search_sync(
@@ -368,7 +416,7 @@ static FlMethodResponse* handle_delete_by_prefix(const gchar* prefix) {
 
   if (search_error) {
     g_object_unref(service);
-    return error_response("secret_service_error", search_error->message);
+    return error_response(error_code_for(search_error), search_error->message);
   }
 
   // Best-effort: attempt EVERY matching item, then report. Purge is non-atomic

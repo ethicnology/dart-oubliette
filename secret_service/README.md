@@ -32,7 +32,9 @@ A running Secret Service provider (a keyring daemon) is required at runtime; a
 headless/server session without one fails closed with `backend_unavailable`. A
 present-but-locked collection surfaces `keyring_locked` (recoverable: retry once
 unlocked) or `auth_cancelled` if the user dismisses the unlock prompt — a
-locked/erroring keyring is **never** reported as empty.
+locked/erroring keyring is **never** reported as empty. A call the per-op
+watchdog cancels (the keyring did not respond within the bounded window)
+surfaces the distinct, recoverable `keyring_timeout`.
 
 ## Threat model & limitations (software tier)
 
@@ -75,13 +77,18 @@ locked/erroring keyring is **never** reported as empty.
   full timeout on the common (fast, unlocked) path — a burst of operations does
   not accumulate sleeping watchdog threads. Keep stored values small and avoid
   bursts of calls on a frame-critical path.
+- **Existence checks never load the secret.** `contains` and `add`'s
+  duplicate check are attribute-only: they use `secret_service_search_sync`
+  **without** `SECRET_SEARCH_LOAD_SECRETS`, so a matching item's value is never
+  decrypted or transferred over the bus merely to test for its presence — only
+  `read` (the `useAndForget` fetch) actually loads a secret value.
 - **Native secret buffers are wiped; transit copies are not.** Every
   secret-bearing buffer the native plugin *owns* is freed with
   `secret_password_free`, which wipes it (libsecret allocates lookup results in
-  non-pageable secure memory and zeroes on free): the value returned by every
-  `secret_password_lookup_sync` in `contains`/`read`/`write` is wiped, not merely
-  `g_free`d. The `value` passed to `store` is libsecret-owned once handed off and
-  is wiped by libsecret internally. What the plugin does **not** control: the
+  non-pageable secure memory and zeroes on free): the value returned by `read`'s
+  `secret_password_lookup_sync` is wiped, not merely `g_free`d. The `value`
+  passed to `store` is libsecret-owned once handed off and is wiped by libsecret
+  internally. What the plugin does **not** control: the
   value also transits the method channel — the engine's codec buffers, the native
   `FlValue` copy and the Dart `String`/`Uint8List` are ordinary GC/heap memory
   that is **not** zeroed on free (Dart's GC gives no reliable zeroization hook). A
@@ -95,8 +102,8 @@ locked/erroring keyring is **never** reported as empty.
   the operation itself. That per-operation prompt is now **also** bounded by the
   same ~20 s watchdog (the cancellable is threaded through every
   lookup/store/clear/search/delete), so it can no longer hang the platform thread
-  past the timeout; a timed-out call fails closed with `secret_service_error`
-  rather than blocking or being read as empty.
+  past the timeout; a timed-out (watchdog-cancelled) call fails closed with the
+  distinct `keyring_timeout` code rather than blocking or being read as empty.
 - **No atomic put-if-absent.** `add`'s duplicate check is lookup-then-store;
   the Secret Service offers no compare-and-set. A concurrent **external**
   writer can race it, and `CreateItem(replace=true)` replaces on exact

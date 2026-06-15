@@ -28,6 +28,8 @@ import 'package:flutter/services.dart';
 ///   provider (headless, minimal WM, no keyring daemon).
 /// - `keyring_locked` — the default collection is locked and could not be
 ///   unlocked (no prompter, or the user dismissed the prompt).
+/// - `keyring_timeout` — a call was cancelled by the per-op watchdog (the
+///   keyring did not respond within the bounded window). Recoverable; retry.
 /// - `auth_cancelled` — the user dismissed the unlock prompt.
 /// - `already_exists` — [add] was called for a slot that already has an item.
 /// - `bad_args` / `secret_service_error` — argument or libsecret failure.
