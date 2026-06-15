@@ -167,6 +167,12 @@ func createEnclaveKeyPair(params: EnclaveParams) -> (SecKey, SecKey)? {
   guard let tag = enclaveKeyTag(params: params) else { return nil }
 
   var error: Unmanaged<CFError>?
+  // `.privateKeyUsage` only — the SE key itself is NOT user-presence gated.
+  // Presence/biometry enforcement is intentionally delegated to the *ciphertext
+  // item's* `kSecAttrAccessControl` (see `createAccessControl`). So
+  // `secureEnclave: true` alone buys at-rest confidentiality (the key never
+  // leaves the SE), NOT a biometric gate; presence requires the item to also be
+  // authenticated (`authenticationRequired: true`). Do not assume SE ⇒ presence.
   guard let access = SecAccessControlCreateWithFlags(
     nil,
     params.accessibility,

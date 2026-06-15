@@ -173,6 +173,12 @@ func secItemExistsStatus(params: KeychainParams) -> OSStatus {
 /// device passcode and survives enrollment changes. The accessibility class is
 /// paired in by the caller via `params.accessibility`.
 ///
+/// Note the "fatal" (`biometryCurrentSetOnly`) path is biometry-ONLY: it rejects
+/// the device passcode as a fallback. If biometry later becomes unavailable
+/// (no enrolled faces/fingers, hardware disabled), the item is permanently
+/// unreadable. This is the intended fatal semantic — it couples biometry-only
+/// presence with enrollment invalidation into a single profile.
+///
 /// Returns `nil` on failure (the caller fails closed). We key off the returned
 /// optional — not merely a set error — because the result is the authoritative
 /// success signal, and we drain `error` so the CFError is never leaked.

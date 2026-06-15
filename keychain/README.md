@@ -56,7 +56,8 @@ Native failures surface as `PlatformException`s with stable codes (the
 | `se_key_fetch_failed` | SE key lookup errored (entitlement / locked / domain) — key may be intact | yes, retry |
 | `se_key_gen_failed` / `se_encrypt_failed` / `se_decrypt_failed` | SE generate / ECIES encrypt / decrypt failed | yes (nothing stored on the write-side codes) |
 | `access_control_failed` | `authenticationRequired` set but `SecAccessControl` could not be created — fail-closed, nothing stored | yes |
-| `auth_cancelled` / `auth_failed` | user cancelled / failed the auth prompt on read (biometry *lockout* also folds into `auth_failed` — `SecItemCopyMatching` does not expose the `LAError` domain, so it is indistinguishable from a single failed attempt by `OSStatus`) | yes |
+| `auth_cancelled` / `auth_failed` | user cancelled / failed the auth prompt on read | yes |
+| `biometry_lockout` | biometry locked out after too many failed attempts (`SecItemCopyMatching` does not expose the `LAError`, so it is distinguished by probing a fresh `LAContext` with `canEvaluatePolicy` → `LAError.biometryLockout`) | yes — unlock the device with the passcode to re-enable biometry, then retry |
 | `interaction_not_allowed` | device locked | yes, retry when unlocked |
 | `missing_entitlement` | code-signing / `keychain-access-groups` defect | no (fix the build) |
 | `se_requires_device_only_accessibility` | SE paired with a non-`*ThisDeviceOnly` class | no (fix config) |
