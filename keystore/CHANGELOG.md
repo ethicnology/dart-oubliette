@@ -7,6 +7,17 @@ changes scoped to this package.
 
 ## Unreleased
 
+* **`biometricOnly` flag removed.** The advisory, no-op `biometricOnly`
+  parameter is gone from `Keystore.encrypt`/`decrypt` — the prompt's
+  authenticator set is derived authoritatively from the key's `KeyInfo`, so the
+  flag could never influence anything. Callers must drop the argument.
+* **`userAuthenticationRequired` and `requireHardwareBacking` are required (no
+  native default).** Both previously defaulted to `false` in the plugin's
+  arg-parsing — a fail-open default for security-critical generation flags.
+  They now error with `bad_args` when absent, matching `strongBox` /
+  `invalidatedByBiometricEnrollment`; the Dart facade always sends them, so the
+  contract is unchanged for in-tree callers.
+
 * **BiometricPrompt authenticators are derived from the key, not the caller
   (closes the `biometricOnly` coupling footgun).** The authenticating
   encrypt/decrypt paths now read the key's own `KeyInfo`

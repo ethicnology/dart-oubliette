@@ -61,19 +61,18 @@ final class Keystore {
   /// or `"detached"`. See the README "Native error-code surface" table for the
   /// full stable contract.
   ///
-  /// [biometricOnly] is now **advisory only**: the native layer derives the
-  /// prompt's allowed authenticators authoritatively from the key's own
-  /// `KeyInfo` (`getUserAuthenticationType()`), so a biometric-only key always
-  /// gets a `BIOMETRIC_STRONG`-only prompt and a credential-capable key gets the
-  /// `DEVICE_CREDENTIAL` fallback — the two can no longer disagree. The flag is
-  /// retained for source compatibility; it does not influence the prompt.
+  /// The prompt's allowed authenticators are derived authoritatively by the
+  /// native layer from the key's own `KeyInfo` (`getUserAuthenticationType()`):
+  /// a biometric-only key always gets a `BIOMETRIC_STRONG`-only prompt and a
+  /// credential-capable key gets the `DEVICE_CREDENTIAL` fallback. The caller
+  /// does not (and cannot) choose the authenticator set — it is fixed at key
+  /// generation, so the prompt and the key can never disagree.
   Future<EncryptedPayload> encrypt({
     required String alias,
     required Uint8List plaintext,
     required String aad,
     String? promptTitle,
     String? promptSubtitle,
-    bool biometricOnly = false,
   }) async {
     final authenticate = promptTitle != null;
     final args = <String, dynamic>{
@@ -83,7 +82,6 @@ final class Keystore {
       if (authenticate) 'promptTitle': promptTitle,
       if (authenticate)
         'promptSubtitle': promptSubtitle ?? 'Confirm your identity',
-      if (authenticate) 'biometricOnly': biometricOnly,
     };
     return _parseEncryptResponse(
       await _channel.invokeMethod<Map>(
@@ -104,8 +102,8 @@ final class Keystore {
   /// - `"decrypt_failed"` for other decryption errors.
   /// - `"key_auth_type_unknown"` — see [encrypt].
   /// When a [promptTitle] is supplied, the auth-path codes listed in [encrypt]
-  /// (`auth_cancelled`, `auth_error`, `auth_failed`, `detached`) apply too.
-  /// See [encrypt] for the (advisory) [biometricOnly] contract.
+  /// (`auth_cancelled`, `auth_error`, `auth_failed`, `detached`) apply too. The
+  /// prompt's authenticator set is fixed by the key's `KeyInfo` (see [encrypt]).
   Future<Uint8List> decrypt({
     required int version,
     required String alias,
@@ -114,7 +112,6 @@ final class Keystore {
     required String aad,
     String? promptTitle,
     String? promptSubtitle,
-    bool biometricOnly = false,
   }) async {
     final authenticate = promptTitle != null;
     final args = <String, dynamic>{
@@ -126,7 +123,6 @@ final class Keystore {
       if (authenticate) 'promptTitle': promptTitle,
       if (authenticate)
         'promptSubtitle': promptSubtitle ?? 'Confirm your identity',
-      if (authenticate) 'biometricOnly': biometricOnly,
     };
     final plaintext = await _channel.invokeMethod<Uint8List>(
       authenticate ? 'authenticateDecrypt' : 'decrypt',

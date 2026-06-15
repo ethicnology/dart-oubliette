@@ -57,29 +57,14 @@ void main() {
       expect(lastMethod, 'encrypt');
     });
 
-    // biometricOnly is ADVISORY only: the native layer derives the prompt's
-    // allowed authenticators from the key's own KeyInfo, never from this flag
-    // (see Keystore.encrypt docs / CHANGELOG). This test only pins that the
-    // retained flag still crosses the wire for source compatibility — it does
-    // NOT influence the native prompt, and nothing should rely on it doing so.
-    test('forwards biometricOnly to authenticateEncrypt', () async {
-      responder = (_) => validEncryptResponse();
-      await ks.encrypt(
-        alias: 'a',
-        plaintext: plaintext,
-        aad: 'aad',
-        promptTitle: 'Unlock',
-        biometricOnly: true,
-      );
-      expect(lastArgs!['biometricOnly'], true);
-    });
-
-    // No prompt means no auth metadata leaks onto the plain encrypt call.
-    test('omits prompt/biometricOnly args on plain encrypt', () async {
+    // No prompt means no auth metadata leaks onto the plain encrypt call. The
+    // authenticator set is fixed by the key's KeyInfo, never passed by the
+    // caller (the advisory biometricOnly flag was removed).
+    test('omits prompt args on plain encrypt', () async {
       responder = (_) => validEncryptResponse();
       await ks.encrypt(alias: 'a', plaintext: plaintext, aad: 'aad');
-      expect(lastArgs!.containsKey('biometricOnly'), isFalse);
       expect(lastArgs!.containsKey('promptTitle'), isFalse);
+      expect(lastArgs!.containsKey('promptSubtitle'), isFalse);
     });
   });
 
@@ -122,20 +107,6 @@ void main() {
         aad: 'aad',
       );
       expect(lastArgs!['version'], 7);
-    });
-
-    test('forwards biometricOnly to authenticateDecrypt', () async {
-      responder = (_) => plaintext;
-      await ks.decrypt(
-        version: 1,
-        alias: 'a',
-        ciphertext: Uint8List.fromList([9]),
-        nonce: Uint8List(12),
-        aad: 'aad',
-        promptTitle: 'Unlock',
-        biometricOnly: true,
-      );
-      expect(lastArgs!['biometricOnly'], true);
     });
   });
 

@@ -149,15 +149,30 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 result.error("bad_args", "Missing strongBox.", null)
                 return
             }
-        val userAuthenticationRequired = call.argument<Boolean>("userAuthenticationRequired") ?: false
+        // Required, no default: an auth flag silently defaulting to "no auth"
+        // would be a fail-open default. Every security-critical generation flag
+        // is chosen explicitly by the caller (the Dart facade always sends it),
+        // matching strongBox / unlockedDeviceRequired / invalidatedByBiometricEnrollment.
+        val userAuthenticationRequired = call.argument<Boolean>("userAuthenticationRequired")
+            ?: run {
+                result.error("bad_args", "Missing userAuthenticationRequired.", null)
+                return
+            }
         val invalidatedByBiometricEnrollment = call.argument<Boolean>("invalidatedByBiometricEnrollment")
             ?: run {
                 result.error("bad_args", "Missing invalidatedByBiometricEnrollment.", null)
                 return
             }
-        // Opt-in: refuse a non-hardware-backed key. Defaults to false so the
-        // library works on software-only keystores (emulators); wallets pass true.
-        val requireHardwareBacking = call.argument<Boolean>("requireHardwareBacking") ?: false
+        // Opt-in hardware backing, required (no default): refusing a
+        // non-hardware-backed key is fail-closed, so absence must error rather
+        // than silently fall open to "don't require hardware". Emulator/CI
+        // leniency comes from the caller passing false explicitly, never from a
+        // hidden default. Wallets pass true.
+        val requireHardwareBacking = call.argument<Boolean>("requireHardwareBacking")
+            ?: run {
+                result.error("bad_args", "Missing requireHardwareBacking.", null)
+                return
+            }
         postCrypto(result) {
             try {
                 // Fail closed: requesting StrongBox must yield StrongBox or a
