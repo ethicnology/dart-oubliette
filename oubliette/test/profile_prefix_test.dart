@@ -288,4 +288,23 @@ void main() {
       );
     });
   });
+
+  group('buildSlot rejects embedded NUL (Linux C-string truncation)', () {
+    // On the Linux backend the slot is a libsecret attribute value / D-Bus
+    // string - a NUL-terminated C string - so a key containing U+0000 truncates
+    // at the first NUL. Two distinct keys sharing a NUL-truncation prefix would
+    // then collide into one native slot (fetch of one could return the other's
+    // secret). NUL is well-formed UTF-16, so the surrogate guard misses it.
+    test('two keys differing only after a NUL would collide', () {
+      expect('a\u0000b' == 'a\u0000c', isFalse, reason: 'distinct in Dart');
+      expect(() => buildSlot('p_', 'a\u0000b'), throwsA(isA<ArgumentError>()));
+      expect(() => buildSlot('p_', 'a\u0000c'), throwsA(isA<ArgumentError>()));
+    });
+
+    test('NUL in the key or prefix is rejected', () {
+      expect(() => buildSlot('p_', '\u0000probe'), throwsA(isA<ArgumentError>()));
+      expect(() => buildSlot('p\u0000_', 'key'), throwsA(isA<ArgumentError>()));
+      expect(() => validateSlotPrefix('p\u0000_'), throwsA(isA<ArgumentError>()));
+    });
+  });
 }

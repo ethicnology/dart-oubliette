@@ -68,6 +68,24 @@ String buildSlot(String prefix, String key) {
       'contains an unpaired surrogate (malformed UTF-16)',
     );
   }
+  // Reject an embedded NUL (U+0000). Every backend receives the slot as a C
+  // string: the method channel encodes it as UTF-8, and on Linux the libsecret
+  // attribute value / D-Bus string is NUL-terminated, so a slot containing
+  // U+0000 silently TRUNCATES at the first NUL. Two distinct keys sharing a
+  // NUL-truncation prefix would then collide into one native slot — the exact
+  // injectivity hole the surrogate guard above exists to close (a fetch of one
+  // key could return and cleanly decrypt the other's secret). NUL is well-formed
+  // UTF-16, so the surrogate check does not catch it; reject it explicitly.
+  if (prefix.contains('\u0000')) {
+    throw ArgumentError.value(
+      prefix,
+      'prefix',
+      'must not contain a NUL (U+0000)',
+    );
+  }
+  if (key.contains('\u0000')) {
+    throw ArgumentError.value(key, 'key', 'must not contain a NUL (U+0000)');
+  }
   return '$prefix$slotSeparator$key';
 }
 
@@ -117,6 +135,16 @@ void validateSlotPrefix(String prefix) {
       prefix,
       'prefix',
       'contains an unpaired surrogate (malformed UTF-16)',
+    );
+  }
+  // See buildSlot: a NUL truncates the slot at the C-string boundary on the
+  // Linux backend, breaking slot injectivity. Reject it up front for a custom
+  // prefix too, not only at buildSlot time.
+  if (prefix.contains('\u0000')) {
+    throw ArgumentError.value(
+      prefix,
+      'prefix',
+      'must not contain a NUL (U+0000)',
     );
   }
 }
