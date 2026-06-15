@@ -72,8 +72,11 @@ id) — see the diagnostic-hygiene note in `EncryptionScheme.kt`.
 | `auth_cancelled` | yes | The user cancelled the BiometricPrompt (incl. the negative button). |
 | `auth_error` | yes | A non-cancellation auth error (no activity, dying window, OEM auth error). |
 | `auth_failed` | yes | Auth reported success but the authenticated cipher was null. |
+| `biometry_lockout` | yes | Too many failed biometric attempts (`ERROR_LOCKOUT` / `ERROR_LOCKOUT_PERMANENT`). The Dart layer flags it `lockout` so the caller can prompt the user to unlock with the device passcode to re-enable biometrics. |
+| `device_locked` | yes | An `UnlockedDeviceRequired` (non-authenticated) key cannot decrypt while the screen is locked (`KeyguardManager` probe). Retry once the device is unlocked. |
 | `detached` | yes | The plugin detached mid-operation; the Future is failed explicitly rather than hung. |
-| `encrypt_failed` / `decrypt_failed` | yes | Any other crypto failure not classified above. A deferred-invalidation failure is reclassified to `key_invalidated`, never left here. |
+| `encrypt_failed` | yes | A non-key-loss, apparently transient crypto failure on the encrypt path — nothing was written, so the stored data is intact. |
+| `decrypt_failed` | **no — the specific on-disk blob failed to authenticate** | A GCM tag / decrypt failure that is *not* a known key-loss. The ciphertext for this slot is unrecoverable. A deferred-invalidation failure is reclassified to `key_invalidated`, never left here. |
 | `generate_key_failed` | yes | Any other key-generation failure. |
 | `contains_alias_failed` / `delete_entry_failed` / `is_strongbox_available_failed` | yes | Keystore-load/teardown failures on the respective calls. |
 

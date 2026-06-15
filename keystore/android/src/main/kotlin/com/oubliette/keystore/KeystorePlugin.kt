@@ -1,6 +1,7 @@
 package com.oubliette.keystore
 
 import android.app.Activity
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Handler
@@ -314,7 +315,19 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             } catch (e: KeyInvalidatedException) {
                 mainHandler.post { result.error("key_invalidated", e.message ?: e.toString(), null) }
             } catch (e: Exception) {
-                mainHandler.post { result.error("decrypt_failed", e.message ?: e.toString(), null) }
+                // An UnlockedDeviceRequired key (the onlyUnlocked profile) cannot
+                // DECRYPT while the screen is locked — Cipher.init throws a
+                // non-invalidation exception that would otherwise collapse into the
+                // FATAL `decrypt_failed`, steering a caller toward an irreversible
+                // purge(). That condition is transient and recoverable (retry after
+                // unlock), exactly as AndroidSecretAccess.unlockedDeviceRequired
+                // documents. Probe the lock state and surface the distinct,
+                // recoverable `device_locked` (mapped to AuthenticationFailedException
+                // in the Dart layer, mirroring Darwin's `interaction_not_allowed`).
+                // Only the lock-state branch is reclassified; a genuine decrypt
+                // failure on an unlocked device stays `decrypt_failed`.
+                val code = if (isDeviceLocked()) "device_locked" else "decrypt_failed"
+                mainHandler.post { result.error(code, e.message ?: e.toString(), null) }
             } finally {
                 plaintext?.fill(0)
             }
@@ -331,6 +344,18 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 mainHandler.post { result.error("is_strongbox_available_failed", e.message ?: e.toString(), null) }
             }
         }
+    }
+
+    /**
+     * Whether the device is currently locked behind a secure lock screen. Used to
+     * tell a transient locked-device decrypt failure (recoverable — retry after
+     * unlock) apart from a genuine ciphertext/key decrypt failure (fatal). A
+     * false positive only over-classifies as recoverable (the safe direction: a
+     * caller retries instead of purging readable data); never the reverse.
+     */
+    private fun isDeviceLocked(): Boolean {
+        val keyguard = appContext.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        return keyguard?.isDeviceLocked == true
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {

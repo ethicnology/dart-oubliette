@@ -142,6 +142,14 @@ internal fun KeystorePlugin.handleAuthenticateDecrypt(call: MethodCall, result: 
       authenticators = scheme.keyAuthenticators(alias)
         ?: throw KeyAuthTypeUnknownException()
     } catch (e: Throwable) {
+      // No isDeviceLocked() reclassification here (unlike the plain
+      // handleDecrypt path): the authenticated profiles set BOTH
+      // unlockedDeviceRequired and userAuthenticationRequired with per-operation
+      // auth (timeout=0). Cipher.init for a per-op-auth key performs no crypto —
+      // it only binds the cipher to the CryptoObject — so it does not hit the
+      // UnlockedDeviceRequired gate; the actual decrypt (doFinal) runs only AFTER
+      // the BiometricPrompt, which itself unlocks the device. A locked device can
+      // therefore never surface as a fatal decrypt_failed on this path.
       mainHandler.post { result.error(decryptErrorCode(e), e.message ?: e.toString(), null) }
       return@postCrypto
     }
@@ -319,13 +327,23 @@ private fun promptAuthenticate(
         // Terminal. Drop if success (or another error) already claimed delivery.
         if (!claim()) return
         onError()
-        // Distinguish user-driven cancellation from other auth errors so the
-        // Dart layer sets AuthenticationFailedException.cancelled accurately.
-        // Both remain recoverable (retry, never purge) — only the flag differs.
+        // Distinguish user-driven cancellation and biometric lockout from other
+        // auth errors so the Dart layer sets AuthenticationFailedException's
+        // cancelled / lockout flags accurately. All three remain recoverable
+        // (retry, never purge) — only the flag differs.
+        //
+        // LOCKOUT / LOCKOUT_PERMANENT: too many failed biometric attempts. On a
+        // biometric-only key (the authenticatedFatal profile) there is no
+        // credential fallback, so the prompt is a dead-end until the user clears
+        // the lockout by unlocking the device with the passcode. Surfacing the
+        // distinct `biometry_lockout` lets the caller show that hint instead of a
+        // bare "try again" — parity with Darwin's `biometry_lockout`.
         val code = when (errorCode) {
           BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED,
           BiometricPrompt.BIOMETRIC_ERROR_CANCELED,
           BIOMETRIC_ERROR_NEGATIVE_BUTTON -> "auth_cancelled"
+          BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT,
+          BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT_PERMANENT -> "biometry_lockout"
           else -> "auth_error"
         }
         result.error(code, "[$errorCode] $errString", null)

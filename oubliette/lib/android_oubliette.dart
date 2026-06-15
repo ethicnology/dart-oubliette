@@ -200,6 +200,37 @@ class AndroidOubliette extends Oubliette {
         // on-disk blob failed to authenticate.)
         case 'encrypt_failed':
           throw BackendUnavailableException(cause: e);
+        // The plugin was detached from the engine mid-operation (the crypto
+        // looper was torn down before the work ran — KeystorePlugin.postCrypto).
+        // Nothing was encrypted/decrypted and no data was touched, so it is a
+        // transient, recoverable condition (retry on the next attach), exactly
+        // like `encrypt_failed`. Map it to the recoverable
+        // BackendUnavailableException rather than leaking a raw PlatformException
+        // a caller might answer with the data-destroying purge() path.
+        case 'detached':
+          throw BackendUnavailableException(cause: e);
+        // An UnlockedDeviceRequired (non-authenticated) key cannot DECRYPT while
+        // the screen is locked: the native layer probes KeyguardManager and
+        // emits `device_locked` instead of collapsing it into the fatal
+        // `decrypt_failed`. The key and data are intact — it is recoverable
+        // (retry once the device is unlocked), mirroring Darwin's
+        // `interaction_not_allowed`. See AndroidSecretAccess.unlockedDeviceRequired,
+        // which documents fetch() failing recoverably until unlock.
+        case 'device_locked':
+          throw AuthenticationFailedException(key: key, cause: e);
+        // Too many failed biometric attempts locked biometry out (BiometricPrompt
+        // ERROR_LOCKOUT / ERROR_LOCKOUT_PERMANENT, emitted by BiometricAuth). On
+        // the biometric-only `authenticatedFatal` profile there is no credential
+        // fallback, so the prompt is a dead-end until the user clears the lockout
+        // by unlocking the device with the passcode. Recoverable (data intact,
+        // never purge); the lockout flag lets the caller show that hint rather
+        // than a bare "try again" — parity with Darwin's `biometry_lockout`.
+        case 'biometry_lockout':
+          throw AuthenticationFailedException(
+            key: key,
+            lockout: true,
+            cause: e,
+          );
         case 'auth_failed':
         case 'auth_error':
         // The native layer derives the prompt's allowed authenticators from the

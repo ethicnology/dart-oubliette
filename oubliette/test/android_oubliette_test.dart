@@ -407,6 +407,72 @@ void main() {
       },
     );
 
+    test(
+      'device_locked → AuthenticationFailedException (RECOVERABLE)',
+      () async {
+        // An UnlockedDeviceRequired key cannot decrypt while the screen is
+        // locked. The native layer emits `device_locked` (KeyguardManager probe)
+        // rather than the fatal `decrypt_failed`; it must surface as a
+        // recoverable auth failure so a caller retries after unlock instead of
+        // purging readable data (parity with Darwin's interaction_not_allowed).
+        final s = await seeded();
+        mock.decryptErrorCode = 'device_locked';
+        await expectLater(
+          s.fetch('k'),
+          throwsA(
+            isA<AuthenticationFailedException>().having(
+              (e) => e.recoverable,
+              'recoverable',
+              true,
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'biometry_lockout → AuthenticationFailedException(lockout) (RECOVERABLE)',
+      () async {
+        // Too many failed biometric attempts (BiometricPrompt ERROR_LOCKOUT /
+        // ERROR_LOCKOUT_PERMANENT). Still recoverable (data intact, never
+        // purge), but flagged so the caller can tell the user to clear the
+        // lockout by unlocking with the passcode rather than "retry" — parity
+        // with Darwin's biometry_lockout.
+        final s = await seeded();
+        mock.decryptErrorCode = 'biometry_lockout';
+        await expectLater(
+          s.fetch('k'),
+          throwsA(
+            isA<AuthenticationFailedException>()
+                .having((e) => e.lockout, 'lockout', true)
+                .having((e) => e.cancelled, 'cancelled', false)
+                .having((e) => e.recoverable, 'recoverable', true),
+          ),
+        );
+      },
+    );
+
+    test(
+      'detached → BackendUnavailableException (RECOVERABLE, never purge)',
+      () async {
+        // The plugin was detached from the engine mid-op (postCrypto): nothing
+        // was touched. Recoverable on the next attach; must never leak as a raw
+        // PlatformException a caller might answer with purge().
+        final s = await seeded();
+        mock.decryptErrorCode = 'detached';
+        await expectLater(
+          s.fetch('k'),
+          throwsA(
+            isA<BackendUnavailableException>().having(
+              (e) => e.recoverable,
+              'recoverable',
+              true,
+            ),
+          ),
+        );
+      },
+    );
+
     test('a malformed on-disk blob → PayloadCorruptException', () async {
       final s = await seeded();
       final prefs = await SharedPreferences.getInstance();
