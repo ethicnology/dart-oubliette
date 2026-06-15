@@ -48,6 +48,11 @@ object Aes256GcmKeyGenerator {
       .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
       .setKeySize(256)
       .setRandomizedEncryptionRequired(true)
+      // setUnlockedDeviceRequired is honored on API 31+; on API 30 (the minSdk
+      // floor) some OEM keymasters may silently no-op it. Unlike hardware
+      // backing, KeyInfo exposes no reliable read-back to assert it took, so it
+      // is NOT re-verified here — it is a secondary control layered on top of
+      // setUserAuthenticationRequired, which remains the primary gate.
       .setUnlockedDeviceRequired(unlockedDeviceRequired)
     if (strongBox) {
       specBuilder.setIsStrongBoxBacked(true)
@@ -72,6 +77,10 @@ object Aes256GcmKeyGenerator {
       } else {
         KeyProperties.AUTH_DEVICE_CREDENTIAL or KeyProperties.AUTH_BIOMETRIC_STRONG
       }
+      // timeout = 0 → per-operation auth: every cipher use needs a fresh
+      // CryptoObject-bound prompt (no time-bound reuse window). Do NOT set a
+      // nonzero timeout — that would let a cipher be reused without
+      // re-authenticating inside the window, defeating the per-use guarantee.
       specBuilder.setUserAuthenticationParameters(0, authTypes)
     }
     keyGenerator.init(specBuilder.build())

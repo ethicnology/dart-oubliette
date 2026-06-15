@@ -9,6 +9,13 @@ import io.flutter.plugin.common.MethodChannel.Result
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.Cipher
 
+// android.hardware.biometrics.BiometricPrompt does NOT expose this as a
+// resolvable named constant at this compileSdk (the build fails on a named ref;
+// the symbol lives in androidx.biometric, which this plugin does not depend on).
+// The value is stable platform API. The negative button is the user tapping
+// "Cancel", so it is treated as a cancellation.
+private const val BIOMETRIC_ERROR_NEGATIVE_BUTTON = 13
+
 /** Maps a crypto exception to the stable error code the Dart layer expects. */
 private fun encryptErrorCode(t: Throwable): String = when (t) {
   is KeyNotFoundException -> "key_not_found"
@@ -318,12 +325,7 @@ private fun promptAuthenticate(
         val code = when (errorCode) {
           BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED,
           BiometricPrompt.BIOMETRIC_ERROR_CANCELED,
-          13 -> "auth_cancelled" // 13 = BIOMETRIC_ERROR_NEGATIVE_BUTTON. The
-          // platform android.hardware.biometrics.BiometricPrompt does NOT expose
-          // it as a resolvable named constant at this compileSdk (verified: the
-          // build fails on the named ref; it lives in androidx.biometric, which
-          // we don't use here). The negative button is the user tapping
-          // "Cancel", so it is a cancellation.
+          BIOMETRIC_ERROR_NEGATIVE_BUTTON -> "auth_cancelled"
           else -> "auth_error"
         }
         result.error(code, "[$errorCode] $errString", null)
