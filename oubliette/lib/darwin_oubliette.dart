@@ -100,10 +100,24 @@ class DarwinOubliette extends Oubliette {
         );
       }
       await _ensureKey();
-      await _mapError(
-        key,
-        () => _keychain.secItemAdd(_storedKey(key), _wrap(value)),
-      );
+      // SecItemAdd is the authoritative put-if-absent (errSecDuplicateItem →
+      // native `already_exists`). If a concurrent writer won the race the
+      // best-effort precheck above cannot close, unify it with the precheck so
+      // store() throws ONE error type for "already present", never a raw
+      // PlatformException. Nothing is overwritten either way.
+      try {
+        await _mapError(
+          key,
+          () => _keychain.secItemAdd(_storedKey(key), _wrap(value)),
+        );
+      } on PlatformException catch (e) {
+        if (e.code == 'already_exists') {
+          throw StateError(
+            'A value already exists for key "$key". Call trash() first.',
+          );
+        }
+        rethrow;
+      }
     });
   }
 
@@ -129,8 +143,17 @@ class DarwinOubliette extends Oubliette {
   /// devices/restores), so the ciphertext under it is unreadable and the only
   /// way forward is an explicit `purge()` + `init()` + re-entry. A genuine
   /// cryptographic failure (key present, ciphertext bad) stays
-  /// `se_decrypt_failed` → [DecryptionFailedException]. Unknown codes pass
-  /// through.
+  /// `se_decrypt_failed` → [DecryptionFailedException].
+  ///
+  /// Deliberately-unmapped codes pass through as the raw [PlatformException] by
+  /// design (never a data-recovery outcome): `se_requires_device_only_accessibility`
+  /// (a fail-closed config rejection — the caller asked for a non-ThisDeviceOnly
+  /// SE item) and `bad_args` (a contract/programming error). The write path's
+  /// `already_exists` (from `SecItemAdd`'s `errSecDuplicateItem`) is translated
+  /// by [store] itself into the same `StateError` the precheck throws, so it does
+  /// not escape `store()` as a PlatformException. Any genuinely-unknown code
+  /// likewise rethrows untouched — never guess a typed meaning that could steer a
+  /// caller toward purge().
   Future<T> _mapError<T>(String key, Future<T> Function() op) async {
     try {
       return await op();
@@ -192,6 +215,15 @@ class DarwinOubliette extends Oubliette {
         case 'auth_failed':
         case 'interaction_not_allowed': // device locked — retry when unlocked
           throw AuthenticationFailedException(key: key, cause: e);
+        case 'biometry_lockout':
+          // Recoverable like any unsatisfied auth gate, but the user must unlock
+          // the device with the passcode to clear the lockout before biometry
+          // works again — flag it so the caller can show the right hint.
+          throw AuthenticationFailedException(
+            key: key,
+            lockout: true,
+            cause: e,
+          );
         case 'auth_cancelled':
           throw AuthenticationFailedException(
             key: key,

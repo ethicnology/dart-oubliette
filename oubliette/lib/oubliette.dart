@@ -22,6 +22,29 @@ export 'src/errors.dart'
         BackendUnavailableException,
         KeyringLockedException;
 
+/// Hardware-backed, device-local secret storage with a single, deliberately
+/// small surface: [store] (write-once), [useAndForget] (read + auto-zero),
+/// [trash] (delete one), [exists], and [purge] (destroy the whole profile).
+///
+/// Construct the [Oubliette] factory with a per-platform access profile; it
+/// dispatches to the Keychain/Secure Enclave (Darwin), Android Keystore, or the
+/// Secret Service (Linux) backend. Keys are minted lazily, so [init] is optional
+/// (call it to surface backend errors eagerly).
+///
+/// **Design doctrine (load-bearing — see AGENTS.md):**
+/// - **No `read()`** — plaintext is only ever exposed through [useAndForget],
+///   which zeroes the buffer after your callback.
+/// - **No `update()`/upsert** — [store] throws if the key exists; [trash] then
+///   [store] to overwrite deliberately (avoids silently changing protection
+///   attributes).
+/// - **No silent fallback** — the library never makes a key/data decision for
+///   you (hardware backing, per-op auth) and never silently downgrades.
+/// - **Typed, fail-closed errors** — backend failures surface as sealed
+///   [OublietteException]s; branch on [OublietteException.recoverable], never
+///   answer a recoverable failure with the irreversible [purge].
+///
+/// For an at-rest passphrase/KEK layer on top of any backend, see
+/// [PassphraseVault].
 abstract class Oubliette {
   factory Oubliette({
     required AndroidSecretAccess android,

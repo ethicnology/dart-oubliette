@@ -77,9 +77,16 @@ final class PayloadTamperException extends OublietteException {
       'expected/actual AAD and alias fields for diagnostics.';
 }
 
-/// Thrown when a stored blob cannot be parsed into a valid [EncryptedPayload]
-/// — a missing/invalid `version`, a nonce of the wrong length, empty
-/// ciphertext, or non-base64 fields.
+/// Thrown when a stored blob cannot be parsed into a valid payload.
+///
+/// Two layers raise it:
+/// - **Backend payload** ([EncryptedPayload] / format header) — a missing or
+///   invalid `version`, a nonce of the wrong length, empty ciphertext, or
+///   non-base64 fields.
+/// - **[PassphraseVault] envelope** — an unknown vault format version, a
+///   key-source/mode mismatch, out-of-range Argon2id parameters, a salt/nonce
+///   of the wrong length, or truncated ciphertext (all rejected *before* the
+///   KDF, so a hostile envelope cannot drive a DoS/OOM).
 ///
 /// This signals on-disk corruption or an out-of-contract write, distinct from a
 /// cryptographic decrypt failure ([DecryptionFailedException]) and from a
@@ -258,8 +265,9 @@ final class KeyringLockedException extends OublietteException {
 }
 
 /// Thrown when a per-operation authentication gate is not satisfied — the user
-/// cancelled or failed the biometric/credential prompt, or the device was
-/// locked so no prompt could be shown (`interaction_not_allowed`).
+/// cancelled or failed the biometric/credential prompt, biometry is locked out
+/// after too many failed attempts ([lockout]), or the device was locked so no
+/// prompt could be shown (`interaction_not_allowed`).
 ///
 /// **Recoverable**: the key and data are intact. Prompt again once the user is
 /// ready / the device is unlocked. Never `purge()` in response — that would
@@ -272,12 +280,19 @@ final class AuthenticationFailedException extends OublietteException {
   /// or a locked device).
   final bool cancelled;
 
+  /// `true` when biometry is **locked out** after too many failed attempts.
+  /// Still recoverable, but the recovery differs from a plain retry: the user
+  /// must unlock the device with the passcode/credential to re-enable biometry
+  /// first. Surface a distinct hint rather than a bare "try again".
+  final bool lockout;
+
   /// The underlying platform error, for diagnostics.
   final Object? cause;
 
   const AuthenticationFailedException({
     this.key,
     this.cancelled = false,
+    this.lockout = false,
     this.cause,
   });
 
@@ -288,6 +303,7 @@ final class AuthenticationFailedException extends OublietteException {
   String toString() =>
       'AuthenticationFailedException: authentication was not satisfied'
       '${cancelled ? ' (cancelled by user)' : ''}'
+      '${lockout ? ' (biometry locked out — unlock with passcode to re-enable)' : ''}'
       '${key != null ? ' for key "$key"' : ''}. The data is intact — retry '
       'after the user authenticates. See the cause field for diagnostics.';
 }

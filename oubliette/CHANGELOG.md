@@ -3,6 +3,32 @@
 This is the single changelog for the whole project: the `oubliette` package and
 its bundled platform plugins `keychain` (iOS/macOS) and `keystore` (Android).
 
+## Unreleased
+
+* **`store()` race-loser unified onto `StateError` (Linux & Darwin).** When a
+  concurrent writer wins the put-if-absent race the best-effort precheck cannot
+  close, the native `already_exists` now throws the same `StateError` as the
+  precheck instead of leaking a raw `PlatformException`. One error type for "a
+  value already exists" regardless of how the collision is detected; nothing is
+  ever overwritten. (Android's `SharedPreferences` has no atomic put-if-absent,
+  so its cross-process race remains a documented limitation.)
+* **Biometry lockout flagged (Darwin).** The new native `biometry_lockout`
+  code maps to `AuthenticationFailedException` with a new `lockout: true` field
+  (still recoverable) so callers can tell the user to unlock with the passcode
+  to re-enable biometry rather than a bare "retry".
+* **`keyring_timeout` mapped (Linux).** The new native watchdog-timeout code
+  maps to the recoverable `BackendUnavailableException`.
+* **Unmapped native-error-code taxonomy documented.** Each platform's
+  `_mapError` now enumerates exactly which native codes deliberately pass
+  through as a raw `PlatformException` (generation-time/config and programming
+  errors) and why that is safe — never a `recoverable`/`purge()` decision.
+* **`biometricOnly` removed** from the `keystore` facade (it was advisory and
+  inert); the authenticator set is fixed by the key's `KeyInfo`.
+* **Dartdoc polish:** class-level contract/doctrine doc on `Oubliette`;
+  `PayloadCorruptException` now documents `PassphraseVault` envelope-corruption
+  causes; `PassphraseVault.useAndForget` notes the dual-layer zeroization and
+  `.keyring` recommends `init()` for eager backend-error surfacing.
+
 ## 1.0.0
 
 First release. The project has never been published, so this version is free to

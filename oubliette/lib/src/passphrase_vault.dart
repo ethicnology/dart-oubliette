@@ -125,6 +125,11 @@ final class PassphraseVault {
 
   /// Random key kept in the platform keyring/keystore (convenience tier — no
   /// passphrase). Confidentiality equals the wrapped backend's.
+  ///
+  /// Unlike [PassphraseVault.passphrase], this factory does no eager validation:
+  /// the reserved-key guard and the lazy KEK mint happen on first use. Call
+  /// [init] after construction to surface backend errors (locked keyring,
+  /// unavailable backend) eagerly rather than on the first [store]/[useAndForget].
   factory PassphraseVault.keyring({required Oubliette inner}) {
     return PassphraseVault._(inner, _modeKeyring, null, Argon2idParams.owasp);
   }
@@ -238,6 +243,10 @@ final class PassphraseVault {
   /// [action], then zeroes it — mirroring [Oubliette.useAndForget]. Returns
   /// `null` if absent. A wrong passphrase or tampered blob throws
   /// [DecryptionFailedException].
+  ///
+  /// Both layers wipe: the inner backend's encrypted envelope is zeroed by the
+  /// wrapped [Oubliette.useAndForget], and the vault-decrypted plaintext handed
+  /// to [action] is zeroed in this method's `finally` — even if [action] throws.
   Future<T?> useAndForget<T>(
     String key,
     Future<T> Function(Uint8List bytes) action,

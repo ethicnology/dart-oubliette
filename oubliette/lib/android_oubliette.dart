@@ -98,15 +98,11 @@ class AndroidOubliette extends Oubliette {
           aad: storedKey,
           promptTitle: access.promptTitle,
           promptSubtitle: access.promptSubtitle,
-          // biometricOnly is deliberately not passed: the native keystore layer
-          // now derives the prompt's allowed authenticators authoritatively
-          // from the key's own KeyInfo (getUserAuthenticationType), so the flag
-          // is advisory and ignored (see Keystore.encrypt). Forwarding
-          // `invalidatedByBiometricEnrollment` would imply oubliette still
-          // chooses the authenticator set — it does not, and the two can no
-          // longer disagree. An enrollment-invalidated key is biometric-only by
-          // construction, so the native KeyInfo path already yields a
-          // BIOMETRIC_STRONG-only prompt.
+          // The prompt's authenticator set is not chosen here: the native layer
+          // derives it from the key's own KeyInfo (getUserAuthenticationType),
+          // so the prompt and the key can never disagree. An
+          // enrollment-invalidated key is biometric-only by construction and
+          // already yields a BIOMETRIC_STRONG-only prompt.
         ),
       );
       final prefs = await SharedPreferences.getInstance();
@@ -160,15 +156,27 @@ class AndroidOubliette extends Oubliette {
         aad: storedKey, // trusted, not ep.aad
         promptTitle: access.promptTitle,
         promptSubtitle: access.promptSubtitle,
-        // Advisory and ignored natively — see the store() path above; the
-        // prompt's authenticator set comes from the key's KeyInfo.
+        // The prompt's authenticator set comes from the key's KeyInfo, not from
+        // here — see the store() path above.
       ),
     );
   }
 
   /// Runs [op] for logical [key] and translates known native error codes into
   /// typed [OublietteException]s so callers can branch on `recoverable` instead
-  /// of string-matching `PlatformException.code`. Unknown codes pass through.
+  /// of string-matching `PlatformException.code`.
+  ///
+  /// Deliberately-unmapped codes pass through as the raw [PlatformException] by
+  /// design — they are NOT operational/data-recovery outcomes and must never be
+  /// reasoned about with `recoverable`/`purge()`:
+  /// - `strongbox_unavailable`, `hardware_unavailable` — generation-time
+  ///   fail-closed config errors (caller requested hardware the device cannot
+  ///   provide). Deterministic; surfaced raw so the caller fixes the request.
+  /// - `bad_args` — a contract/programming error in the channel call.
+  /// - `already_exists` — only reachable from [_ensureKey]'s key-generation
+  ///   race, where it is caught and treated as success; never escapes here.
+  /// Any genuinely-unknown code likewise rethrows untouched (fail-closed: never
+  /// guess a typed meaning that could steer a caller toward purge()).
   Future<T> _mapError<T>(String key, Future<T> Function() op) async {
     try {
       return await op();
