@@ -63,7 +63,15 @@ abstract class Oubliette {
   ///
   /// Within a single isolate, concurrent `store()` calls for the *same* slot are
   /// serialized so exactly one first-write can win; see [purge] for the
-  /// cross-isolate / cross-process caveat.
+  /// cross-isolate / cross-process caveat. The first-write check is a read
+  /// ([exists]) followed by a write, which is **not atomic across processes**:
+  /// on Darwin/Linux the native add itself fails closed on a duplicate
+  /// (`errSecDuplicateItem` / `already_exists`), so a cross-process race that
+  /// slips past the [exists] precheck surfaces that native `already_exists`
+  /// rather than the in-isolate [StateError] — both mean "a value already
+  /// exists; `trash()` first". (Android's `SharedPreferences` has no atomic
+  /// put-if-absent, so a cross-process race there can silently overwrite — the
+  /// in-isolate lock is the only guard.)
   ///
   /// Throws a typed [OublietteException] for backend failures (e.g.
   /// [KeyInvalidatedException], [AuthenticationFailedException]); branch on

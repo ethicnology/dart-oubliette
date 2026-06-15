@@ -74,18 +74,29 @@ and upgrades never silently reset, re-key, or strand secrets (see
   auth failure can no longer be mistaken for a fatal one and answered with a
   data-destroying `purge()`.
 * **Complete Darwin error-code mapping:** the keychain plugin's
-  `missing_entitlement` (a code-signing / `keychain-access-groups` build defect)
-  and `sec_item_copy_failed` (a fetch that failed with an unexpected OSStatus —
-  locked keychain / entitlement / transient framework error) now map to the
-  **recoverable** `BackendUnavailableException` instead of surfacing as a raw
-  `PlatformException`. Both leave the stored data intact, so they must never
-  steer a caller toward the data-destroying `purge()` path — fix the build /
-  environment and retry.
+  `missing_entitlement` (a code-signing / `keychain-access-groups` build defect),
+  `sec_item_copy_failed` (a fetch that failed with an unexpected OSStatus —
+  locked keychain / entitlement / transient framework error), and its write/
+  delete-path counterparts `sec_item_add_failed` / `sec_item_delete_failed` now
+  map to the **recoverable** `BackendUnavailableException` instead of surfacing
+  as a raw `PlatformException`. All leave the stored data intact (an add wrote
+  nothing; a delete left the blob in place), so they must never steer a caller
+  toward the data-destroying `purge()` path — fix the build / environment and
+  retry.
 * **Complete Android error-code mapping:** the keystore plugin's
   `key_auth_type_unknown` — emitted when it fails closed (before prompting)
   because the key's allowed-authenticator set could not be read from `KeyInfo` —
   now maps to the **recoverable** `AuthenticationFailedException`. The key and
-  data are intact; retry, never `purge()`.
+  data are intact; retry, never `purge()`. The encrypt path's generic
+  `encrypt_failed` catch-all (neither key-loss nor an auth-gate failure, and
+  nothing written) now maps to the **recoverable** `BackendUnavailableException`
+  rather than leaking a raw `PlatformException`.
+* **`biometricOnly` no longer forwarded (Android):** the native keystore layer
+  derives the prompt's allowed authenticators authoritatively from the key's own
+  `KeyInfo`, so the advisory `biometricOnly` flag is dropped from `oubliette`'s
+  `encrypt`/`decrypt` calls — oubliette no longer implies it chooses the
+  authenticator set. An enrollment-invalidated key is biometric-only by
+  construction, so the native path still yields a `BIOMETRIC_STRONG`-only prompt.
 * **Hardened deserialization:** `EncryptedPayload` rejects a bad version, empty
   or non-base64 nonce/ciphertext with a clear `FormatException`, surfaced to the
   caller as `PayloadCorruptException` rather than an opaque `decrypt_failed`.
