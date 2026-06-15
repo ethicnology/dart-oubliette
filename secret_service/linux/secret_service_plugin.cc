@@ -49,10 +49,14 @@ struct _SecretServicePlugin {
 
 G_DEFINE_TYPE(SecretServicePlugin, secret_service_plugin, g_object_get_type())
 
-// Frees a gchar* secret in place (best effort).
+// Frees a gchar* secret in place, zeroing it first (best effort).
+// secret_password_wipe() clears the bytes before releasing the heap, unlike
+// secret_password_free() which leaves the decrypted secret readable in freed
+// memory until the allocator reuses it. This is the only place the plugin holds
+// raw plaintext (the read path), so it is the one place worth wiping.
 #define secret_autofree _GLIB_CLEANUP(secret_cleanup_free)
 static inline void secret_cleanup_free(gchar** p) {
-  if (*p) secret_password_free(*p);
+  if (*p) secret_password_wipe(*p);
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +242,15 @@ static const char* error_code_for(GError* error) {
   if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
     return "keyring_timeout";
   }
+  // A collection that relocked between warmup and the operation fails the call
+  // with SECRET_ERROR_IS_LOCKED. Surface the distinct, recoverable
+  // `keyring_locked` (→ KeyringLockedException) rather than collapsing it into
+  // the generic `secret_service_error`, so a caller can prompt for unlock and
+  // retry instead of treating it as an opaque backend fault. Both are
+  // recoverable on the Dart side (never purge) — the split is for precision.
+  if (g_error_matches(error, SECRET_ERROR, SECRET_ERROR_IS_LOCKED)) {
+    return "keyring_locked";
+  }
   return "secret_service_error";
 }
 
@@ -401,15 +414,20 @@ static FlMethodResponse* handle_delete_by_prefix(const gchar* prefix) {
   g_hash_table_insert(attrs, const_cast<char*>("fmt"), const_cast<char*>(kFmt));
 
   g_autoptr(GError) search_error = nullptr;
-  // Bound the search (LINUX-2): SECRET_SEARCH_UNLOCK actively unlocks any matching
-  // collection, so an externally created item in another locked collection — or a
-  // keyring relocked since warmup — would re-prompt here with no timeout. The
-  // detached watchdog cancels it; a cancellation surfaces as keyring_timeout
-  // (never a silent empty purge).
+  // Enumerate with SECRET_SEARCH_ALL only — deliberately NOT SECRET_SEARCH_UNLOCK.
+  // The plugin only ever stores into the default collection (warmup already
+  // unlocked it), and item *attributes* (including `slot`, which decides what to
+  // delete) are readable while a collection is locked. SECRET_SEARCH_UNLOCK would
+  // actively unlock EVERY collection holding a fmt-matching item — including one
+  // an attacker/other app planted an oubliette-tagged item in — turning a purge
+  // into an unlock-prompt storm across unrelated keyrings. Dropping it confines
+  // any unlock to the per-item secret_item_delete_sync below, which touches only
+  // the (default) collection we own. The search is still bounded by the watchdog;
+  // a cancellation surfaces as keyring_timeout (never a silent empty purge).
   OpWatchdog* search_watchdog = op_watchdog_arm();
   GList* items = secret_service_search_sync(
       service, &kSchema, attrs,
-      static_cast<SecretSearchFlags>(SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK),
+      static_cast<SecretSearchFlags>(SECRET_SEARCH_ALL),
       search_watchdog->cancellable, &search_error);
   op_watchdog_finish(search_watchdog);
   g_hash_table_unref(attrs);
@@ -537,10 +555,23 @@ static void secret_service_plugin_handle_method_call(
     // empty prefix would purge EVERY oubliette item across all profiles. The
     // Dart layer always passes `profilePrefix + U+001D` (never empty); this is
     // a defensive backstop so a malformed call cannot cross-profile-wipe.
-    if (!prefix || prefix[0] == '\0')
+    //
+    // Also require the reserved slot separator (U+001D, one byte 0x1D in UTF-8)
+    // as the final byte: ownership is exact ONLY because the separator's position
+    // encodes the prefix length, so a prefix lacking it (e.g. "app_" instead of
+    // "app_\x1d") could byte-prefix-match and cross-wipe a nested sibling
+    // ("app_admin_\x1d…"). The Dart layer always appends the separator; this
+    // makes the nested-prefix guard defense-in-depth rather than single-layer.
+    if (!prefix || prefix[0] == '\0') {
       response = error_response("bad_args", "Missing or empty prefix.");
-    else
-      response = handle_delete_by_prefix(prefix);
+    } else {
+      size_t prefix_len = strlen(prefix);
+      if (prefix[prefix_len - 1] != '\x1d')
+        response = error_response(
+            "bad_args", "Prefix must end at the reserved slot separator.");
+      else
+        response = handle_delete_by_prefix(prefix);
+    }
   } else {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
   }
