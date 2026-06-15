@@ -175,6 +175,11 @@ class AndroidOubliette extends Oubliette {
           throw DecryptionFailedException(key: key, cause: e);
         case 'auth_failed':
         case 'auth_error':
+        // The native layer derives the prompt's allowed authenticators from the
+        // key's own KeyInfo, and refuses (fail-closed, before any prompt) when
+        // that authenticator set cannot be read. The key and data are intact —
+        // it is recoverable like any other unsatisfied auth gate; never purge().
+        case 'key_auth_type_unknown':
           throw AuthenticationFailedException(key: key, cause: e);
         case 'auth_cancelled': // emitted by BiometricAuth for user-cancel codes
           throw AuthenticationFailedException(

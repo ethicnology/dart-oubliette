@@ -159,6 +159,23 @@ class DarwinOubliette extends Oubliette {
         // ensureEnclaveKeyPair returned a null/absent result over the wire —
         // the facade fails closed rather than report "key just created".
         case 'se_ensure_key_failed':
+        // A code-signing / `keychain-access-groups` entitlement defect
+        // (`errSecMissingEntitlement`). This is a build/signing fault, not a
+        // data fault — the stored item is intact and the key (if any) still
+        // exists, so it must NEVER steer a caller toward the data-destroying
+        // purge() path. It is environmental in the same sense as the SE-fetch
+        // failures above (fix the entitlement / re-sign, then the same op
+        // succeeds), so it maps to the recoverable BackendUnavailableException
+        // rather than rethrowing a raw PlatformException a caller might treat
+        // as fatal.
+        case 'missing_entitlement':
+        // A plain-keychain *fetch* (SecItemCopyMatching) failed with an
+        // unexpected OSStatus (not item-not-found, not auth) — a locked
+        // Data-Protection keychain, an entitlement/domain misconfig, or a
+        // transient Security-framework error. The blob is not known to be
+        // damaged, so like the other environmental failures it is recoverable
+        // and must not trigger purge().
+        case 'sec_item_copy_failed':
           throw BackendUnavailableException(cause: e);
         case 'se_decrypt_failed':
           throw DecryptionFailedException(key: key, cause: e);

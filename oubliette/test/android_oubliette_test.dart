@@ -355,6 +355,28 @@ void main() {
       },
     );
 
+    test(
+      'key_auth_type_unknown → AuthenticationFailedException (RECOVERABLE)',
+      () async {
+        // The native layer fails closed (before any prompt) when it cannot read
+        // the key\'s allowed-authenticator set from KeyInfo. The key and data are
+        // intact, so it must map to a recoverable auth failure, never anything a
+        // caller might answer with purge().
+        final s = await seeded();
+        mock.decryptErrorCode = 'key_auth_type_unknown';
+        await expectLater(
+          s.fetch('k'),
+          throwsA(
+            isA<AuthenticationFailedException>().having(
+              (e) => e.recoverable,
+              'recoverable',
+              true,
+            ),
+          ),
+        );
+      },
+    );
+
     test('a malformed on-disk blob → PayloadCorruptException', () async {
       final s = await seeded();
       final prefs = await SharedPreferences.getInstance();

@@ -238,10 +238,20 @@ void main() {
       'se_key_gen_failed',
       'se_encrypt_failed',
       'access_control_failed',
+      // A code-signing / keychain-access-groups entitlement defect: a
+      // build/signing fault, NOT a data fault. The native keychain plugin
+      // emits this (errSecMissingEntitlement); oubliette must map it so a
+      // caller never sees a raw PlatformException it might answer with purge().
+      'missing_entitlement',
+      // A plain-keychain fetch that failed with an unexpected OSStatus
+      // (locked keychain / entitlement / transient framework error).
+      'sec_item_copy_failed',
     ]) {
       test('$code → BackendUnavailableException (RECOVERABLE, never purge)', () async {
         // DARWIN: write-path SE failures (key gen, ECIES encrypt, access-control
-        // creation) are environmental — the secret was never stored, nothing is
+        // creation), an entitlement/build defect (missing_entitlement), or a
+        // generic fetch failure (sec_item_copy_failed) are environmental — the
+        // stored data is intact / the secret was never written, nothing is
         // lost. They must be recoverable and NEVER map to the data-destroying
         // KeyNotFound remediation.
         final s = storage();
