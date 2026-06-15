@@ -212,6 +212,12 @@ void main() {
       );
     });
 
+    test('deleteByPrefix rejects an empty prefix (never wipe-all)', () async {
+      // An empty prefix would hasPrefix-match every account in scope. Guard it
+      // at the facade so a malformed direct call cannot purge the whole scope.
+      expect(() => keychain().deleteByPrefix(''), throwsA(isA<ArgumentError>()));
+    });
+
     test('deleteByPrefix sends prefix, exclusions, and config scope', () async {
       await keychain().deleteByPrefix('p_', excludePrefixes: ['q_']);
       final args = (lastCall!.arguments as Map).cast<String, Object?>();

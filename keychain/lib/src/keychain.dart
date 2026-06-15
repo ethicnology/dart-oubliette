@@ -113,9 +113,18 @@ final class Keychain {
   /// does not guarantee the value is decryptable (that surfaces on
   /// [secItemCopyMatching] as `se_key_missing`).
   ///
-  /// Throws [PlatformException]: `interaction_not_allowed` (device locked —
-  /// retry when unlocked), `missing_entitlement`, `sec_item_copy_failed`,
-  /// `bad_args`.
+  /// LIMITATION on an `authenticationRequired` profile: the probe suppresses
+  /// auth UI (`kSecUseAuthenticationUIFail`), and the OS answers a presence-gated
+  /// item's existence query with `errSecInteractionNotAllowed` rather than a
+  /// clean hit/miss — so `contains` on such a profile cannot return a definite
+  /// `true`/`false` and instead throws `interaction_not_allowed`, *even when the
+  /// device is unlocked and the item plainly exists*. Do not use `contains` as a
+  /// silent existence precheck for authenticated profiles; rely on the
+  /// fail-closed duplicate handling of the write path (`already_exists`) instead.
+  ///
+  /// Throws [PlatformException]: `interaction_not_allowed` (device locked, or an
+  /// authenticated profile as above — retry when unlocked / authenticate to
+  /// read), `missing_entitlement`, `sec_item_copy_failed`, `bad_args`.
   Future<bool> contains(String alias) async {
     final result = await _channel.invokeMethod<bool>(
       'keychainContains',
@@ -219,6 +228,15 @@ final class Keychain {
     String prefix, {
     List<String> excludePrefixes = const [],
   }) async {
+    // Reject an empty prefix: `hasPrefix("")` matches every account, so an empty
+    // prefix would wipe every item in this config's scope (for a service-less,
+    // group-less config, that is the app's entire generic-password class). The
+    // Oubliette layer always passes a separator-terminated, non-empty prefix;
+    // this is a defensive backstop for direct callers of the facade, mirroring
+    // the native empty-prefix guard on the Linux backend.
+    if (prefix.isEmpty) {
+      throw ArgumentError.value(prefix, 'prefix', 'must not be empty');
+    }
     await _channel.invokeMethod<void>('secItemDeleteByPrefix', {
       'prefix': prefix,
       'excludePrefixes': excludePrefixes,
