@@ -30,6 +30,10 @@ class _MockKeystore {
   /// code — exercises the typed-error mapping (M3).
   String? decryptErrorCode;
 
+  /// When set, encrypt/authenticateEncrypt throw a PlatformException with this
+  /// code — exercises the encrypt-path typed-error mapping.
+  String? encryptErrorCode;
+
   Future<Object?> handle(MethodCall call) async {
     final args = (call.arguments as Map).cast<String, dynamic>();
     switch (call.method) {
@@ -50,6 +54,9 @@ class _MockKeystore {
         return null;
       case 'encrypt':
       case 'authenticateEncrypt':
+        if (encryptErrorCode != null) {
+          throw PlatformException(code: encryptErrorCode!, message: 'forced');
+        }
         if (encryptInvalidated) {
           throw PlatformException(code: 'key_invalidated', message: 'dead');
         }
@@ -368,6 +375,29 @@ void main() {
           s.fetch('k'),
           throwsA(
             isA<AuthenticationFailedException>().having(
+              (e) => e.recoverable,
+              'recoverable',
+              true,
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'encrypt_failed → BackendUnavailableException (RECOVERABLE, never purge)',
+      () async {
+        // The encrypt path's generic catch-all. It is neither key-loss
+        // (key_invalidated/key_not_found are caught first) nor an auth-gate
+        // failure, and nothing was written — the stored data is intact. It must
+        // surface as a recoverable typed error, never a raw PlatformException a
+        // caller might answer with the data-destroying purge() path.
+        final s = storage();
+        mock.encryptErrorCode = 'encrypt_failed';
+        await expectLater(
+          s.store('k', Uint8List.fromList([1])),
+          throwsA(
+            isA<BackendUnavailableException>().having(
               (e) => e.recoverable,
               'recoverable',
               true,

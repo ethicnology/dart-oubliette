@@ -204,6 +204,10 @@ final class DecryptionFailedException extends OublietteException {
 ///   keychain-domain misconfiguration). Distinct from [KeyNotFoundException]:
 ///   the key may well still exist, so the data-destroying recovery flow must
 ///   not be applied.
+/// - **Android** — an `encrypt`-path Keystore operation failed with a generic,
+///   apparently-transient error (`encrypt_failed`) that is neither key-loss
+///   (`key_invalidated`/`key_not_found`) nor an auth-gate failure. Nothing was
+///   written, so no stored data is at risk; the fix is environmental (retry).
 ///
 /// **Recoverable** in the [OublietteException] sense: the stored data is intact
 /// and **must not** be `purge()`d — the fix is environmental (provide a running
@@ -222,10 +226,10 @@ final class BackendUnavailableException extends OublietteException {
   @override
   String toString() =>
       'BackendUnavailableException: the platform secret backend failed for an '
-      'environmental reason (no keyring daemon / session bus on Linux, or a '
-      'Secure Enclave key fetch failure on Darwin). The data is intact — '
-      'never purge; fix the environment and retry. See the cause field for '
-      'diagnostics.';
+      'environmental reason (no keyring daemon / session bus on Linux, a '
+      'Secure Enclave key fetch failure on Darwin, or a transient encrypt '
+      'failure on Android). The data is intact — never purge; fix the '
+      'environment and retry. See the cause field for diagnostics.';
 }
 
 /// Thrown on **Linux** when the Secret Service keyring collection is locked and

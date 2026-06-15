@@ -18,12 +18,19 @@ class _MockKeychain {
   /// and the delete path.
   String? fetchErrorCode;
 
+  /// When set, secItemAdd throws a PlatformException with this code — exercises
+  /// the write-path typed-error mapping.
+  String? addErrorCode;
+
   Future<Object?> handle(MethodCall call) async {
     final args = (call.arguments as Map).cast<String, dynamic>();
     switch (call.method) {
       case 'keychainContains':
         return items.containsKey(args['alias']);
       case 'secItemAdd':
+        if (addErrorCode != null) {
+          throw PlatformException(code: addErrorCode!, message: 'forced');
+        }
         final alias = args['alias'] as String;
         if (items.containsKey(alias)) {
           throw PlatformException(code: 'already_exists', message: 'dup');
@@ -282,6 +289,51 @@ void main() {
         throwsA(isA<AuthenticationFailedException>()),
       );
     });
+
+    test(
+      'sec_item_add_failed → BackendUnavailableException (RECOVERABLE, never '
+      'purge)',
+      () async {
+        // The add path's generic OSStatus fallback (locked keychain /
+        // entitlement / transient framework error). Nothing was written, so
+        // the stored data is intact — it must surface as a recoverable typed
+        // error, never a raw PlatformException a caller might answer with purge.
+        final s = storage();
+        mock.addErrorCode = 'sec_item_add_failed';
+        await expectLater(
+          s.store('k', Uint8List.fromList([1])),
+          throwsA(
+            isA<BackendUnavailableException>().having(
+              (e) => e.recoverable,
+              'recoverable',
+              true,
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'sec_item_delete_failed → BackendUnavailableException (RECOVERABLE)',
+      () async {
+        // The delete path's generic OSStatus fallback. The existing blob is
+        // left intact (the delete did not happen), so it is recoverable and
+        // must never be answered with purge.
+        final s = storage();
+        await s.store('k', Uint8List.fromList([1]));
+        mock.fetchErrorCode = 'sec_item_delete_failed';
+        await expectLater(
+          s.trash('k'),
+          throwsA(
+            isA<BackendUnavailableException>().having(
+              (e) => e.recoverable,
+              'recoverable',
+              true,
+            ),
+          ),
+        );
+      },
+    );
 
     test('store rejects a key containing the slot separator', () async {
       await expectLater(

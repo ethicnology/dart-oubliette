@@ -176,6 +176,16 @@ class DarwinOubliette extends Oubliette {
         // damaged, so like the other environmental failures it is recoverable
         // and must not trigger purge().
         case 'sec_item_copy_failed':
+        // The add (SecItemAdd) and delete (SecItemDelete / delete-by-prefix)
+        // paths' generic OSStatus fallbacks — the symmetric counterparts of
+        // `sec_item_copy_failed`. An add failure wrote nothing; a delete
+        // failure left the existing blob intact. Neither is data loss, both
+        // are environmental (locked keychain, entitlement/domain misconfig,
+        // transient framework error), so they map to the recoverable
+        // BackendUnavailableException rather than leaking a raw
+        // PlatformException a caller might answer with purge().
+        case 'sec_item_add_failed':
+        case 'sec_item_delete_failed':
           throw BackendUnavailableException(cause: e);
         case 'se_decrypt_failed':
           throw DecryptionFailedException(key: key, cause: e);

@@ -98,9 +98,15 @@ class AndroidOubliette extends Oubliette {
           aad: storedKey,
           promptTitle: access.promptTitle,
           promptSubtitle: access.promptSubtitle,
-          // An enrollment-invalidated key is biometric-only; its prompt must
-          // not offer the device-credential path (see Keystore.encrypt).
-          biometricOnly: access.invalidatedByBiometricEnrollment,
+          // biometricOnly is deliberately not passed: the native keystore layer
+          // now derives the prompt's allowed authenticators authoritatively
+          // from the key's own KeyInfo (getUserAuthenticationType), so the flag
+          // is advisory and ignored (see Keystore.encrypt). Forwarding
+          // `invalidatedByBiometricEnrollment` would imply oubliette still
+          // chooses the authenticator set — it does not, and the two can no
+          // longer disagree. An enrollment-invalidated key is biometric-only by
+          // construction, so the native KeyInfo path already yields a
+          // BIOMETRIC_STRONG-only prompt.
         ),
       );
       final prefs = await SharedPreferences.getInstance();
@@ -154,7 +160,8 @@ class AndroidOubliette extends Oubliette {
         aad: storedKey, // trusted, not ep.aad
         promptTitle: access.promptTitle,
         promptSubtitle: access.promptSubtitle,
-        biometricOnly: access.invalidatedByBiometricEnrollment,
+        // Advisory and ignored natively — see the store() path above; the
+        // prompt's authenticator set comes from the key's KeyInfo.
       ),
     );
   }
@@ -173,6 +180,18 @@ class AndroidOubliette extends Oubliette {
           throw KeyNotFoundException(keyAlias: access.keyAlias, cause: e);
         case 'decrypt_failed':
           throw DecryptionFailedException(key: key, cause: e);
+        // The encrypt path's catch-all (KeystorePlugin.handleEncrypt /
+        // BiometricAuth): a generic Keystore/crypto failure that is NOT a known
+        // key-loss (`key_invalidated`/`key_not_found` are caught before it) and
+        // is NOT an auth-gate failure. The native layer documents it as
+        // *apparently transient* (V1Scheme), and on the encrypt path nothing was
+        // written, so the stored data is intact. Map it to the recoverable
+        // BackendUnavailableException — never a raw PlatformException a caller
+        // might answer with the data-destroying purge() path. (Decrypt's
+        // `decrypt_failed` stays DecryptionFailedException: there the specific
+        // on-disk blob failed to authenticate.)
+        case 'encrypt_failed':
+          throw BackendUnavailableException(cause: e);
         case 'auth_failed':
         case 'auth_error':
         // The native layer derives the prompt's allowed authenticators from the
