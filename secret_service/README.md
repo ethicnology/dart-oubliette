@@ -68,10 +68,13 @@ locked/erroring keyring is **never** reported as empty.
   thread and block it for the duration of the D-Bus round-trip — including, on a
   locked keyring, the interactive unlock prompt. **Every** call that can trigger
   a prompt is bounded by a ~20 s watchdog (a detached timer that cancels the
-  call's `GCancellable`): the warmup unlock, and each per-operation
+  call's `GCancellable` on timeout): the warmup unlock, and each per-operation
   lookup/store/clear/search/delete — so a re-locked keyring or a
-  `SECRET_SEARCH_UNLOCK`-reached collection cannot hang the thread forever. Keep
-  stored values small and avoid bursts of calls on a frame-critical path.
+  `SECRET_SEARCH_UNLOCK`-reached collection cannot hang the thread forever. The
+  timer is woken the instant its operation returns, so it does not linger for the
+  full timeout on the common (fast, unlocked) path — a burst of operations does
+  not accumulate sleeping watchdog threads. Keep stored values small and avoid
+  bursts of calls on a frame-critical path.
 - **Native secret buffers are wiped; transit copies are not.** Every
   secret-bearing buffer the native plugin *owns* is freed with
   `secret_password_free`, which wipes it (libsecret allocates lookup results in

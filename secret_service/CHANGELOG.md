@@ -1,5 +1,21 @@
 ## Unreleased
 
+- Watchdog no longer lingers a full ~20 s after every fast call. Since the
+  watchdog was extended to EVERY per-operation call, the previous detached timer
+  `g_usleep`d the whole timeout regardless of when the operation finished, so a
+  burst of operations (notably a multi-item purge) piled up one ~20 s-sleeping
+  thread per call. The timer now waits on a one-shot, deadline-capped
+  `GCond`/`GMutex` that the caller signals the instant the bounded call returns,
+  so it exits immediately on the common (fast, unlocked) path. The watchdog is a
+  refcounted struct shared by caller and timer (whichever drops the last ref
+  frees it), so there is still no use-after-free, and the bounded wait cannot
+  deadlock. Thread-creation failure still degrades to an un-timed but correct
+  call. No behaviour change on timeout (still cancels the `GCancellable` →
+  `secret_service_error`, never read as empty).
+- Guard a NULL `args` FlValue in the method-call dispatcher: a call carrying no
+  arguments yields a C NULL (not an `FL_VALUE_TYPE_NULL` value), on which
+  `fl_value_get_type` asserts and would abort the host process. It is now
+  rejected as `bad_args` alongside the existing non-map check.
 - Bound EVERY interactive-unlock-capable sync call with the ~20 s watchdog, not
   just the warmup unlock. The per-operation `lookup`/`store`/`clear`/`search`/
   per-item `delete` calls previously passed a `nullptr` `GCancellable`, so a

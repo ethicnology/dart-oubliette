@@ -56,6 +56,11 @@ final class Keystore {
   ///   key is not auth-bound (fail-closed: the prompt is refused rather than
   ///   shown with a guessed authenticator set).
   ///
+  /// When a [promptTitle] is supplied the authenticating path may additionally
+  /// throw `"auth_cancelled"` (user cancelled), `"auth_error"`, `"auth_failed"`,
+  /// or `"detached"`. See the README "Native error-code surface" table for the
+  /// full stable contract.
+  ///
   /// [biometricOnly] is now **advisory only**: the native layer derives the
   /// prompt's allowed authenticators authoritatively from the key's own
   /// `KeyInfo` (`getUserAuthenticationType()`), so a biometric-only key always
@@ -98,6 +103,8 @@ final class Keystore {
   ///   (e.g. biometric enrollment changed).
   /// - `"decrypt_failed"` for other decryption errors.
   /// - `"key_auth_type_unknown"` — see [encrypt].
+  /// When a [promptTitle] is supplied, the auth-path codes listed in [encrypt]
+  /// (`auth_cancelled`, `auth_error`, `auth_failed`, `detached`) apply too.
   /// See [encrypt] for the (advisory) [biometricOnly] contract.
   Future<Uint8List> decrypt({
     required int version,

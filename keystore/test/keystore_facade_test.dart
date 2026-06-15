@@ -57,9 +57,11 @@ void main() {
       expect(lastMethod, 'encrypt');
     });
 
-    // The biometricOnly flag MUST cross the wire on the authenticating path so
-    // the native prompt's allowed authenticators match a biometric-only key.
-    // Dropping it would offer a device-credential fallback the key cannot honor.
+    // biometricOnly is ADVISORY only: the native layer derives the prompt's
+    // allowed authenticators from the key's own KeyInfo, never from this flag
+    // (see Keystore.encrypt docs / CHANGELOG). This test only pins that the
+    // retained flag still crosses the wire for source compatibility — it does
+    // NOT influence the native prompt, and nothing should rely on it doing so.
     test('forwards biometricOnly to authenticateEncrypt', () async {
       responder = (_) => validEncryptResponse();
       await ks.encrypt(
@@ -144,8 +146,7 @@ void main() {
     // facade must surface that code untouched so the oubliette layer can map it
     // — never swallow it into a generic encrypt/decrypt failure.
     test('encrypt surfaces key_auth_type_unknown from the auth path', () async {
-      responder = (_) =>
-          throw PlatformException(code: 'key_auth_type_unknown');
+      responder = (_) => throw PlatformException(code: 'key_auth_type_unknown');
       await expectLater(
         ks.encrypt(
           alias: 'a',
@@ -164,8 +165,7 @@ void main() {
     });
 
     test('decrypt surfaces key_auth_type_unknown from the auth path', () async {
-      responder = (_) =>
-          throw PlatformException(code: 'key_auth_type_unknown');
+      responder = (_) => throw PlatformException(code: 'key_auth_type_unknown');
       await expectLater(
         ks.decrypt(
           version: 1,
