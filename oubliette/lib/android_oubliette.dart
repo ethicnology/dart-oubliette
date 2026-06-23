@@ -209,6 +209,15 @@ class AndroidOubliette extends Oubliette {
         // a caller might answer with the data-destroying purge() path.
         case 'detached':
           throw BackendUnavailableException(cause: e);
+        // purge()'s key-deletion step failed (KeystorePlugin.deleteEntry). By
+        // this point the profile's blobs are already removed, so no readable
+        // ciphertext is left behind; the (now value-less) key surviving is a
+        // transient/environmental condition. Map it to the recoverable
+        // BackendUnavailableException for parity with Darwin/Linux purge()
+        // (which route their native delete through _mapError), rather than
+        // leaking a raw PlatformException only on Android.
+        case 'delete_entry_failed':
+          throw BackendUnavailableException(cause: e);
         // An UnlockedDeviceRequired (non-authenticated) key cannot DECRYPT while
         // the screen is locked: the native layer probes KeyguardManager and
         // emits `device_locked` instead of collapsing it into the fatal
@@ -275,7 +284,9 @@ class AndroidOubliette extends Oubliette {
     }
     // Idempotent on the native side: deleting an absent alias is a no-op, so a
     // partially-wiped profile (e.g. dead key, blobs already gone) still clears.
-    await _keystore.deleteEntry(access.keyAlias);
+    // Routed through _mapError so a native delete failure surfaces as a typed
+    // (recoverable) OublietteException, matching Darwin/Linux purge().
+    await _mapError('<purge>', () => _keystore.deleteEntry(access.keyAlias));
   });
 
   @override

@@ -123,11 +123,15 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
     }
     #endif
     let box = SendableResult(result)
+    // Extract the payload bytes (a `Data`, which is Sendable) before hopping to
+    // the worker queue, so the non-Sendable `FlutterStandardTypedData` is not
+    // captured by the @Sendable closure (Swift 6 strict concurrency).
+    let payload = data.data
     serialQueue.async {
       // Deterministically drain any autoreleased bridging copies made while
       // plaintext was in flight — GCD's implicit pool drains at an unspecified
       // time, which would leave secret-bearing CF/NSData copies alive.
-      let outcome = autoreleasepool { secItemAdd(params: params, data: data.data) }
+      let outcome = autoreleasepool { secItemAdd(params: params, data: payload) }
       switch outcome {
       case .completed(let status) where status == errSecSuccess:
         box.deliver(nil)

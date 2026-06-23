@@ -29,7 +29,14 @@ format: ## Check Dart formatting across all packages
 format-fix: ## Apply Dart formatting across all packages
 	$(MELOS) run format:fix
 
-kotlin-test: ## Run the Kotlin JVM unit tests (via the example Gradle build)
+kotlin-test: ## Run the Kotlin JVM unit tests (SchemeRegistry append-only contract)
+	# The standalone keystore/android module cannot compile its io.flutter.*
+	# imports without the Flutter embedding classpath, so the keystore unit tests
+	# run through the example's Gradle build (which supplies it) — same as CI.
+	# `flutter build apk` first generates the gradle wrapper and the
+	# .flutter-plugins-dependencies that make flutter-plugin-loader inject the
+	# :keystore subproject; without it, `./gradlew :keystore:...` cannot resolve.
+	cd oubliette/example && $(RUNNER) flutter build apk --debug
 	cd oubliette/example/android && ./gradlew :keystore:testDebugUnitTest
 
 apk: ## Build the example debug APK (compiles all plugin Kotlin)

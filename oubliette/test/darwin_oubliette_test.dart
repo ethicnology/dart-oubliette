@@ -22,10 +22,18 @@ class _MockKeychain {
   /// the write-path typed-error mapping.
   String? addErrorCode;
 
+  /// When set, keychainContains throws a PlatformException with this code. This
+  /// models an authenticated profile, where the UI-suppressed existence probe
+  /// returns errSecInteractionNotAllowed even when the item is present.
+  String? containsErrorCode;
+
   Future<Object?> handle(MethodCall call) async {
     final args = (call.arguments as Map).cast<String, dynamic>();
     switch (call.method) {
       case 'keychainContains':
+        if (containsErrorCode != null) {
+          throw PlatformException(code: containsErrorCode!, message: 'forced');
+        }
         return items.containsKey(args['alias']);
       case 'secItemAdd':
         if (addErrorCode != null) {
@@ -109,6 +117,27 @@ void main() {
       await s.store('k', Uint8List.fromList([9]));
       expect(
         () => s.store('k', Uint8List.fromList([8])),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('re-store on an authenticated profile yields StateError, not '
+        'AuthenticationFailedException (parity with Android)', () async {
+      // On an authenticated profile contains() cannot answer (the probe hits
+      // interaction_not_allowed even when present). store() must fall through
+      // to secItemAdd, whose already_exists → StateError is authoritative —
+      // not surface a misleading recoverable AuthenticationFailedException.
+      final s = storage(
+        const DarwinSecretAccess.authenticated(
+          promptReason: 'unlock',
+          secureEnclave: false,
+        ),
+      );
+      await s.store('k', Uint8List.fromList([9]));
+      // Now the probe starts failing the way an authenticated profile does.
+      mock.containsErrorCode = 'interaction_not_allowed';
+      await expectLater(
+        s.store('k', Uint8List.fromList([8])),
         throwsA(isA<StateError>()),
       );
     });

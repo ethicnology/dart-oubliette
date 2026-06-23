@@ -36,7 +36,12 @@ extension Data {
   }
 }
 
-struct KeychainParams {
+// `@unchecked Sendable`: an immutable (all-`let`) value type carried into the
+// `serialQueue.async` workers. Every stored field is Sendable except
+// `accessibility`, a `CFString` that is always one of the immutable,
+// process-global `kSecAttrAccessible*` constants (thread-safe to share). Swift 6
+// strict concurrency cannot prove that for CFString, so we assert it here.
+struct KeychainParams: @unchecked Sendable {
   let alias: String
   let service: String?
   let accessibility: CFString

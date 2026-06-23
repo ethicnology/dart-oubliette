@@ -34,6 +34,10 @@ class _MockKeystore {
   /// code — exercises the encrypt-path typed-error mapping.
   String? encryptErrorCode;
 
+  /// When set, deleteEntry throws a PlatformException with this code — exercises
+  /// purge()'s native-delete error mapping.
+  String? deleteEntryErrorCode;
+
   Future<Object?> handle(MethodCall call) async {
     final args = (call.arguments as Map).cast<String, dynamic>();
     switch (call.method) {
@@ -49,6 +53,12 @@ class _MockKeystore {
         return null;
       case 'deleteEntry':
         deleteEntryCalls++;
+        if (deleteEntryErrorCode != null) {
+          throw PlatformException(
+            code: deleteEntryErrorCode!,
+            message: 'forced',
+          );
+        }
         aliases.remove(args['alias']);
         encryptInvalidated = false;
         return null;
@@ -282,6 +292,23 @@ void main() {
             (e) => e.keyAlias,
             'keyAlias',
             'oubliette_only_unlocked',
+          ),
+        ),
+      );
+    });
+
+    test('purge() maps a native deleteEntry failure to a typed (recoverable) '
+        'BackendUnavailableException, not a raw PlatformException', () async {
+      final s = storage();
+      await s.store('k', Uint8List.fromList([1, 2, 3]));
+      mock.deleteEntryErrorCode = 'delete_entry_failed';
+      await expectLater(
+        s.purge(),
+        throwsA(
+          isA<BackendUnavailableException>().having(
+            (e) => e.recoverable,
+            'recoverable',
+            true,
           ),
         ),
       );

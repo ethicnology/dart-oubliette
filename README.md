@@ -197,14 +197,14 @@ single decision-critical flag: **`recoverable`**.
 
 | Exception (`recoverable`) | Native code | Meaning / reaction |
 |---------------------------|-------------|--------------------|
-| `AuthenticationFailedException` (`true`) | `auth_failed`, `auth_error`, `auth_cancelled`, `interaction_not_allowed` | User cancelled/failed the prompt, or the device was locked. Data is intact — offer a retry. Never purge. |
+| `AuthenticationFailedException` (`true`) | `auth_failed`, `auth_error`, `auth_cancelled`, `interaction_not_allowed`, `device_locked`, `biometry_lockout`, `key_auth_type_unknown` | User cancelled/failed the prompt, the device was locked, or biometry is locked out (unlock with the passcode to re-enable). Data is intact — offer a retry. Never purge. |
 | `PayloadTamperException` (`false`) | — (Dart, Android) | Stored blob's slot metadata doesn't match the live profile (relocated/tampered). Treat the secret as compromised; overwrite via `trash()` + `store()`. |
 | `PayloadCorruptException` (`false`) | — (Dart) | Stored blob is malformed (bad version/nonce/ciphertext, or unknown Darwin format header). On-disk corruption; recover the slot via `trash()` + `store()` or `purge()`. |
 | `KeyInvalidatedException` (`false`) | `key_invalidated` | Key permanently invalidated by the OS — a new biometric enrolled (`authenticatedFatal`) or the secure lock screen removed/reset (**any** authenticated profile). Secrets under it are unrecoverable; recover with `purge()` then `init()`. |
 | `KeyNotFoundException` (`false`) | `key_not_found` | The profile key alias is gone (Keystore cleared, or restored from a backup without key material) but a blob remains — the blob is unreadable. Recover with `purge()` then `init()`. |
 | `DecryptionFailedException` (`false`) | `decrypt_failed`, `se_decrypt_failed` | The key is intact but this blob failed authenticated decryption (corruption/tamper/key mismatch). Overwrite the slot or `purge()`. |
 
-The native codes above are platform-specific (e.g. `se_decrypt_failed` and `interaction_not_allowed` are Darwin-only; `key_invalidated`/`key_not_found` are Android-only) — match on the typed exception, not the code.
+The native codes above are platform-specific (e.g. `se_decrypt_failed` and `interaction_not_allowed` are Darwin-only; `device_locked`/`key_auth_type_unknown`/`key_invalidated`/`key_not_found` are Android-only; `biometry_lockout` is Android + Darwin) — match on the typed exception, not the code.
 
 Errors still surfaced as raw `PlatformException` (operational, not data-semantic):
 `strongbox_unavailable` (StrongBox requested but absent — pre-flight with

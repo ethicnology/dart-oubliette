@@ -94,7 +94,22 @@ class DarwinOubliette extends Oubliette {
   @override
   Future<void> store(String key, Uint8List value) {
     return _withKeyLock(key, () async {
-      if (await exists(key)) {
+      bool present;
+      try {
+        present = await exists(key);
+      } on AuthenticationFailedException {
+        // On an authenticated profile contains() cannot return a definite
+        // answer: the UI-suppressed probe (kSecUseAuthenticationUIFail) makes
+        // the OS report a presence-gated item with errSecInteractionNotAllowed
+        // even when it plainly exists (see KeychainQueries.contains doc). Don't
+        // let that surface as a misleading "authenticate & retry"; fall through
+        // to secItemAdd, whose errSecDuplicateItem → `already_exists` →
+        // StateError is the authoritative put-if-absent for these profiles
+        // (parity with Android, which reads SharedPreferences and yields the
+        // same StateError). A genuinely-absent key still returns false here.
+        present = false;
+      }
+      if (present) {
         throw StateError(
           'A value already exists for key "$key". Call trash() first.',
         );

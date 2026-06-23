@@ -155,7 +155,9 @@ final class KeyInvalidatedException extends OublietteException {
 /// opaque decrypt failure. Recovery is an explicit `purge()` + `init()` +
 /// re-entry of the secret. Not recoverable by retry.
 final class KeyNotFoundException extends OublietteException {
-  /// The Keystore alias that was expected but absent.
+  /// The profile's key identifier that was expected but absent — the Android
+  /// Keystore alias on Android, or the Secure Enclave key's scoping service
+  /// (or `'secureEnclave'` when unscoped) on Darwin. Diagnostics only.
   final String keyAlias;
 
   /// The underlying platform error, for diagnostics.

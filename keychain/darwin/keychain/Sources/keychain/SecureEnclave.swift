@@ -26,7 +26,10 @@ let enclaveAlgorithm = SecKeyAlgorithm.eciesEncryptionCofactorVariableIVX963SHA2
 /// freezes a profile's `useDataProtection` for exactly this reason (the slot/key
 /// naming schema is immutable); this library does not re-key across domains. iOS
 /// is immune (single data-protection domain).
-struct EnclaveParams {
+// `@unchecked Sendable` for the same reason as `KeychainParams`: an immutable
+// value type whose only non-Sendable field, `accessibility`, is always an
+// immutable process-global `kSecAttrAccessible*` CFString constant.
+struct EnclaveParams: @unchecked Sendable {
   let service: String?
   let accessibility: CFString
   let accessGroup: String?

@@ -168,7 +168,8 @@ and upgrades never silently reset, re-key, or strand secrets (see
 * Dropped the `dart_mappable` dependency; `EncryptedPayload` now hand-rolls its
   JSON. The on-disk JSON shape is unchanged.
 * **Minimum Flutter 3.44 / Dart 3.12.** The Android build migrated to AGP 9 +
-  built-in Kotlin (no `kotlin-android` plugin; Gradle 9.1.0, Kotlin 2.3.20).
+  built-in Kotlin (no `kotlin-android` plugin; Gradle 9.5.1, Kotlin 2.4.0,
+  AGP 9.2.0).
 * The iOS/macOS `keychain` plugin now ships a Swift Package Manager manifest
   (`darwin/keychain/Package.swift`) alongside the CocoaPods podspec; both are
   supported.

@@ -9,6 +9,7 @@ void main() {
     final exceptions = <OublietteException, bool>{
       const AuthenticationFailedException(key: 'k'): true,
       const AuthenticationFailedException(key: 'k', cancelled: true): true,
+      const AuthenticationFailedException(key: 'k', lockout: true): true,
       // Linux software tier: data intact, never purge — recoverable.
       const BackendUnavailableException(): true,
       const KeyringLockedException(key: 'k'): true,
@@ -55,6 +56,20 @@ void main() {
       );
       expect(cancelled.cancelled, isTrue);
       expect(cancelled.toString(), contains('cancelled'));
+    });
+
+    test('lockout flag is carried, recoverable, and surfaced in toString', () {
+      const lockout = AuthenticationFailedException(
+        key: 'k',
+        lockout: true,
+        cause: 'RAW NATIVE LOCKOUT TEXT',
+      );
+      expect(lockout.lockout, isTrue);
+      expect(lockout.recoverable, isTrue);
+      expect(lockout.toString(), contains('locked out'));
+      // The native cause stays out of toString (the key is surfaced by design
+      // for this exception type — see the cancelled test above).
+      expect(lockout.toString(), isNot(contains('RAW NATIVE LOCKOUT TEXT')));
     });
 
     test('toString does not leak the native cause or key alias (LEAK-1)', () {

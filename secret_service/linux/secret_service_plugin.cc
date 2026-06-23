@@ -19,12 +19,16 @@
 //   payload version — the payload carries its own 1-byte header inside the
 //   encrypted value (mirroring the Darwin format header).
 //
-// SECRET_SCHEMA_NONE means libsecret does NOT add or match the implicit
-// `xdg:schema` name attribute — items are matched purely on the attributes we
-// pass. So the schema name is documentation only; it does NOT scope lookups.
-// App-scoping is therefore carried entirely by the `fmt` attribute, which every
-// store writes and every lookup/search below matches on (alongside `slot`), so
-// a foreign item that merely reuses an attribute named `slot` cannot collide.
+// SECRET_SCHEMA_NONE (0) does NOT include SECRET_SCHEMA_DONT_MATCH_NAME, so the
+// *simple* password API (secret_password_store/lookup/clear_sync) DOES inject
+// and match the implicit `xdg:schema` name attribute (our schema name) — that
+// is what scopes store/read/delete to this app. The *search* API
+// (secret_service_search_sync), however, matches ONLY the attributes hash table
+// we pass — it does NOT add the schema name. So the search-based paths
+// (contains, the write dup-check, deleteByPrefix) must insert `xdg:schema`
+// themselves to scope identically; otherwise a foreign item merely carrying a
+// matching `fmt`/`slot` could be matched (and, for purge, deleted). `fmt` and
+// `slot` remain as defence-in-depth alongside the schema-name scope.
 // ---------------------------------------------------------------------------
 static const SecretSchema kSchema = {
     "com.oubliette.secret_service",
@@ -272,6 +276,12 @@ static FlMethodResponse* handle_contains(const gchar* slot) {
   g_hash_table_insert(attrs, const_cast<char*>("slot"),
                       const_cast<char*>(slot));
   g_hash_table_insert(attrs, const_cast<char*>("fmt"), const_cast<char*>(kFmt));
+  // Scope the search to THIS app's schema name. Unlike the simple password API,
+  // secret_service_search_sync does not match xdg:schema implicitly, so add it
+  // explicitly — otherwise a foreign item reusing fmt/slot could match (and, in
+  // deleteByPrefix, be deleted out from under another app).
+  g_hash_table_insert(attrs, const_cast<char*>("xdg:schema"),
+                      const_cast<char*>(kSchema.name));
 
   g_autoptr(GError) error = nullptr;
   // Bound the call (LINUX-2): SECRET_SEARCH_UNLOCK matches the old lookup's
@@ -310,6 +320,12 @@ static FlMethodResponse* handle_write(const gchar* slot, const gchar* value) {
   g_hash_table_insert(attrs, const_cast<char*>("slot"),
                       const_cast<char*>(slot));
   g_hash_table_insert(attrs, const_cast<char*>("fmt"), const_cast<char*>(kFmt));
+  // Scope the search to THIS app's schema name. Unlike the simple password API,
+  // secret_service_search_sync does not match xdg:schema implicitly, so add it
+  // explicitly — otherwise a foreign item reusing fmt/slot could match (and, in
+  // deleteByPrefix, be deleted out from under another app).
+  g_hash_table_insert(attrs, const_cast<char*>("xdg:schema"),
+                      const_cast<char*>(kSchema.name));
 
   g_autoptr(GError) lookup_error = nullptr;
   OpWatchdog* lookup_watchdog = op_watchdog_arm();
@@ -412,6 +428,12 @@ static FlMethodResponse* handle_delete_by_prefix(const gchar* prefix) {
 
   GHashTable* attrs = g_hash_table_new(g_str_hash, g_str_equal);
   g_hash_table_insert(attrs, const_cast<char*>("fmt"), const_cast<char*>(kFmt));
+  // Scope the search to THIS app's schema name. Unlike the simple password API,
+  // secret_service_search_sync does not match xdg:schema implicitly, so add it
+  // explicitly — otherwise a foreign item reusing fmt/slot could match (and, in
+  // deleteByPrefix, be deleted out from under another app).
+  g_hash_table_insert(attrs, const_cast<char*>("xdg:schema"),
+                      const_cast<char*>(kSchema.name));
 
   g_autoptr(GError) search_error = nullptr;
   // Enumerate with SECRET_SEARCH_ALL only — deliberately NOT SECRET_SEARCH_UNLOCK.

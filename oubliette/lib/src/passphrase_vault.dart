@@ -130,6 +130,16 @@ final class PassphraseVault {
   /// the reserved-key guard and the lazy KEK mint happen on first use. Call
   /// [init] after construction to surface backend errors (locked keyring,
   /// unavailable backend) eagerly rather than on the first [store]/[useAndForget].
+  ///
+  /// Single-process per profile. Keyring mode keeps ONE random master KEK (under
+  /// [reservedKekKey]); every secret is derived from it. On Android, `store`
+  /// has no atomic put-if-absent across processes, so two processes that both
+  /// initialize the same profile *before the KEK exists* can each mint and store
+  /// a KEK, the second silently overwriting the first — which renders EVERY
+  /// keyring-mode secret written under the losing KEK permanently undecryptable
+  /// (not just one slot). Call [init] once at app startup, before any concurrent
+  /// activity, and treat keyring mode as assuming single-process access to a
+  /// profile.
   factory PassphraseVault.keyring({required Oubliette inner}) {
     return PassphraseVault._(inner, _modeKeyring, null, Argon2idParams.owasp);
   }
@@ -146,10 +156,15 @@ final class PassphraseVault {
   // Sane bounds for Argon2id params read back from the (attacker-writable)
   // envelope. A legitimately-written envelope always falls inside these; an
   // out-of-range value is treated as corruption and rejected BEFORE the KDF
-  // runs, so a crafted blob cannot force a multi-GB allocation (decrypt-time
-  // OOM/DoS). RFC 9106 / OWASP give defensible ceilings.
+  // runs (the GCM tag cannot be checked until after key derivation, so this
+  // validation gate is the only defense). The memory ceiling is the strongest
+  // preset the library ships ([Argon2idParams.sensitive] = 256 MiB): no
+  // legitimate blob ever records more, and capping here keeps a crafted blob
+  // from forcing an allocation large enough to OOM-kill the process at decrypt
+  // time (a 1 GiB allocation is itself fatal on most phones).
   static const int _minMemoryKiB = 8;
-  static const int _maxMemoryKiB = 1024 * 1024; // 1 GiB
+  static const int _maxMemoryKiB =
+      256 * 1024; // 256 MiB (Argon2idParams.sensitive)
   static const int _minIterations = 1;
   static const int _maxIterations = 64;
   static const int _minParallelism = 1;

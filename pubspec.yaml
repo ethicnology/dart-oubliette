@@ -6,10 +6,12 @@ name: oubliette_workspace
 publish_to: none
 
 environment:
-  # Pinned exactly to the fvm/CI toolchain (Flutter 3.44.1 → Dart 3.12.1) for
-  # reproducible, supply-chain-stable builds. A bare version is an exact pub
-  # constraint (not a caret range). fvm (.fvmrc) and CI enforce the same.
-  sdk: "3.12.1"
+  # Floor matches the fvm/CI toolchain (Flutter 3.44.1 → Dart 3.12.1); the range
+  # lets contributors and CI resolve on any compatible 3.x patch instead of a
+  # single exact patch (a bare version is an exact pub constraint and blocks
+  # `pub get` off 3.12.1). Reproducibility is provided by the committed
+  # pubspec.lock, .fvmrc, and the SHA-pinned Gradle distribution — not the pin.
+  sdk: ">=3.12.1 <4.0.0"
 
 workspace:
   - oubliette

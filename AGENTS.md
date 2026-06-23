@@ -141,7 +141,7 @@ make get          # resolve the whole workspace (one pub get from the root)
 make analyze      # analyze every package
 make test         # Dart unit tests in every package
 make format       # check formatting (make format-fix to apply)
-make kotlin-test  # Kotlin JVM unit tests (via the example Gradle build)
+make kotlin-test  # Kotlin JVM unit tests (via the example Gradle build + embedding)
 make apk          # build the example debug APK (compiles all plugin Kotlin)
 make integration  # integration tests (needs a device/emulator)
 make help         # list every target
