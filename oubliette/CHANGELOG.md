@@ -3,7 +3,7 @@
 This is the single changelog for the whole project: the `oubliette` package and
 its bundled platform plugins `keychain` (iOS/macOS) and `keystore` (Android).
 
-## Unreleased
+## 1.0.0
 
 * **Security audit fixes (security-hardening branch).**
   * `DarwinSecretAccess.custom` now rejects `biometryCurrentSetOnly: true` with
@@ -42,8 +42,6 @@ its bundled platform plugins `keychain` (iOS/macOS) and `keystore` (Android).
   `PayloadCorruptException` now documents `PassphraseVault` envelope-corruption
   causes; `PassphraseVault.useAndForget` notes the dual-layer zeroization and
   `.keyring` recommends `init()` for eager backend-error surfacing.
-
-## 1.0.0
 
 First release. The project has never been published, so this version is free to
 choose its final on-disk format — and from this release that format becomes a

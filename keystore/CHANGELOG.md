@@ -5,7 +5,7 @@ project ships a single consolidated changelog in
 [`oubliette/CHANGELOG.md`](../oubliette/CHANGELOG.md); this file records the
 changes scoped to this package.
 
-## Unreleased
+## 1.0.0
 
 * **In-flight biometric prompts are cancelled on activity/engine detach.** The
   prompt's `CancellationSignal` is published to the plugin and force-cancelled on
@@ -47,8 +47,6 @@ changes scoped to this package.
 * **Build hygiene:** dropped the unused `mockito-core` test dependency and the
   legacy `package` attribute from `AndroidManifest.xml` (AGP 9 errors on it; the
   namespace is declared in `build.gradle`).
-
-## 1.0.0
 
 First release. Android Keystore AES-256-GCM facade with a versioned,
 self-describing `EncryptedPayload`.

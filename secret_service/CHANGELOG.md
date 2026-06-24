@@ -1,4 +1,4 @@
-## Unreleased
+## 1.0.0
 
 - Embedded NUL in a slot/prefix is now rejected (`bad_args` natively, an
   `ArgumentError` in the Dart facade). A `fl_value_get_string` C string silently
@@ -90,8 +90,6 @@
 - README: documented the software-tier threat model — no hardware backing, no
   per-item AAD (attributes are in the clear and unbound), and that libsecret's
   sync calls block the platform thread.
-
-## 1.0.0
 
 - Initial release. Linux Secret Service (libsecret) plugin with a typed Dart
   facade. Stores each secret as a distinct Secret Service item keyed by its

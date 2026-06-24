@@ -107,7 +107,9 @@ void main() {
     setUp(() {
       lastCall = null;
       handler = null;
-      binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+      binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
         lastCall = call;
         return handler?.call(call);
       });
@@ -175,21 +177,24 @@ void main() {
       );
     });
 
-    test('ensureEnclaveKeyPair sends only SE-key-identity scoping args', () async {
-      // The SE key identity is (service, accessibility, accessGroup) plus the
-      // macOS keychain-domain selector. Leaking item-level flags (alias,
-      // authenticationRequired, …) here would desynchronize the native tag
-      // from the one used on store/fetch.
-      handler = (_) => true;
-      await keychain(secureEnclave: true, auth: true).ensureEnclaveKeyPair();
-      final args = (lastCall!.arguments as Map).cast<String, Object?>();
-      expect(lastCall!.method, 'ensureEnclaveKeyPair');
-      expect(args, {
-        'service': 'svc',
-        'accessibility': 'whenUnlockedThisDeviceOnly',
-        'accessGroup': 'group.app',
-      });
-    });
+    test(
+      'ensureEnclaveKeyPair sends only SE-key-identity scoping args',
+      () async {
+        // The SE key identity is (service, accessibility, accessGroup) plus the
+        // macOS keychain-domain selector. Leaking item-level flags (alias,
+        // authenticationRequired, …) here would desynchronize the native tag
+        // from the one used on store/fetch.
+        handler = (_) => true;
+        await keychain(secureEnclave: true, auth: true).ensureEnclaveKeyPair();
+        final args = (lastCall!.arguments as Map).cast<String, Object?>();
+        expect(lastCall!.method, 'ensureEnclaveKeyPair');
+        expect(args, {
+          'service': 'svc',
+          'accessibility': 'whenUnlockedThisDeviceOnly',
+          'accessGroup': 'group.app',
+        });
+      },
+    );
 
     test('secItemCopyMatching returns null for a definite not-found', () async {
       handler = (_) => null;
@@ -215,7 +220,10 @@ void main() {
     test('deleteByPrefix rejects an empty prefix (never wipe-all)', () async {
       // An empty prefix would hasPrefix-match every account in scope. Guard it
       // at the facade so a malformed direct call cannot purge the whole scope.
-      expect(() => keychain().deleteByPrefix(''), throwsA(isA<ArgumentError>()));
+      expect(
+        () => keychain().deleteByPrefix(''),
+        throwsA(isA<ArgumentError>()),
+      );
     });
 
     test('deleteByPrefix sends prefix, exclusions, and config scope', () async {

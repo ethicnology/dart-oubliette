@@ -278,15 +278,18 @@ void main() {
       );
     });
 
-    test('custom accepts biometryCurrentSetOnly with authenticationRequired', () {
-      expect(
-        darwinCustomAuth(
-          authenticationRequired: true,
-          biometryCurrentSetOnly: true,
-        ).biometryCurrentSetOnly,
-        true,
-      );
-    });
+    test(
+      'custom accepts biometryCurrentSetOnly with authenticationRequired',
+      () {
+        expect(
+          darwinCustomAuth(
+            authenticationRequired: true,
+            biometryCurrentSetOnly: true,
+          ).biometryCurrentSetOnly,
+          true,
+        );
+      },
+    );
   });
 
   group('buildSlot rejects malformed UTF-16 (slot-isolation)', () {
@@ -295,21 +298,12 @@ void main() {
     // (and one vault AAD), so fetching one key could return the other's secret.
     test('two keys differing only by an unpaired surrogate would collide', () {
       expect('a\uD800' == 'a\uDC00', isFalse, reason: 'distinct in Dart');
-      expect(
-        () => buildSlot('p_', 'a\uD800'),
-        throwsA(isA<ArgumentError>()),
-      );
-      expect(
-        () => buildSlot('p_', 'a\uDC00'),
-        throwsA(isA<ArgumentError>()),
-      );
+      expect(() => buildSlot('p_', 'a\uD800'), throwsA(isA<ArgumentError>()));
+      expect(() => buildSlot('p_', 'a\uDC00'), throwsA(isA<ArgumentError>()));
     });
 
     test('unpaired surrogate in the prefix is rejected too', () {
-      expect(
-        () => buildSlot('p\uD800_', 'key'),
-        throwsA(isA<ArgumentError>()),
-      );
+      expect(() => buildSlot('p\uD800_', 'key'), throwsA(isA<ArgumentError>()));
       expect(
         () => validateSlotPrefix('p\uDFFF_'),
         throwsA(isA<ArgumentError>()),
@@ -338,9 +332,15 @@ void main() {
     });
 
     test('NUL in the key or prefix is rejected', () {
-      expect(() => buildSlot('p_', '\u0000probe'), throwsA(isA<ArgumentError>()));
+      expect(
+        () => buildSlot('p_', '\u0000probe'),
+        throwsA(isA<ArgumentError>()),
+      );
       expect(() => buildSlot('p\u0000_', 'key'), throwsA(isA<ArgumentError>()));
-      expect(() => validateSlotPrefix('p\u0000_'), throwsA(isA<ArgumentError>()));
+      expect(
+        () => validateSlotPrefix('p\u0000_'),
+        throwsA(isA<ArgumentError>()),
+      );
     });
   });
 }

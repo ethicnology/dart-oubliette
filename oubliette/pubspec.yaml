@@ -1,7 +1,6 @@
 name: oubliette
 description: "Cross-platform secure storage for Flutter (Android Keystore, iOS/macOS Keychain, Linux Secret Service)."
 version: 1.0.0
-publish_to: 'none'
 homepage: https://github.com/ethicnology/dart-oubliette
 repository: https://github.com/ethicnology/dart-oubliette
 
@@ -15,12 +14,13 @@ dependencies:
   flutter:
     sdk: flutter
   meta: ^1.18.0
-  keychain:
-    path: ../keychain
-  keystore:
-    path: ../keystore
-  secret_service:
-    path: ../secret_service
+  # Sibling workspace members. Plain hosted-style constraints (no `path:`):
+  # under Dart pub workspaces these resolve to the local copies for development
+  # (a publishable package may not carry `path` deps), and to pub.dev once each
+  # sibling is published. Publish the three leaves before `oubliette`.
+  keychain: ^1.0.0
+  keystore: ^1.0.0
+  secret_service: ^1.0.0
   shared_preferences: ^2.5.5
   pointycastle: ^4.0.0
 

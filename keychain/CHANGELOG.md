@@ -5,7 +5,7 @@
 [`oubliette/CHANGELOG.md`](../oubliette/CHANGELOG.md); this file records the
 changes scoped to this package.
 
-## Unreleased
+## 1.0.0
 
 * **`biometryCurrentSetOnly` without `authenticationRequired` is now rejected.**
   The `.biometryCurrentSet` access-control flag is only applied on the
@@ -27,8 +27,6 @@ changes scoped to this package.
   a future SDK default.
 * **`ensureEnclaveKeyPair` rejects a non-map argument** as `bad_args`, matching
   the strict arg-guard of every other handler.
-
-## 1.0.0
 
 First release. Keychain `SecItem` facade with a shared Darwin source and Secure
 Enclave ECIES wrapping.

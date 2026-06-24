@@ -199,9 +199,7 @@ void main() {
       mock.errorCode = code;
       await expectLater(
         service.contains('x'),
-        throwsA(
-          isA<PlatformException>().having((e) => e.code, 'code', code),
-        ),
+        throwsA(isA<PlatformException>().having((e) => e.code, 'code', code)),
       );
     });
   }
