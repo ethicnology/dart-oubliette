@@ -171,20 +171,26 @@ static void op_watchdog_finish(OpWatchdog* w) {
 
 static SecretService* warmup(const char** err_code) {
   *err_code = nullptr;
-  g_autoptr(GError) error = nullptr;
-
+  // One GError per GLib call, never a shared/reused one. GLib's contract is that
+  // a GError** must point at NULL on entry (g_return_if_fail(*error == NULL)) —
+  // threading a single variable through several sequential calls is fragile: a
+  // provider that (against contract) left `error` set while returning success
+  // would trip a fatal g_critical on the next call. Separate autoptrs keep each
+  // call's precondition trivially satisfied and each error independently owned.
+  g_autoptr(GError) get_error = nullptr;
   SecretService* service = secret_service_get_sync(
       static_cast<SecretServiceFlags>(SECRET_SERVICE_OPEN_SESSION |
                                       SECRET_SERVICE_LOAD_COLLECTIONS),
-      nullptr, &error);
+      nullptr, &get_error);
   if (!service) {
     *err_code = "backend_unavailable";
     return nullptr;
   }
 
+  g_autoptr(GError) alias_error = nullptr;
   SecretCollection* collection = secret_collection_for_alias_sync(
       service, SECRET_COLLECTION_DEFAULT, SECRET_COLLECTION_NONE, nullptr,
-      &error);
+      &alias_error);
   if (!collection) {
     g_object_unref(service);
     *err_code = "backend_unavailable";
@@ -198,13 +204,14 @@ static SecretService* warmup(const char** err_code) {
 
     GList* to_unlock = g_list_append(nullptr, collection);
     GList* unlocked = nullptr;
+    g_autoptr(GError) unlock_error = nullptr;
     // Returns the count unlocked (>= 1 on success), 0 if the prompt was
     // dismissed (no item unlocked, no GError), or -1 on error / cancellation
     // (timeout, which sets a G_IO_ERROR_CANCELLED GError). Anything but a
     // positive count is fail-closed (SS-1: -1 must NOT read as success).
     gint n = secret_service_unlock_sync(service, to_unlock,
                                         watchdog->cancellable, &unlocked,
-                                        &error);
+                                        &unlock_error);
     g_list_free(to_unlock);
     if (unlocked) g_list_free_full(unlocked, g_object_unref);
     op_watchdog_finish(watchdog);  // wake the timer; drop our ref
@@ -219,8 +226,8 @@ static SecretService* warmup(const char** err_code) {
       //   - any other failure: a timeout (our watchdog cancelled the prompt) or
       //     a real unlock error -> keyring_locked (KeyringLockedException).
       // Both keep data intact; neither is treated as "empty".
-      *err_code = (n == 0 && error == nullptr) ? "auth_cancelled"
-                                               : "keyring_locked";
+      *err_code = (n == 0 && unlock_error == nullptr) ? "auth_cancelled"
+                                                      : "keyring_locked";
       return nullptr;
     }
   }
@@ -551,6 +558,26 @@ static void secret_service_plugin_handle_method_call(
        fl_value_get_type(prefix_value) == FL_VALUE_TYPE_STRING)
           ? fl_value_get_string(prefix_value)
           : nullptr;
+
+  // Reject an embedded NUL in any string arg. fl_value_get_string returns a
+  // NUL-terminated C string, but a Dart String may legitimately contain U+0000;
+  // every downstream use here treats the value as a C string (g_hash_table
+  // attribute, secret_password_store_sync, strlen/g_str_has_prefix), so a slot
+  // or prefix containing a NUL would SILENTLY TRUNCATE at the first NUL. That
+  // defeats the byte-exact scoping the design rests on: a truncated prefix could
+  // match foreign items (deleteByPrefix cross-wipe), and two distinct keys
+  // sharing a NUL-truncation prefix would collide into one item (a fetch of one
+  // could return the other's secret). The oubliette layer already rejects NUL in
+  // buildSlot; this makes the plugin sound on its own for any direct caller.
+  // Compare the C length against the FlValue's true byte length and fail closed.
+  if ((slot && strlen(slot) != fl_value_get_string_size(slot_value)) ||
+      (value && strlen(value) != fl_value_get_string_size(value_value)) ||
+      (prefix && strlen(prefix) != fl_value_get_string_size(prefix_value))) {
+    response =
+        error_response("bad_args", "Argument contains an embedded NUL byte.");
+    fl_method_call_respond(method_call, response, nullptr);
+    return;
+  }
 
   if (strcmp(method, "contains") == 0) {
     if (!slot)

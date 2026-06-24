@@ -108,6 +108,39 @@ void main() {
     expect(await service.contains('otherc'), true);
   });
 
+  // An embedded NUL would silently truncate the slot/prefix at the native
+  // C-string boundary, defeating the byte-exact scoping. The facade rejects it
+  // up front (mirrored by the native plugin's bad_args backstop) so it can never
+  // reach the wire. No native call is made.
+  group('embedded NUL is rejected before the channel', () {
+    test('add', () {
+      expect(
+        () => service.add('a\u0000b', Uint8List.fromList([1])),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(mock.items, isEmpty);
+    });
+
+    test('get', () {
+      expect(() => service.get('a\u0000b'), throwsA(isA<ArgumentError>()));
+    });
+
+    test('contains', () {
+      expect(() => service.contains('a\u0000b'), throwsA(isA<ArgumentError>()));
+    });
+
+    test('delete', () {
+      expect(() => service.delete('a\u0000b'), throwsA(isA<ArgumentError>()));
+    });
+
+    test('deleteByPrefix', () {
+      expect(
+        () => service.deleteByPrefix('a\u0000'),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
   test('backend errors propagate as PlatformException', () async {
     mock.errorCode = 'backend_unavailable';
     await expectLater(

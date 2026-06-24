@@ -1,5 +1,16 @@
 ## Unreleased
 
+- Embedded NUL in a slot/prefix is now rejected (`bad_args` natively, an
+  `ArgumentError` in the Dart facade). A `fl_value_get_string` C string silently
+  truncates at the first NUL, which would defeat the byte-exact slot scoping (a
+  truncated prefix could match foreign items; two keys sharing a NUL-truncation
+  prefix could collide). The plugin compares the C length against the `FlValue`
+  byte length and fails closed, so the backend is sound on its own for direct
+  callers (the oubliette layer already rejected NUL in `buildSlot`).
+- `warmup()` no longer reuses a single `GError` across sequential GLib calls.
+  Each call gets its own `g_autoptr(GError)`, keeping every call's
+  `*error == NULL` precondition trivially satisfied (a reused, already-set error
+  would trip a fatal `g_critical`).
 - Existence checks no longer load the secret. `contains` and `add`'s
   duplicate check now use an attribute-only `secret_service_search_sync` (no
   `SECRET_SEARCH_LOAD_SECRETS`) instead of `secret_password_lookup_sync`, so a

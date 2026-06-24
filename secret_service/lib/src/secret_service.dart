@@ -41,8 +41,23 @@ import 'package:flutter/services.dart';
 final class SecretService {
   final MethodChannel _channel = const MethodChannel('secret_service');
 
+  /// Rejects an embedded NUL (U+0000) in a slot/prefix before it crosses the
+  /// channel. The native libsecret attribute / D-Bus string is a C string, so a
+  /// NUL silently truncates the value there — breaking the byte-exact slot
+  /// scoping (a truncated prefix could match foreign items; two distinct keys
+  /// sharing a NUL-truncation prefix would collide into one item). The native
+  /// plugin also rejects this as a defense-in-depth backstop (`bad_args`); this
+  /// surfaces it early as a clear developer-facing [ArgumentError]. Mirrors the
+  /// empty-prefix guard in [deleteByPrefix].
+  static void _rejectNul(String value, String name) {
+    if (value.codeUnits.contains(0)) {
+      throw ArgumentError.value(value, name, 'must not contain a NUL (U+0000)');
+    }
+  }
+
   /// Whether an item exists for [slot].
   Future<bool> contains(String slot) async {
+    _rejectNul(slot, 'slot');
     final result = await _channel.invokeMethod<bool>('contains', {
       'slot': slot,
     });
@@ -63,6 +78,7 @@ final class SecretService {
   /// present — there is no implicit overwrite (mirrors Darwin's
   /// `errSecDuplicateItem`).
   Future<void> add(String slot, Uint8List data) async {
+    _rejectNul(slot, 'slot');
     await _channel.invokeMethod<void>('write', {
       'slot': slot,
       'value': base64Encode(data),
@@ -74,6 +90,7 @@ final class SecretService {
   /// Throws a [PlatformException] of code `payload_corrupt` if the stored
   /// value is not valid base64 (an externally tampered/corrupted item).
   Future<Uint8List?> get(String slot) async {
+    _rejectNul(slot, 'slot');
     final value = await _channel.invokeMethod<String>('read', {'slot': slot});
     if (value == null) return null;
     try {
@@ -94,6 +111,7 @@ final class SecretService {
   /// Deletes the item for [slot]. A no-op if absent, but a locked/unavailable
   /// keyring **throws** rather than silently succeeding.
   Future<void> delete(String slot) async {
+    _rejectNul(slot, 'slot');
     await _channel.invokeMethod<void>('delete', {'slot': slot});
   }
 
@@ -103,6 +121,7 @@ final class SecretService {
   /// exact: the reserved separator can only sit at the prefix/key boundary, and
   /// a sibling profile whose prefix nests under another's is never matched.
   Future<void> deleteByPrefix(String prefix) async {
+    _rejectNul(prefix, 'prefix');
     await _channel.invokeMethod<void>('deleteByPrefix', {'prefix': prefix});
   }
 }
