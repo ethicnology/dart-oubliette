@@ -33,6 +33,7 @@ migrate_working_dir/
 **/build/
 /coverage/
 **/.cursor/
+**/.claude/
 .gradle/
 
 # Local audit / planning docs — kept untracked, never committed
