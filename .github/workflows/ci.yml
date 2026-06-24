@@ -83,7 +83,14 @@ jobs:
       # SchemeRegistry contract — hard-fails on any drift.
       - name: Kotlin unit tests (SchemeRegistry append-only contract)
         working-directory: oubliette/example/android
-        run: ./gradlew :keystore:testDebugUnitTest
+        run: |
+          ./gradlew :keystore:testDebugUnitTest
+          # Gradle exits 0 when it discovers zero tests, so assert the JUnit
+          # report actually executed tests — a dead SchemeRegistry contract guard
+          # (renamed source set / lost test engine) must hard-fail, not pass green.
+          count=$(grep -rhoE 'tests="[0-9]+"' ../build/keystore/test-results/testDebugUnitTest/*.xml 2>/dev/null | grep -oE '[0-9]+' | awk '{s+=$1} END{print s+0}')
+          echo "kotlin-test executed $count test(s)"
+          [ "${count:-0}" -gt 0 ] || { echo "::error::0 Kotlin tests executed — SchemeRegistry append-only contract guard is dead"; exit 1; }
 
   darwin-build:
     name: Darwin build + Swift unit tests

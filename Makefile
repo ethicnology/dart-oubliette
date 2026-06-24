@@ -38,6 +38,9 @@ kotlin-test: ## Run the Kotlin JVM unit tests (SchemeRegistry append-only contra
 	# :keystore subproject; without it, `./gradlew :keystore:...` cannot resolve.
 	cd oubliette/example && $(RUNNER) flutter build apk --debug
 	cd oubliette/example/android && ./gradlew :keystore:testDebugUnitTest
+	@count=$$(grep -rhoE 'tests="[0-9]+"' oubliette/example/build/keystore/test-results/testDebugUnitTest/*.xml 2>/dev/null | grep -oE '[0-9]+' | awk '{s+=$$1} END{print s+0}'); \
+	echo "kotlin-test executed $$count test(s)"; \
+	[ "$${count:-0}" -gt 0 ] || { echo "ERROR: 0 Kotlin tests executed - SchemeRegistry append-only contract guard is dead"; exit 1; }
 
 apk: ## Build the example debug APK (compiles all plugin Kotlin)
 	cd oubliette/example && $(RUNNER) flutter build apk --debug
