@@ -5,6 +5,20 @@ its bundled platform plugins `keychain` (iOS/macOS) and `keystore` (Android).
 
 ## Unreleased
 
+* **Security audit fixes (security-hardening branch).**
+  * `DarwinSecretAccess.custom` now rejects `biometryCurrentSetOnly: true` with
+    `authenticationRequired: false` at construction (`ArgumentError`), and the
+    Darwin native layer rejects the same combination on `secItemAdd`
+    (`biometry_requires_authentication`). Previously such a profile was stored
+    with no access control — the strictest-sounding flag yielding the weakest
+    item.
+  * The Linux `secret_service` backend rejects an embedded NUL in any
+    slot/prefix (it would silently truncate at the C-string boundary and defeat
+    the byte-exact slot scoping), and no longer reuses a single `GError` across
+    sequential GLib calls in `warmup()`.
+  * Android in-flight biometric prompts are force-cancelled (wiping their
+    plaintext) on activity/engine detach, closing the unwiped-until-process-death
+    window left by OEMs that skip `ERROR_CANCELED` on activity destruction.
 * **`store()` race-loser unified onto `StateError` (Linux & Darwin).** When a
   concurrent writer wins the put-if-absent race the best-effort precheck cannot
   close, the native `already_exists` now throws the same `StateError` as the
