@@ -226,6 +226,25 @@ enum SecItemAddResult {
   case accessControlFailed
 }
 
+/// Validates the cross-field coherence of an add request *before* anything is
+/// stored. Returns a stable error code when the combination is incoherent
+/// (fail-closed), or `nil` when the request may proceed.
+///
+/// `biometryCurrentSetOnly` selects the `.biometryCurrentSet` access-control
+/// flag, but that flag is only ever applied when `authenticationRequired` is
+/// also true (see `secItemAdd`: the access control is built only on the
+/// authenticated branch). With `authenticationRequired == false` the item is
+/// stored with a plain `kSecAttrAccessible` and **no** access control — silently
+/// dropping the strict biometry-only gate the caller asked for. That is a
+/// fail-OPEN against intent (the strictest-sounding flag yields the weakest
+/// item), so reject it rather than store an unauthenticated item.
+func secItemAddParamsError(_ params: KeychainParams) -> String? {
+  if params.biometryCurrentSetOnly && !params.authenticationRequired {
+    return "biometry_requires_authentication"
+  }
+  return nil
+}
+
 func secItemAdd(params: KeychainParams, data: Data) -> SecItemAddResult {
   // Own a mutable copy so we can zero it afterwards without mutating the
   // caller-owned (and possibly immutable) FlutterStandardTypedData buffer.

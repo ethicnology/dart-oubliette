@@ -96,6 +96,19 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       result(FlutterError(code: "bad_args", message: "Missing alias/data or unknown accessibility.", details: nil))
       return
     }
+    // Fail closed on an incoherent flag combination *before* storing anything:
+    // biometryCurrentSetOnly without authenticationRequired would otherwise be
+    // stored as an UN-gated item (the .biometryCurrentSet ACL is only applied on
+    // the authenticated branch) — silently dropping the biometry gate the caller
+    // requested. See secItemAddParamsError.
+    if let code = secItemAddParamsError(params) {
+      result(FlutterError(
+        code: code,
+        message: "biometryCurrentSetOnly requires authenticationRequired: true "
+          + "(otherwise the item would be stored with no access control).",
+        details: nil))
+      return
+    }
     // A Secure Enclave key is hardware-bound to this device; pairing it with a
     // syncable / backup-restorable item class is incoherent and SE access
     // control creation would fail as an opaque -50. Reject with a clear code.
@@ -275,7 +288,11 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
         // access — reporting `biometry_lockout` there would wrongly tell the user
         // biometrics are their only path. Probe only when the item is
         // biometry-only; otherwise the failure is an ordinary `auth_failed`.
-        if params.biometryCurrentSetOnly {
+        // Gate on BOTH flags: `.biometryCurrentSet` is only ever applied to an
+        // authenticated item (see createAccessControl / secItemAdd), so a probe
+        // with biometryCurrentSetOnly but no authenticationRequired could never
+        // describe how the item was actually stored.
+        if params.authenticationRequired && params.biometryCurrentSetOnly {
           let probe = LAContext()
           var probeError: NSError?
           let biometryUsable = probe.canEvaluatePolicy(

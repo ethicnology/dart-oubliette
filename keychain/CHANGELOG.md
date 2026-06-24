@@ -7,6 +7,14 @@ changes scoped to this package.
 
 ## Unreleased
 
+* **`biometryCurrentSetOnly` without `authenticationRequired` is now rejected.**
+  The `.biometryCurrentSet` access-control flag is only applied on the
+  authenticated write branch, so setting `biometryCurrentSetOnly: true` with
+  `authenticationRequired: false` previously stored an item with **no** access
+  control — the strictest-sounding profile yielding the weakest item (fail-open
+  against intent). `secItemAdd` now fails closed with
+  `biometry_requires_authentication` and stores nothing; the biometry-lockout
+  read probe is likewise gated on both flags.
 * **Biometry lockout is now a distinct error.** Too-many-failed-attempts
   lockout previously folded into `auth_failed` (indistinguishable by `OSStatus`).
   The read path now probes a fresh `LAContext` with `canEvaluatePolicy` on

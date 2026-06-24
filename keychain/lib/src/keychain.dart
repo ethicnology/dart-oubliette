@@ -30,9 +30,13 @@ class KeychainConfig {
   /// [authenticationRequired] when `true`, the item is stored with a
   /// `SecAccessControl` that requires user presence (biometry or passcode).
   ///
-  /// [biometryCurrentSetOnly] when `true` (and [authenticationRequired] is
-  /// `true`), uses `.biometryCurrentSet` flag which invalidates items when
-  /// biometric enrollment changes.
+  /// [biometryCurrentSetOnly] when `true`, uses the `.biometryCurrentSet` flag
+  /// which invalidates items when biometric enrollment changes. It is only
+  /// meaningful together with [authenticationRequired]; setting it with
+  /// [authenticationRequired] `false` is **rejected** by `secItemAdd`
+  /// (`biometry_requires_authentication`) rather than silently stored as an
+  /// un-gated item — the strictest-sounding flag must never yield the weakest
+  /// item.
   ///
   /// [authenticationPrompt] reason string shown in the system authentication
   /// dialog when reading an authentication-protected item.
@@ -176,10 +180,12 @@ final class Keychain {
   /// Throws [PlatformException]: `already_exists`, `se_key_gen_failed`,
   /// `se_encrypt_failed`, `access_control_failed`,
   /// `se_requires_device_only_accessibility`,
-  /// `macos_auth_requires_data_protection` (macOS),
+  /// `biometry_requires_authentication` (biometryCurrentSetOnly set without
+  /// authenticationRequired), `macos_auth_requires_data_protection` (macOS),
   /// `interaction_not_allowed` (device locked), `missing_entitlement`,
   /// `sec_item_add_failed`, `bad_args`. On every `se_*` /
-  /// `access_control_failed` outcome nothing was stored (fail-closed).
+  /// `access_control_failed` / `biometry_requires_authentication` outcome
+  /// nothing was stored (fail-closed).
   Future<void> secItemAdd(String alias, Uint8List data) async {
     await _channel.invokeMethod<void>('secItemAdd', {
       ..._args(alias),

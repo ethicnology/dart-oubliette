@@ -257,6 +257,21 @@ class DarwinSecretAccess {
         );
       }
     }
+    // Fail fast on an incoherent auth combination: biometryCurrentSetOnly
+    // selects the `.biometryCurrentSet` access-control flag, which the native
+    // layer applies ONLY when authenticationRequired is true. Setting it alone
+    // would store an item with NO access control — the strictest-sounding
+    // profile yielding the weakest item. The native side also rejects this
+    // (`biometry_requires_authentication`); catching it here surfaces the
+    // misconfiguration at construction instead of at the first store().
+    if (biometryCurrentSetOnly && !authenticationRequired) {
+      throw ArgumentError.value(
+        biometryCurrentSetOnly,
+        'biometryCurrentSetOnly',
+        'requires authenticationRequired: true (otherwise the item would be '
+            'stored with no access control)',
+      );
+    }
   }
 
   KeychainConfig toConfig() => KeychainConfig(

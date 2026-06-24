@@ -251,6 +251,42 @@ void main() {
         KeychainAccessibility.whenPasscodeSetThisDeviceOnly,
       );
     });
+
+    DarwinSecretAccess darwinCustomAuth({
+      required bool authenticationRequired,
+      required bool biometryCurrentSetOnly,
+    }) => DarwinSecretAccess.custom(
+      prefix: 'auth_combo_test_',
+      service: null,
+      accessibility: KeychainAccessibility.whenPasscodeSetThisDeviceOnly,
+      useDataProtection: true,
+      authenticationRequired: authenticationRequired,
+      biometryCurrentSetOnly: biometryCurrentSetOnly,
+      authenticationPrompt: 'auth',
+      secureEnclave: false,
+      accessGroup: null,
+    );
+
+    test('custom rejects biometryCurrentSetOnly without authenticationRequired '
+        '(would store an un-gated item)', () {
+      expect(
+        () => darwinCustomAuth(
+          authenticationRequired: false,
+          biometryCurrentSetOnly: true,
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('custom accepts biometryCurrentSetOnly with authenticationRequired', () {
+      expect(
+        darwinCustomAuth(
+          authenticationRequired: true,
+          biometryCurrentSetOnly: true,
+        ).biometryCurrentSetOnly,
+        true,
+      );
+    });
   });
 
   group('buildSlot rejects malformed UTF-16 (slot-isolation)', () {

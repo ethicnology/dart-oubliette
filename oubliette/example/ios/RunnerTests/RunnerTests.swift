@@ -44,4 +44,26 @@ class RunnerTests: XCTestCase {
     let forged = enclaveKeyTag(params: EnclaveParams(service: "a|g:1:b", accessibility: acc, accessGroup: nil))
     XCTAssertNotEqual(real, forged)
   }
+
+  private func params(auth: Bool, biometryCurrentSetOnly: Bool) -> KeychainParams {
+    KeychainParams(
+      alias: "a", service: nil, accessibility: acc, useDataProtection: false,
+      authenticationRequired: auth, biometryCurrentSetOnly: biometryCurrentSetOnly,
+      authenticationPrompt: nil, secureEnclave: false, accessGroup: nil)
+  }
+
+  // FAIL-CLOSED: biometryCurrentSetOnly without authenticationRequired would
+  // store an UN-gated item (the .biometryCurrentSet ACL is only applied on the
+  // authenticated branch). The add path must reject the combination.
+  func testBiometryCurrentSetOnlyRequiresAuthentication() {
+    XCTAssertEqual(
+      secItemAddParamsError(params(auth: false, biometryCurrentSetOnly: true)),
+      "biometry_requires_authentication")
+  }
+
+  func testCoherentAddCombinationsAreAccepted() {
+    XCTAssertNil(secItemAddParamsError(params(auth: true, biometryCurrentSetOnly: true)))
+    XCTAssertNil(secItemAddParamsError(params(auth: true, biometryCurrentSetOnly: false)))
+    XCTAssertNil(secItemAddParamsError(params(auth: false, biometryCurrentSetOnly: false)))
+  }
 }
