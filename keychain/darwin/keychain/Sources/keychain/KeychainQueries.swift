@@ -366,3 +366,52 @@ func secItemDeleteByPrefix(
   }
   return deletedAny ? errSecSuccess : errSecItemNotFound
 }
+
+/// Lists the `kSecAttrAccount` of every generic-password item in [scope] whose
+/// account starts with [prefix] but with **none** of [excludePrefixes].
+///
+/// The non-destructive twin of `secItemDeleteByPrefix`: identical enumeration
+/// query (`kSecMatchLimitAll` + `kSecReturnAttributes`), but it collects the
+/// matching account names instead of deleting them. Returns only account names
+/// (the storage keys) — never `kSecReturnData`, so no item value is read or
+/// decrypted. Returns `(errSecSuccess, accounts)` on a hit, `(errSecItemNotFound,
+/// [])` when nothing matched, or `(status, [])` when the enumeration failed.
+func secItemListByPrefix(
+  scope: KeychainScope,
+  prefix: String,
+  excludePrefixes: [String] = []
+) -> (OSStatus, [String]) {
+  var listQuery: [String: Any] = [
+    kSecClass as String: kSecClassGenericPassword,
+    kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
+    kSecMatchLimit as String: kSecMatchLimitAll,
+    kSecReturnAttributes as String: true
+  ]
+  if let service = scope.service {
+    listQuery[kSecAttrService as String] = service
+  }
+  if let group = scope.accessGroup {
+    listQuery[kSecAttrAccessGroup as String] = group
+  }
+  #if os(macOS)
+  if scope.useDataProtection {
+    listQuery[kSecUseDataProtectionKeychain as String] = true
+  }
+  #endif
+
+  var items: CFTypeRef?
+  let listStatus = Security.SecItemCopyMatching(listQuery as CFDictionary, &items)
+  if listStatus == errSecItemNotFound { return (errSecItemNotFound, []) }
+  guard listStatus == errSecSuccess, let entries = items as? [[String: Any]] else {
+    return (listStatus, [])
+  }
+
+  var accounts: [String] = []
+  for entry in entries {
+    guard let account = entry[kSecAttrAccount as String] as? String,
+          account.hasPrefix(prefix),
+          !excludePrefixes.contains(where: { account.hasPrefix($0) }) else { continue }
+    accounts.append(account)
+  }
+  return (errSecSuccess, accounts)
+}

@@ -203,6 +203,17 @@ class LinuxOubliette extends Oubliette {
     return _mapError(key, () => _service.contains(_storedKey(key)));
   }
 
+  @override
+  Future<List<String>> keys() async {
+    // The non-destructive twin of purge(): purge() calls deleteByPrefix on the
+    // same owned prefix; keys() lists the matching slots instead. Routed through
+    // _mapError so a locked/unavailable keyring surfaces as a typed exception.
+    // Strip the owned prefix so the caller gets logical keys, not raw slots.
+    final owned = access.prefix + slotSeparator;
+    final slots = await _mapError(null, () => _service.listByPrefix(owned));
+    return slots.map((s) => s.substring(owned.length)).toList(growable: false);
+  }
+
   Future<T> _withKeyLock<T>(String key, Future<T> Function() body) async {
     final pendingPurge = _purges[access.prefix];
     if (pendingPurge != null) {

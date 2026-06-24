@@ -41,6 +41,10 @@ class _MockSecretService {
         final prefix = args['prefix'] as String;
         items.removeWhere((slot, _) => slot.startsWith(prefix));
         return null;
+      case 'listByPrefix':
+        // Error injection is handled at the top of `handle` via `errorCode`.
+        final prefix = args['prefix'] as String;
+        return items.keys.where((slot) => slot.startsWith(prefix)).toList();
       default:
         return null;
     }
@@ -329,6 +333,52 @@ void main() {
           isTrue,
           reason: 'nested custom sibling slot must survive',
         );
+      },
+    );
+  });
+
+  group('keys (enumerate stored keys)', () {
+    test('empty profile returns an empty list', () async {
+      expect(await storage().keys(), isEmpty);
+    });
+
+    test('returns the LOGICAL keys, prefix + separator stripped', () async {
+      final s = storage();
+      await s.store('alpha', Uint8List.fromList([1]));
+      await s.store('beta', Uint8List.fromList([2]));
+      expect((await s.keys())..sort(), ['alpha', 'beta']);
+    });
+
+    test('shrinks after trash', () async {
+      final s = storage();
+      await s.store('a', Uint8List.fromList([1]));
+      await s.store('b', Uint8List.fromList([2]));
+      await s.trash('a');
+      expect(await s.keys(), ['b']);
+    });
+
+    test('empty after purge', () async {
+      final s = storage();
+      await s.store('a', Uint8List.fromList([1]));
+      await s.purge();
+      expect(await s.keys(), isEmpty);
+    });
+
+    test('excludes sibling-profile keys (prefix isolation)', () async {
+      final only = storage(); // onlyUnlocked
+      final even = LinuxOubliette(access: const LinuxSecretAccess.evenLocked());
+      await only.store('mine', Uint8List.fromList([1]));
+      await even.store('theirs', Uint8List.fromList([2]));
+      expect(await only.keys(), ['mine']);
+      expect(await even.keys(), ['theirs']);
+    });
+
+    test(
+      'a locked/unavailable keyring surfaces as a typed exception',
+      () async {
+        final s = storage();
+        mock.errorCode = 'keyring_locked';
+        await expectLater(s.keys(), throwsA(isA<KeyringLockedException>()));
       },
     );
   });

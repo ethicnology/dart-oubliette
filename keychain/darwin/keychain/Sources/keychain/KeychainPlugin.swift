@@ -80,6 +80,8 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
       handleSecItemDelete(call, result: result)
     case "secItemDeleteByPrefix":
       handleSecItemDeleteByPrefix(call, result: result)
+    case "secItemListByPrefix":
+      handleSecItemListByPrefix(call, result: result)
     case "keychainContains":
       handleKeychainContains(call, result: result)
     case "ensureEnclaveKeyPair":
@@ -401,6 +403,33 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
         box.deliver(nil)
       } else {
         box.deliver(statusFlutterError(status, fallbackCode: "sec_item_delete_failed"))
+      }
+    }
+  }
+
+  private func handleSecItemListByPrefix(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    // No alias — we enumerate by prefix, so parse the scoping fields directly
+    // (mirrors handleSecItemDeleteByPrefix).
+    guard let args = call.arguments as? [String: Any],
+          let prefix = args["prefix"] as? String else {
+      result(FlutterError(code: "bad_args", message: "Missing prefix.", details: nil))
+      return
+    }
+    let scope = KeychainScope(
+      service: args["service"] as? String,
+      accessGroup: args["accessGroup"] as? String,
+      useDataProtection: args["useDataProtection"] as? Bool ?? false
+    )
+    let excludePrefixes = (args["excludePrefixes"] as? [String]) ?? []
+    let box = SendableResult(result)
+    serialQueue.async {
+      let (status, accounts) = secItemListByPrefix(scope: scope, prefix: prefix, excludePrefixes: excludePrefixes)
+      // errSecItemNotFound means nothing matched — return an empty list, not an
+      // error (an empty profile is a valid, non-failing state).
+      if status == errSecSuccess || status == errSecItemNotFound {
+        box.deliver(accounts)
+      } else {
+        box.deliver(statusFlutterError(status, fallbackCode: "sec_item_copy_failed"))
       }
     }
   }

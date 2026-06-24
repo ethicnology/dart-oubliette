@@ -289,6 +289,23 @@ class DarwinOubliette extends Oubliette {
     return _mapError(key, () => _keychain.contains(_storedKey(key)));
   }
 
+  @override
+  Future<List<String>> keys() async {
+    // The non-destructive twin of purge(): purge() calls deleteByPrefix on the
+    // same owned prefix; keys() lists the matching accounts instead. Routed
+    // through _mapError so a locked keychain surfaces as a typed (recoverable)
+    // exception, never a raw PlatformException. Strip the owned prefix so the
+    // caller gets logical keys, not raw kSecAttrAccount slots.
+    final owned = access.prefix + slotSeparator;
+    final accounts = await _mapError(
+      '<keys>',
+      () => _keychain.listByPrefix(owned),
+    );
+    return accounts
+        .map((a) => a.substring(owned.length))
+        .toList(growable: false);
+  }
+
   Future<T> _withKeyLock<T>(String key, Future<T> Function() body) async {
     final pendingPurge = _purges[access.prefix];
     if (pendingPurge != null) {

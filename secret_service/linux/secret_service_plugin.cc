@@ -520,6 +520,64 @@ static FlMethodResponse* handle_delete_by_prefix(const gchar* prefix) {
   return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
 }
 
+// listByPrefix(prefix) -> List<String>. The non-destructive twin of
+// deleteByPrefix: enumerates this app's items and returns the `slot` attribute
+// of those whose slot begins with [prefix], instead of deleting them. Ownership
+// is exact because the caller passes `profilePrefix + U+001D`. Slot attributes
+// are stored unencrypted (not secret); NO item value is loaded (no
+// SECRET_SEARCH_LOAD_SECRETS) — this is enumeration, not the forbidden read().
+static FlMethodResponse* handle_list_by_prefix(const gchar* prefix) {
+  const char* code = nullptr;
+  SecretService* service = warmup(&code);
+  if (!service) return error_response(code, "Secret Service is not ready.");
+
+  GHashTable* attrs = g_hash_table_new(g_str_hash, g_str_equal);
+  g_hash_table_insert(attrs, const_cast<char*>("fmt"), const_cast<char*>(kFmt));
+  // Scope to THIS app's schema name so a foreign item reusing fmt/slot can't be
+  // listed back as ours (same rationale as handle_delete_by_prefix).
+  g_hash_table_insert(attrs, const_cast<char*>("xdg:schema"),
+                      const_cast<char*>(kSchema.name));
+
+  g_autoptr(GError) search_error = nullptr;
+  // SECRET_SEARCH_ALL only — deliberately NOT SECRET_SEARCH_UNLOCK (same as
+  // handle_delete_by_prefix): item *attributes* (incl. `slot`) are readable
+  // while a collection is locked, and UNLOCK would prompt across unrelated
+  // keyrings. No SECRET_SEARCH_LOAD_SECRETS — values are never fetched. Bounded
+  // by the watchdog; a cancellation surfaces as keyring_timeout.
+  OpWatchdog* search_watchdog = op_watchdog_arm();
+  GList* items = secret_service_search_sync(
+      service, &kSchema, attrs,
+      static_cast<SecretSearchFlags>(SECRET_SEARCH_ALL),
+      search_watchdog->cancellable, &search_error);
+  op_watchdog_finish(search_watchdog);
+  g_hash_table_unref(attrs);
+
+  if (search_error) {
+    g_object_unref(service);
+    return error_response(error_code_for(search_error), search_error->message);
+  }
+
+  FlValue* list = fl_value_new_list();
+  for (GList* l = items; l != nullptr; l = l->next) {
+    SecretItem* item = SECRET_ITEM(l->data);
+    GHashTable* item_attrs = secret_item_get_attributes(item);
+    // An item whose attributes are unreadable cannot have its slot verified
+    // client-side; skip it (read-only enumeration — nothing to fail closed on,
+    // unlike deleteByPrefix where a missing slot risks a cross-profile wipe).
+    if (item_attrs == nullptr) continue;
+    const char* slot =
+        static_cast<const char*>(g_hash_table_lookup(item_attrs, "slot"));
+    if (slot != nullptr && g_str_has_prefix(slot, prefix)) {
+      fl_value_append_take(list, fl_value_new_string(slot));
+    }
+    g_hash_table_unref(item_attrs);
+  }
+  if (items) g_list_free_full(items, g_object_unref);
+  g_object_unref(service);
+
+  return FL_METHOD_RESPONSE(fl_method_success_response_new(list));
+}
+
 static void secret_service_plugin_handle_method_call(
     SecretServicePlugin* self, FlMethodCall* method_call) {
   g_autoptr(FlMethodResponse) response = nullptr;
@@ -620,6 +678,20 @@ static void secret_service_plugin_handle_method_call(
             "bad_args", "Prefix must end at the reserved slot separator.");
       else
         response = handle_delete_by_prefix(prefix);
+    }
+  } else if (strcmp(method, "listByPrefix") == 0) {
+    // Same guards as deleteByPrefix: a non-empty, separator-terminated prefix.
+    // An empty or non-separator prefix could enumerate across nested sibling
+    // profiles, so reject it (the Dart layer always passes `prefix + U+001D`).
+    if (!prefix || prefix[0] == '\0') {
+      response = error_response("bad_args", "Missing or empty prefix.");
+    } else {
+      size_t prefix_len = strlen(prefix);
+      if (prefix[prefix_len - 1] != '\x1d')
+        response = error_response(
+            "bad_args", "Prefix must end at the reserved slot separator.");
+      else
+        response = handle_list_by_prefix(prefix);
     }
   } else {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());

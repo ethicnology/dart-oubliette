@@ -149,6 +149,24 @@ abstract class Oubliette {
   /// from another isolate or process.
   Future<void> purge();
 
+  /// Lists the keys of every secret currently stored under this profile.
+  ///
+  /// Each entry is the key exactly as passed to [store] — the profile prefix and
+  /// the reserved slot separator are stripped. Order is unspecified; an empty
+  /// profile returns an empty list.
+  ///
+  /// This is the non-destructive counterpart to [purge]'s prefix scan: it reads
+  /// only the storage *keys* (the SharedPreferences key / `kSecAttrAccount` /
+  /// Secret Service `slot` attribute, all stored unencrypted for lookup), and
+  /// never reads, decrypts, or returns any secret *value*. It exists so a caller
+  /// can reconcile what it stored against an external index without a `read` API
+  /// — distinct from the forbidden plain `read()` (see AGENTS.md), which would
+  /// expose plaintext.
+  ///
+  /// Backend failures surface as a typed [OublietteException] (e.g. a locked
+  /// keychain / keyring), never a raw platform exception.
+  Future<List<String>> keys();
+
   /// Fetches the secret for [key], passes it to [action], then attempts to
   /// zero the buffer before returning — regardless of whether [action]
   /// succeeds or throws.

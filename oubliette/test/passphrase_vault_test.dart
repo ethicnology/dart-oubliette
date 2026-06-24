@@ -38,6 +38,9 @@ class _FakeOubliette extends Oubliette {
 
   @override
   Future<void> purge() async => store_.clear();
+
+  @override
+  Future<List<String>> keys() async => store_.keys.toList(growable: false);
 }
 
 /// A [_FakeOubliette] whose `fetch`/`store` can be suspended per key on a

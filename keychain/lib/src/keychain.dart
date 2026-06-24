@@ -249,4 +249,33 @@ final class Keychain {
       ...config.toMap(),
     });
   }
+
+  /// Lists the `kSecAttrAccount` of every keychain item in this config's scope
+  /// whose account starts with [prefix] but with **none** of [excludePrefixes].
+  ///
+  /// The non-destructive twin of [deleteByPrefix]: same enumeration query
+  /// (`kSecMatchLimitAll` + `kSecReturnAttributes`), but it returns the matching
+  /// account names instead of deleting them. Account names are not secret
+  /// (they are the storage keys); item *values* are never read, returned, or
+  /// decrypted — so this is not the forbidden plain `read()` (see AGENTS.md).
+  ///
+  /// Matching nothing returns an empty list. Throws [PlatformException]:
+  /// `interaction_not_allowed` (device locked), `missing_entitlement`,
+  /// `sec_item_copy_failed`, `bad_args`.
+  Future<List<String>> listByPrefix(
+    String prefix, {
+    List<String> excludePrefixes = const [],
+  }) async {
+    // Same defensive empty-prefix guard as [deleteByPrefix]: an empty prefix
+    // would match every account in scope. The Oubliette layer always passes a
+    // separator-terminated, non-empty prefix.
+    if (prefix.isEmpty) {
+      throw ArgumentError.value(prefix, 'prefix', 'must not be empty');
+    }
+    final result = await _channel.invokeListMethod<String>(
+      'secItemListByPrefix',
+      {'prefix': prefix, 'excludePrefixes': excludePrefixes, ...config.toMap()},
+    );
+    return result ?? const [];
+  }
 }

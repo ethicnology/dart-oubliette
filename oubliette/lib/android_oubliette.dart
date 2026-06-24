@@ -295,6 +295,22 @@ class AndroidOubliette extends Oubliette {
     return prefs.containsKey(_storedKey(key));
   }
 
+  @override
+  Future<List<String>> keys() async {
+    // Pure Dart — SharedPreferences is reachable here, so no native call. Mirror
+    // purge()'s ownership rule exactly: a slot belongs to this profile iff it
+    // begins with `prefix + slotSeparator` (the separator's position encodes the
+    // prefix length, so a nested sibling never matches). Return the logical keys
+    // with that owned-prefix stripped — never the raw slots, never any value.
+    final prefs = await SharedPreferences.getInstance();
+    final owned = access.prefix + slotSeparator;
+    return prefs
+        .getKeys()
+        .where((k) => k.startsWith(owned))
+        .map((k) => k.substring(owned.length))
+        .toList(growable: false);
+  }
+
   /// Runs [body] after any in-flight operation for [key] completes, so same-key
   /// writes are serialized. Different keys run concurrently. The lock entry is
   /// removed once this call is the tail of the chain, bounding map growth.

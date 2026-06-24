@@ -34,6 +34,9 @@ class _FakeOubliette extends Oubliette {
 
   @override
   Future<bool> exists(String key) async => _store.containsKey(key);
+
+  @override
+  Future<List<String>> keys() async => _store.keys.toList(growable: false);
 }
 
 void main() {

@@ -124,4 +124,19 @@ final class SecretService {
     _rejectNul(prefix, 'prefix');
     await _channel.invokeMethod<void>('deleteByPrefix', {'prefix': prefix});
   }
+
+  /// Lists the `slot` attribute of every item whose slot begins with [prefix].
+  ///
+  /// The non-destructive twin of [deleteByPrefix] — same enumeration, but it
+  /// returns the matching slot strings instead of deleting them. Slot
+  /// attributes are stored unencrypted for lookup (they are not secret); item
+  /// *values* are never loaded, decoded, or returned. The oubliette layer
+  /// passes `profilePrefix + U+001D`, so ownership is exact.
+  Future<List<String>> listByPrefix(String prefix) async {
+    _rejectNul(prefix, 'prefix');
+    final result = await _channel.invokeListMethod<String>('listByPrefix', {
+      'prefix': prefix,
+    });
+    return result ?? const [];
+  }
 }

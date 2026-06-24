@@ -66,6 +66,20 @@ class _MockKeychain {
               !exclude.any((e) => account.startsWith(e)),
         );
         return null;
+      case 'secItemListByPrefix':
+        if (fetchErrorCode != null) {
+          throw PlatformException(code: fetchErrorCode!, message: 'forced');
+        }
+        final prefix = args['prefix'] as String;
+        final exclude =
+            (args['excludePrefixes'] as List?)?.cast<String>() ?? const [];
+        return items.keys
+            .where(
+              (account) =>
+                  account.startsWith(prefix) &&
+                  !exclude.any((e) => account.startsWith(e)),
+            )
+            .toList();
       case 'ensureEnclaveKeyPair':
         ensureEnclaveCalls++;
         return true;
@@ -579,6 +593,55 @@ void main() {
         mock.deleteEnclaveCalls,
         0,
         reason: 'SE key is shared by scoping and must survive purge',
+      );
+    });
+  });
+
+  group('keys (enumerate stored keys)', () {
+    test('empty profile returns an empty list', () async {
+      expect(await storage().keys(), isEmpty);
+    });
+
+    test('returns the LOGICAL keys, prefix + separator stripped', () async {
+      final s = storage();
+      await s.store('alpha', Uint8List.fromList([1]));
+      await s.store('beta', Uint8List.fromList([2]));
+      // Logical keys, never the raw `prefix + U+001D + key` accounts.
+      expect((await s.keys())..sort(), ['alpha', 'beta']);
+    });
+
+    test('shrinks after trash', () async {
+      final s = storage();
+      await s.store('a', Uint8List.fromList([1]));
+      await s.store('b', Uint8List.fromList([2]));
+      await s.trash('a');
+      expect(await s.keys(), ['b']);
+    });
+
+    test('empty after purge', () async {
+      final s = storage();
+      await s.store('a', Uint8List.fromList([1]));
+      await s.purge();
+      expect(await s.keys(), isEmpty);
+    });
+
+    test('excludes sibling-profile keys (prefix isolation)', () async {
+      final only = storage(); // onlyUnlocked
+      final even = DarwinOubliette(
+        access: const DarwinSecretAccess.evenLocked(secureEnclave: false),
+      );
+      await only.store('mine', Uint8List.fromList([1]));
+      await even.store('theirs', Uint8List.fromList([2]));
+      expect(await only.keys(), ['mine']);
+      expect(await even.keys(), ['theirs']);
+    });
+
+    test('a locked keychain surfaces as a typed exception, not raw', () async {
+      final s = storage();
+      mock.fetchErrorCode = 'interaction_not_allowed';
+      await expectLater(
+        s.keys(),
+        throwsA(isA<AuthenticationFailedException>()),
       );
     });
   });
