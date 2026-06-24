@@ -5,7 +5,7 @@ Pod::Spec.new do |s|
   s.description      = <<-DESC
 Flutter plugin that provides typed access to the iOS and macOS Keychain via the Security framework.
                        DESC
-  s.homepage         = 'https://ethicnology.com'
+  s.homepage         = 'https://github.com/ethicnology/dart-oubliette'
   s.license          = { :file => '../../LICENSE' }
   s.author           = { 'ethicnology' => 'contact@ethicnology.com' }
   s.source           = { :path => '.' }

@@ -163,7 +163,9 @@ class DarwinOubliette extends Oubliette {
   /// Deliberately-unmapped codes pass through as the raw [PlatformException] by
   /// design (never a data-recovery outcome): `se_requires_device_only_accessibility`
   /// (a fail-closed config rejection — the caller asked for a non-ThisDeviceOnly
-  /// SE item) and `bad_args` (a contract/programming error). The write path's
+  /// SE item), `macos_auth_requires_data_protection` (a fail-closed macOS config
+  /// rejection — an authentication-required item needs the data-protection
+  /// keychain) and `bad_args` (a contract/programming error). The write path's
   /// `already_exists` (from `SecItemAdd`'s `errSecDuplicateItem`) is translated
   /// by [store] itself into the same `StateError` the precheck throws, so it does
   /// not escape `store()` as a PlatformException. Any genuinely-unknown code
