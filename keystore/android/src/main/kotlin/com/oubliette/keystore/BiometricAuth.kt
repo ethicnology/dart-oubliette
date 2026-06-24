@@ -207,12 +207,16 @@ internal fun KeystorePlugin.handleAuthenticateDecrypt(call: MethodCall, result: 
  * racing a late onAuthenticationError against a delivered success on some OEMs,
  * which would otherwise double-answer the Result or wipe a buffer mid-doFinal.
  *
- * RESIDUAL (platform contract, unguardable here): if an OEM prompt never invokes
- * ANY callback — the documented behaviour is ERROR_CANCELED on activity
- * destruction/rotation — the Dart Future stays pending and an encrypt-path
- * plaintext stays unwiped until process death. There is no timeout here on
- * purpose: a prompt legitimately waits on the user indefinitely, and a guessed
- * deadline would cancel real authentications.
+ * LIFECYCLE CANCELLATION: the prompt's CancellationSignal is published to the
+ * plugin (pendingAuthCancellation) so activity destroy / rotation / engine
+ * teardown force-cancels it (KeystorePlugin.cancelPendingAuthentication),
+ * routing through onAuthenticationError → claim() → onError (plaintext wipe).
+ * This closes the window where an OEM that fails to fire ERROR_CANCELED on
+ * activity destruction would otherwise leave the Future pending and an
+ * encrypt-path plaintext unwiped until process death. There is still no
+ * TIMEOUT, on purpose: a live prompt legitimately waits on the user
+ * indefinitely, and a guessed deadline would cancel real authentications — only
+ * a real lifecycle event triggers the cancellation.
  */
 internal fun KeystorePlugin.authenticate(
   cipher: Cipher,
@@ -244,6 +248,17 @@ internal fun KeystorePlugin.authenticate(
   val crypto = BiometricPrompt.CryptoObject(cipher)
   val executor = currentActivity.mainExecutor
   val cancellationSignal = CancellationSignal()
+  // Publish the signal so a detach (activity destroy / rotation / engine
+  // teardown) can force-cancel this prompt and trigger the onError plaintext
+  // wipe — see KeystorePlugin.cancelPendingAuthentication. Cleared on every
+  // terminal path, but only if it is still OURS (identity check), so a second
+  // concurrent prompt's signal is never nulled out from under it.
+  pendingAuthCancellation = cancellationSignal
+  val clearPending = {
+    if (pendingAuthCancellation === cancellationSignal) pendingAuthCancellation = null
+  }
+  val onErrorClearing = { clearPending(); onError() }
+  val onSuccessClearing = { c: Cipher -> clearPending(); onSuccess(c) }
 
   // The prompt's allowed authenticators are DERIVED from the KEY's own KeyInfo
   // (see V1Scheme.keyAuthenticators), never from a caller flag — so they can
@@ -276,13 +291,13 @@ internal fun KeystorePlugin.authenticate(
   val prompt = builder.build()
 
   try {
-    promptAuthenticate(prompt, crypto, cancellationSignal, executor, result, ::claim, onSuccess, onError)
+    promptAuthenticate(prompt, crypto, cancellationSignal, executor, result, ::claim, onSuccessClearing, onErrorClearing)
   } catch (e: Exception) {
     // authenticate() can throw on a dying activity/window (IllegalStateException,
     // BadTokenException on some OEMs) — uncaught it would crash the main thread
     // and leave the plaintext unwiped and the Dart Future hanging.
     if (claim()) {
-      onError()
+      onErrorClearing()
       result.error("auth_error", e.message ?: e.toString(), null)
     }
   }

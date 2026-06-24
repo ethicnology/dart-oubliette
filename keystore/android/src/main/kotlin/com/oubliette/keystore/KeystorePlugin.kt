@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.CancellationSignal
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
@@ -50,6 +51,33 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     internal val mainHandler = Handler(Looper.getMainLooper())
 
     /**
+     * The CancellationSignal of an in-flight BiometricPrompt, or null when none
+     * is showing. Set when [authenticate] shows a prompt and read on the
+     * platform thread when the activity/engine detaches (see
+     * [cancelPendingAuthentication]). `@Volatile` because it is written on the
+     * platform thread and could be read from a detach callback delivered on the
+     * same thread — volatile keeps the publish visible and cheap.
+     */
+    @Volatile
+    internal var pendingAuthCancellation: CancellationSignal? = null
+
+    /**
+     * Proactively cancels any in-flight BiometricPrompt on activity/engine
+     * detach. The platform is *supposed* to fire ERROR_CANCELED when its host
+     * activity is destroyed, but some OEMs don't — leaving the Dart Future
+     * pending and an encrypt-path plaintext unwiped until process death. We force
+     * the cancellation ourselves: `cancel()` routes through
+     * onAuthenticationError → the single-delivery `claim()` → the `onError`
+     * finalizer that wipes the plaintext, then fails the Future. This is NOT a
+     * timeout (a live prompt still waits on the user indefinitely) — it is the
+     * lifecycle-driven cancellation the prompt's residual note calls for.
+     */
+    private fun cancelPendingAuthentication() {
+        pendingAuthCancellation?.cancel()
+        pendingAuthCancellation = null
+    }
+
+    /**
      * Posts [block] to the crypto thread. [block] MUST deliver its result via
      * [mainHandler] (MethodChannel.Result is @UiThread). If the looper is gone
      * (plugin detached mid-call) the runnable never runs — [onDead] is invoked
@@ -76,6 +104,10 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
+        // Rotation destroys the host activity; force-cancel any prompt so its
+        // plaintext is wiped now rather than relying on the OEM to fire
+        // ERROR_CANCELED on the recreated activity.
+        cancelPendingAuthentication()
         activity = null
     }
 
@@ -84,6 +116,7 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     override fun onDetachedFromActivity() {
+        cancelPendingAuthentication()
         activity = null
     }
 
@@ -360,6 +393,9 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
+        // Engine teardown: cancel any in-flight prompt (wiping its plaintext via
+        // the onError path) before the crypto thread is quit below.
+        cancelPendingAuthentication()
         // Only the per-instance HandlerThread is torn down — it is recreated on
         // the next attach. The schemes are stateless and process-static, so
         // there is nothing else to shut down (and nothing to leave dead).

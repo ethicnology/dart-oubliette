@@ -7,6 +7,14 @@ changes scoped to this package.
 
 ## Unreleased
 
+* **In-flight biometric prompts are cancelled on activity/engine detach.** The
+  prompt's `CancellationSignal` is published to the plugin and force-cancelled on
+  activity destroy, configuration-change (rotation), and engine teardown. This
+  closes the window where an OEM that fails to fire `ERROR_CANCELED` on activity
+  destruction would leave an encrypt-path plaintext unwiped until process death:
+  the forced cancel routes through the existing `onError` finalizer (plaintext
+  wipe) and fails the Dart Future. Still no timeout — a live prompt waits on the
+  user indefinitely; only a real lifecycle event triggers cancellation.
 * **`biometricOnly` flag removed.** The advisory, no-op `biometricOnly`
   parameter is gone from `Keystore.encrypt`/`decrypt` — the prompt's
   authenticator set is derived authoritatively from the key's `KeyInfo`, so the
