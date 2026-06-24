@@ -68,6 +68,33 @@ void main() {
       expect(payload.keyAlias, alias);
     });
 
+    testWidgets('two encrypts under the same key yield distinct nonces', (
+      tester,
+    ) async {
+      await facade.generateKey(
+        alias: alias,
+        unlockedDeviceRequired: false,
+        strongBox: false,
+        requireHardwareBacking: false,
+      );
+      final first = await facade.encrypt(
+        alias: alias,
+        plaintext: plaintext,
+        aad: aad,
+      );
+      final second = await facade.encrypt(
+        alias: alias,
+        plaintext: plaintext,
+        aad: aad,
+      );
+      // AES-GCM is catastrophically broken if a (key, nonce) pair ever repeats
+      // (NIST SP 800-38D). The native AndroidKeyStore provider must mint a fresh
+      // random 12-byte IV per encrypt — this is the only test that exercises the
+      // real hardware nonce source (the Dart-side mocks return a constant nonce).
+      expect(first.nonce, isNot(equals(second.nonce)));
+      expect(first.ciphertext, isNot(equals(second.ciphertext)));
+    });
+
     testWidgets(
       'decrypt recovers plaintext using payload version, aad, alias',
       (tester) async {

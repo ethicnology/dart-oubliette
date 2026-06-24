@@ -72,6 +72,11 @@ class _InitFailingOubliette extends _FakeOubliette {
 
 Uint8List _bytes(List<int> b) => Uint8List.fromList(b);
 
+Uint8List _hex(String s) => Uint8List.fromList([
+  for (var i = 0; i < s.length; i += 2)
+    int.parse(s.substring(i, i + 2), radix: 16),
+]);
+
 /// Whether [haystack] contains [needle] as a contiguous subsequence.
 bool _containsSeq(Uint8List haystack, Uint8List needle) {
   for (var i = 0; i + needle.length <= haystack.length; i++) {
@@ -114,6 +119,31 @@ void main() {
         (b) async => Uint8List.fromList(b),
       );
       expect(out, secret);
+    });
+
+    test('GOLDEN v1 passphrase envelope still decrypts (format lock)', () async {
+      // A v1 envelope frozen from the current writer (params: _fastParams,
+      // passphrase [7x8], plaintext below). This is the only test pinning the
+      // on-disk v1 *read* path to a fixed byte sequence — round-trip tests can't
+      // catch a format change that breaks OLD data because writer and reader
+      // drift together. If this ever fails, v1 data written by a shipped build
+      // is unreadable: never edit these bytes; add a v2 reader instead.
+      final golden = _hex(
+        '0101000001000000000100000001109a9bcc5222142e25bec986acc047b930'
+        '0caf5ddc389d6c90bbc068ca9aeffccda30a6e8ef68a7802f91d17e940fa71'
+        'd9798295abc7',
+      );
+      backend.store_['seed'] = golden;
+      final v = PassphraseVault.passphrase(
+        inner: backend,
+        passphrase: _bytes([7, 7, 7, 7, 7, 7, 7, 7]),
+        params: _fastParams,
+      );
+      final out = await v.useAndForget(
+        'seed',
+        (b) async => Uint8List.fromList(b),
+      );
+      expect(out, _bytes([0xBE, 0xEF, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55]));
     });
 
     test('the stored blob is ciphertext, not the plaintext', () async {
