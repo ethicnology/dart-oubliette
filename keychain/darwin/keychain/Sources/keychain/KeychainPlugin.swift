@@ -23,7 +23,13 @@ private struct SendableResult: @unchecked Sendable {
   init(_ result: @escaping FlutterResult) { self.result = result }
 
   /// Delivers [value] to the Flutter result on the main thread.
-  func deliver(_ value: Any?) {
+  ///
+  /// [value] is `sending`: ownership is transferred into the main-queue closure
+  /// so Swift 6 strict concurrency can prove nothing else retains it (an `Any?`
+  /// is not `Sendable`). Every call site passes a freshly built, non-reused
+  /// value (`nil` / `Bool` / `FlutterStandardTypedData` / `FlutterError` /
+  /// `[String]`), so the transfer is always satisfiable.
+  func deliver(_ value: sending Any?) {
     DispatchQueue.main.async { self.result(value) }
   }
 }

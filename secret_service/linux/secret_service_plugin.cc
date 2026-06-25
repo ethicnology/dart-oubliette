@@ -617,25 +617,18 @@ static void secret_service_plugin_handle_method_call(
           ? fl_value_get_string(prefix_value)
           : nullptr;
 
-  // Reject an embedded NUL in any string arg. fl_value_get_string returns a
-  // NUL-terminated C string, but a Dart String may legitimately contain U+0000;
-  // every downstream use here treats the value as a C string (g_hash_table
-  // attribute, secret_password_store_sync, strlen/g_str_has_prefix), so a slot
-  // or prefix containing a NUL would SILENTLY TRUNCATE at the first NUL. That
-  // defeats the byte-exact scoping the design rests on: a truncated prefix could
-  // match foreign items (deleteByPrefix cross-wipe), and two distinct keys
-  // sharing a NUL-truncation prefix would collide into one item (a fetch of one
-  // could return the other's secret). The oubliette layer already rejects NUL in
-  // buildSlot; this makes the plugin sound on its own for any direct caller.
-  // Compare the C length against the FlValue's true byte length and fail closed.
-  if ((slot && strlen(slot) != fl_value_get_string_size(slot_value)) ||
-      (value && strlen(value) != fl_value_get_string_size(value_value)) ||
-      (prefix && strlen(prefix) != fl_value_get_string_size(prefix_value))) {
-    response =
-        error_response("bad_args", "Argument contains an embedded NUL byte.");
-    fl_method_call_respond(method_call, response, nullptr);
-    return;
-  }
+  // Embedded-NUL rejection is enforced in Dart (`SecretService._rejectNul`)
+  // BEFORE the value crosses the channel. It cannot be re-checked here: a NUL in
+  // a Dart String would make every downstream use (g_hash_table attribute,
+  // secret_password_store_sync, strlen / g_str_has_prefix) silently truncate at
+  // the first NUL, and the Flutter embedder exposes NO byte-length getter for a
+  // string FlValue — `fl_value_get_string` already returns a NUL-terminated C
+  // string (so it has truncated by the time we see it), and `fl_value_get_length`
+  // is for list/map types only. So a native length-compare is impossible; the
+  // Dart guard is the authoritative enforcement. As defense-in-depth, the
+  // deleteByPrefix/listByPrefix paths additionally require the prefix to END in
+  // the U+001D slot separator (checked via strlen below), so a NUL-truncated
+  // prefix that loses its trailing separator is rejected on those paths anyway.
 
   if (strcmp(method, "contains") == 0) {
     if (!slot)
