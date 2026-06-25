@@ -80,6 +80,16 @@ await vault.init();    // mint a fresh key
 
 `purge()` is profile-scoped: purging one profile never touches another, even when one profile's prefix nests inside another's — the reserved `U+001D` separator between prefix and key makes slot ownership exact. It is also the "forget everything" / logout primitive. **Irreversible** — there is no recovery of the wiped secrets.
 
+### List Stored Keys — `keys()`
+
+`keys()` returns the logical keys currently stored in the profile (the profile prefix and the `U+001D` separator stripped) — useful for reconciling what you stored against an external index without a `getAll`. It is **not** a back door around the no-`read()` rule: it exposes only storage *key names*, never values, and decrypts nothing (it is the non-destructive twin of `purge()`'s prefix scan). It is the only enumeration the API offers — there is deliberately no way to list secret *contents*.
+
+```dart
+for (final key in await vault.keys()) {
+  // key is the name you passed to store(); the value is never exposed here.
+}
+```
+
 ### Security Profiles, Not Flags
 
 | Profile | Meaning |
@@ -263,7 +273,7 @@ This repository is a monorepo with three packages:
 
 | Package | Description |
 |---------|-------------|
-| [`oubliette/`](oubliette/) | Main plugin — platform-agnostic `init`/`store`/`useAndForget`/`trash`/`exists`/`purge` API over `Uint8List` values. Delegates to `keychain` and `keystore` via `default_package`. |
+| [`oubliette/`](oubliette/) | Main plugin — platform-agnostic `init`/`store`/`useAndForget`/`trash`/`exists`/`keys`/`purge` API over `Uint8List` values. Delegates to `keychain` and `keystore` via `default_package`. |
 | [`keychain/`](keychain/) | Standalone Flutter plugin wrapping the iOS/macOS Keychain (`SecItem` API). Shared Swift source for both platforms. |
 | [`keystore/`](keystore/) | Standalone Flutter plugin wrapping the Android Keystore. Versioned encryption schemes (currently AES-256-GCM v1) with `EncryptedPayload` serialisation. |
 

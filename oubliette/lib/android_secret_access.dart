@@ -93,6 +93,13 @@ class AndroidSecretAccess {
   /// When `false`, the key remains usable after the first unlock since boot,
   /// even if the device is subsequently locked.
   ///
+  /// **Best-effort on some OEMs.** `KeyInfo` exposes no read-back for
+  /// `setUnlockedDeviceRequired`, so a non-conforming API-30 keymaster could
+  /// silently no-op it, degrading the gate to "after first unlock since boot".
+  /// When the unlocked-device gate must be guaranteed, use an `authenticated`
+  /// profile — its per-operation `BiometricPrompt` is enforced by the prompt
+  /// itself, not by the keymaster honoring this flag. (See SECURITY.md.)
+  ///
   /// Requires API 29 (Android 10).
   final bool unlockedDeviceRequired;
 

@@ -19,6 +19,22 @@ its bundled platform plugins `keychain` (iOS/macOS) and `keystore` (Android).
   * Android in-flight biometric prompts are force-cancelled (wiping their
     plaintext) on activity/engine detach, closing the unwiped-until-process-death
     window left by OEMs that skip `ERROR_CANCELED` on activity destruction.
+  * Native build blockers surfaced by the macOS/Linux CI jobs are fixed: the
+    Darwin `SendableResult.deliver` now takes its payload as a `sending Any?`
+    (Swift 6 region isolation; an `Any?` is not `Sendable`), and the Linux
+    `secret_service` plugin dropped a native NUL-length check that called a
+    non-existent `fl_value_get_string_size` — embedded-NUL rejection is enforced
+    in the Dart facade before the channel crossing (the embedder exposes no
+    byte-length getter for a string `FlValue`).
+* **`keys()` — enumerate a profile's stored key names.** A new read-only entry on
+  the `Oubliette` API: it lists the keys currently stored in the profile (the
+  profile prefix + `U+001D` separator stripped), so a caller can reconcile what
+  it stored against an external index without a `getAll`. It returns key *names*
+  only — never values, and decrypts nothing — so it does not breach the
+  no-`read()` doctrine; it is the non-destructive twin of `purge()`'s prefix
+  scan. Android reads `SharedPreferences` directly (no native call); Darwin and
+  Linux add a `listByPrefix` native enumeration (`secItemListByPrefix` /
+  `handle_list_by_prefix`) alongside the existing `deleteByPrefix`.
 * **`store()` race-loser unified onto `StateError` (Linux & Darwin).** When a
   concurrent writer wins the put-if-absent race the best-effort precheck cannot
   close, the native `already_exists` now throws the same `StateError` as the

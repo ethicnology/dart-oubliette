@@ -24,7 +24,8 @@ export 'src/errors.dart'
 
 /// Hardware-backed, device-local secret storage with a single, deliberately
 /// small surface: [store] (write-once), [useAndForget] (read + auto-zero),
-/// [trash] (delete one), [exists], and [purge] (destroy the whole profile).
+/// [trash] (delete one), [exists], [keys] (enumerate stored key names — never
+/// values), and [purge] (destroy the whole profile).
 ///
 /// Construct the [Oubliette] factory with a per-platform access profile; it
 /// dispatches to the Keychain/Secure Enclave (Darwin), Android Keystore, or the

@@ -72,6 +72,14 @@ ownership exact — a profile whose prefix nests under another's can never match
 - **An unlocked device in an attacker's hands** for profiles that don't require
   per-use auth (`evenLocked`, `onlyUnlocked`). Use the `authenticated` profiles
   for per-access gating.
+- **`onlyUnlocked` lock-gating is best-effort on some API-30 OEMs.** The "only
+  while the device is unlocked" property maps to `setUnlockedDeviceRequired(true)`,
+  but `KeyInfo` exposes no read-back to assert the keymaster honored it, and a
+  non-conforming Android 11 (API 30) OEM may silently no-op it — degrading the
+  gate to "usable after the first unlock since boot." When that gating must be
+  guaranteed, use an `authenticated` profile (`userAuthenticationRequired`),
+  whose per-operation `BiometricPrompt` is enforced by the prompt itself and does
+  not rely on the keymaster honoring the unlocked-device flag.
 - **Memory disclosure.** Zeroing is best-effort. The library cannot guarantee
   erasure against GC compaction, Flutter method-channel copies, OS swap, or core
   dumps (see README → Memory Hygiene). It also cannot zero the caller-owned

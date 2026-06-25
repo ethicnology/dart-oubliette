@@ -47,6 +47,8 @@ final signature = await storage.useAndForget('mnemonic', (bytes) async {
 
 - **Use-and-forget, not read.** There is no plain `read()`; secrets are exposed
   only through `useAndForget`, which wipes the plaintext after the callback.
+  `keys()` enumerates stored key *names* (never values) for reconciliation — the
+  only listing the API offers; there is no way to enumerate secret contents.
 - **Fail-closed.** Requesting authentication or StrongBox yields the protection
   or a clear, typed error — never a silent downgrade.
 - **The library never destroys key material** except via the explicit `purge()`.

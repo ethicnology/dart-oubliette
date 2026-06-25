@@ -68,4 +68,12 @@ Enclave ECIES wrapping.
   Objective-C block) is carried across the work-queue → main-thread hop in a
   `Sendable` wrapper that always delivers on the main thread, so the
   result is still invoked exactly once on main with no behavior change. The
-  SPM manifest now pins the Swift 6 language mode to match the podspec.
+  wrapper's `deliver(_:)` takes its `Any?` payload as a `sending` parameter so
+  ownership transfers into the main-queue closure (an `Any?` is not `Sendable`);
+  every call site passes a freshly built, non-reused value. The SPM manifest
+  pins the Swift 6 language mode to match the podspec.
+* **`secItemListByPrefix` added** — the read-only twin of `secItemDeleteByPrefix`
+  backing `Oubliette.keys()`. It runs the same `SecItemCopyMatching` enumeration
+  (`kSecMatchLimitAll` + `kSecReturnAttributes`, **never** `kSecReturnData`) and
+  returns the matching `kSecAttrAccount` names — key names only, no value is read
+  or decrypted, so it is not a `read()` back door.

@@ -1,12 +1,24 @@
 ## 1.0.0
 
-- Embedded NUL in a slot/prefix is now rejected (`bad_args` natively, an
-  `ArgumentError` in the Dart facade). A `fl_value_get_string` C string silently
-  truncates at the first NUL, which would defeat the byte-exact slot scoping (a
-  truncated prefix could match foreign items; two keys sharing a NUL-truncation
-  prefix could collide). The plugin compares the C length against the `FlValue`
-  byte length and fails closed, so the backend is sound on its own for direct
-  callers (the oubliette layer already rejected NUL in `buildSlot`).
+- `listByPrefix(prefix)` added — enumerates the `slot` attribute of items whose
+  slot begins with `prefix`, via an attribute-only `secret_service_search_sync`
+  (`SECRET_SEARCH_ALL`, never `SECRET_SEARCH_LOAD_SECRETS` or `UNLOCK`), so it
+  reads key names only and never loads, decrypts, or prompts for a value. Backs
+  the new `Oubliette.keys()`; the non-destructive twin of `deleteByPrefix`, with
+  the same prefix-empty + separator-terminated guards.
+- Embedded NUL in a slot/prefix is rejected in the Dart facade
+  (`SecretService._rejectNul`, an `ArgumentError`) on **every** method
+  (`contains`/`add`/`get`/`delete`/`deleteByPrefix`/`listByPrefix`), before the
+  value crosses the channel. A `fl_value_get_string` C string silently truncates
+  at the first NUL, which would defeat the byte-exact slot scoping (a truncated
+  prefix could match foreign items; two keys sharing a NUL-truncation prefix
+  could collide), so the value must be rejected before it can truncate. The
+  embedder exposes no byte-length getter for a string `FlValue`
+  (`fl_value_get_string` already returns a NUL-terminated C string;
+  `fl_value_get_length` is list/map only), so the native side cannot re-check
+  it — the Dart guard is the authoritative enforcement, with the
+  `deleteByPrefix`/`listByPrefix` separator-termination check (the prefix must
+  end in `U+001D`) as native defense-in-depth.
 - `warmup()` no longer reuses a single `GError` across sequential GLib calls.
   Each call gets its own `g_autoptr(GError)`, keeping every call's
   `*error == NULL` precondition trivially satisfied (a reused, already-set error
@@ -95,4 +107,4 @@
   facade. Stores each secret as a distinct Secret Service item keyed by its
   `slot` attribute (no shared blob), fails closed on a missing/locked keyring,
   and exposes `contains` / `add` (fail-if-exists) / `get` / `delete` /
-  `deleteByPrefix`.
+  `deleteByPrefix` / `listByPrefix`.
