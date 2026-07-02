@@ -203,18 +203,31 @@ void main() {
 
     test('native error codes propagate untranslated', () {
       // The facade must not swallow or remap native codes — the oubliette
-      // layer branches on them (se_key_missing → KeyNotFound, etc.).
-      handler = (_) => throw PlatformException(code: 'se_key_missing');
-      expect(
-        () => keychain(secureEnclave: true).secItemCopyMatching('k'),
-        throwsA(
-          isA<PlatformException>().having(
-            (e) => e.code,
-            'code',
-            'se_key_missing',
-          ),
-        ),
-      );
+      // layer branches on them (se_key_missing → KeyNotFound, etc.). This
+      // sweep pins every code the read path can emit, including the
+      // auth-class codes the native SE-decrypt path now classifies out of the
+      // fatal `se_decrypt_failed` bucket (M-4): a remap here could turn a
+      // transient "device locked mid-read" into DecryptionFailedException,
+      // whose documented remedy destroys the item.
+      const readCodes = [
+        'se_key_missing',
+        'se_key_fetch_failed',
+        'se_decrypt_failed',
+        'auth_cancelled',
+        'auth_failed',
+        'biometry_lockout',
+        'interaction_not_allowed',
+        'missing_entitlement',
+        'sec_item_copy_failed',
+      ];
+      for (final code in readCodes) {
+        handler = (_) => throw PlatformException(code: code);
+        expect(
+          () => keychain(secureEnclave: true).secItemCopyMatching('k'),
+          throwsA(isA<PlatformException>().having((e) => e.code, 'code', code)),
+          reason: '$code must reach the caller untranslated',
+        );
+      }
     });
 
     test('deleteByPrefix rejects an empty prefix (never wipe-all)', () async {

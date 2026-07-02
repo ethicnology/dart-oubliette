@@ -198,9 +198,19 @@ final class Keychain {
   /// Throws [PlatformException]: `se_key_missing` (item present but the SE
   /// key is gone — e.g. after device migration; the ciphertext is permanently
   /// unreadable), `se_key_fetch_failed` (lookup errored — key may be intact,
-  /// retry), `se_decrypt_failed`, `auth_cancelled`, `auth_failed`,
-  /// `interaction_not_allowed` (device locked), `missing_entitlement`,
-  /// `sec_item_copy_failed`, `bad_args`.
+  /// retry), `se_decrypt_failed` (a *genuine* decryption failure — corrupt or
+  /// foreign ciphertext; transient auth-layer conditions during the SE decrypt
+  /// are never reported under this code), `auth_cancelled`, `auth_failed`,
+  /// `biometry_lockout` (biometry disabled until a passcode unlock; retry
+  /// after — never purge), `interaction_not_allowed` (device locked),
+  /// `missing_entitlement`, `sec_item_copy_failed`, `bad_args`.
+  ///
+  /// The auth-class codes (`auth_cancelled`, `auth_failed`, `biometry_lockout`,
+  /// `interaction_not_allowed`) can surface from *either* stage of a Secure
+  /// Enclave read — the keychain item fetch or the SE decrypt (whose access
+  /// policy is evaluated at decrypt time, e.g. the device locking in between)
+  /// — and are classified identically by the native side. All of them are
+  /// recoverable: retry or re-authenticate; none indicate data loss.
   Future<Uint8List?> secItemCopyMatching(String alias) async {
     final result = await _channel.invokeMethod<Uint8List>(
       'secItemCopyMatching',

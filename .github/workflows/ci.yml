@@ -26,6 +26,8 @@ jobs:
           channel: stable
       - name: Resolve workspace
         run: flutter pub get
+      - name: Check formatting (all packages)
+        run: dart run melos run format
       - name: Analyze all packages
         run: dart run melos run analyze
       - name: Dart tests (all packages)
@@ -105,6 +107,13 @@ jobs:
       - name: Build example macOS
         working-directory: oubliette/example
         run: flutter build macos --debug
+      # Compiles the same shared Darwin Swift against the iOS SDK. The source is
+      # shared (sharedDarwinSource), but the SDKs are not interchangeable — an
+      # iOS-only availability/API break would otherwise ship green behind the
+      # macOS-only build. No signing needed to compile.
+      - name: Build example iOS (no codesign)
+        working-directory: oubliette/example
+        run: flutter build ios --debug --no-codesign
       # SE tag regression tests (RunnerTests) — pure logic, no device needed.
       # Hard-fails: these are the only automated coverage of the Secure-Enclave
       # tag/collision logic, so a swallowed failure would be a false green.

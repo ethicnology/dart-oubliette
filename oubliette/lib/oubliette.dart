@@ -57,6 +57,20 @@ abstract class Oubliette {
     // so the default only selects a storage-prefix namespace, not a posture.
     LinuxSecretAccess linux = const LinuxSecretAccess.onlyUnlocked(),
   }) {
+    // Web first, before consulting defaultTargetPlatform: on the web that
+    // getter reports the HOST OS (e.g. `TargetPlatform.macOS` in Safari), so
+    // without this check the factory would construct a native backend whose
+    // method channel does not exist — failing much later with an opaque
+    // MissingPluginException instead of this honest, immediate answer. There
+    // is no web backend by design: browser storage offers no hardware-backed,
+    // non-exportable key material for the library to refuse to fall back from.
+    if (kIsWeb) {
+      throw UnsupportedError(
+        'Oubliette does not support Flutter web: no browser storage provides '
+        'the hardware-backed key material this library requires, and it never '
+        'silently falls back to a weaker tier.',
+      );
+    }
     switch (defaultTargetPlatform) {
       case TargetPlatform.iOS:
       case TargetPlatform.macOS:
@@ -74,8 +88,8 @@ abstract class Oubliette {
 
   /// Ensures the platform encryption key exists, generating it if needed.
   ///
-  /// Must be awaited once after construction and before any [store]/[fetch]
-  /// call. Subsequent calls are no-ops (idempotent).
+  /// Must be awaited once after construction and before any [store] /
+  /// [useAndForget] call. Subsequent calls are no-ops (idempotent).
   Future<void> init();
 
   /// Encrypts [value] and writes it under [key].
@@ -102,12 +116,13 @@ abstract class Oubliette {
   /// [OublietteException.recoverable] rather than string-matching.
   Future<void> store(String key, Uint8List value);
 
-  /// Fetches and decrypts the raw bytes for [key], or `null` if absent.
-  ///
-  /// `@protected` because the bytes are an unmanaged plaintext buffer: read
-  /// through [useAndForget] instead, which zeroes the buffer after use.
-  @protected
-  Future<Uint8List?> fetch(String key);
+  // NOTE: there is deliberately no `fetch()` here. A plaintext-returning
+  // method on the public interface — even one annotated `@protected` — is only
+  // lint-guarded, and a caller who obtains that buffer owns plaintext nothing
+  // will ever zero. The raw-fetch primitive lives in the unexported
+  // `src/fetch.dart` mixin the platform backends share, so the interface a
+  // caller holds structurally cannot return plaintext: [useAndForget] is the
+  // only read.
 
   /// Removes the single secret stored under [key]. A no-op if absent. Does not
   /// touch the profile's key material (use [purge] to destroy the whole
@@ -115,6 +130,18 @@ abstract class Oubliette {
   Future<void> trash(String key);
 
   /// Whether a secret is currently stored under [key].
+  ///
+  /// **Darwin authenticated profiles:** the presence probe runs with the
+  /// authentication UI suppressed, and the OS reports a present-but-auth-gated
+  /// item as `errSecInteractionNotAllowed` (it answers `errSecItemNotFound`
+  /// only when the item is genuinely absent). The Darwin backend translates
+  /// that probe-specific signal back into `true` — presence never requires the
+  /// user to authenticate, and no amount of authentication would make the
+  /// suppressed probe itself succeed. A thrown
+  /// [AuthenticationFailedException] from `exists()` therefore means the probe
+  /// could not run at all (e.g. the device is locked on a non-authenticated
+  /// profile) — retry after unlock; never treat it as "absent" and re-onboard
+  /// over a live secret.
   Future<bool> exists(String key);
 
   /// Destroys the **entire profile**: every secret stored under it *and* its
@@ -146,8 +173,8 @@ abstract class Oubliette {
   /// profile, and writes started afterwards wait for it. This is **best-effort
   /// and isolate-scoped**: across isolates or processes there is no shared lock
   /// (SharedPreferences/Secret Service offer no cross-process transaction), so
-  /// do not run [purge] concurrently with [store]/[fetch] on the same profile
-  /// from another isolate or process.
+  /// do not run [purge] concurrently with [store]/[useAndForget] on the same
+  /// profile from another isolate or process.
   Future<void> purge();
 
   /// Lists the keys of every secret currently stored under this profile.
@@ -175,6 +202,12 @@ abstract class Oubliette {
   /// Returns `null` if the key does not exist, otherwise returns the value
   /// produced by [action].
   ///
+  /// **Choose a non-nullable `T`.** With a nullable `T`, an [action] that
+  /// returns `null` is indistinguishable from "key absent" — both surface as
+  /// `null` here. Return a non-nullable type (or a dedicated sentinel value)
+  /// so the two outcomes stay distinct; use [exists] first when you must tell
+  /// them apart with a nullable result.
+  ///
   /// ### What this covers
   /// - If the buffer is modifiable, it is zeroed (`fillRange(0)`) as soon as
   ///   [action] completes, so the plaintext bytes no longer sit in the Dart
@@ -196,20 +229,11 @@ abstract class Oubliette {
   /// - **Compiler dead-store elimination**: in theory the JIT/AOT could
   ///   optimise away the `fillRange` call, though this is unlikely in
   ///   practice for `Uint8List`.
+  // Abstract by design: the shared implementation lives in the unexported
+  // `src/fetch.dart` mixin, on top of the raw-fetch primitive the public
+  // interface deliberately does not declare (see the note above [trash]).
   Future<T?> useAndForget<T>(
     String key,
     Future<T> Function(Uint8List bytes) action,
-  ) async {
-    final bytes = await fetch(key);
-    if (bytes == null) return null;
-    try {
-      return await action(bytes);
-    } finally {
-      try {
-        bytes.fillRange(0, bytes.length, 0);
-      } on UnsupportedError {
-        // Method channel returned an unmodifiable buffer — cannot zero it.
-      }
-    }
-  }
+  );
 }

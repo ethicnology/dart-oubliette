@@ -110,7 +110,32 @@ void main() {
     });
   });
 
-  group('native auth-type errors propagate as PlatformException', () {
+  group('generateKey wire contract', () {
+    // Every security-critical flag is a required parameter (no fail-open
+    // defaults — L-5) AND must cross the wire explicitly: the Kotlin side
+    // errors with bad_args on a missing flag rather than defaulting it, so a
+    // facade that dropped one would break every key generation. Pins all six.
+    test('sends every security flag explicitly', () async {
+      responder = (_) => null;
+      await ks.generateKey(
+        alias: 'a',
+        unlockedDeviceRequired: true,
+        strongBox: false,
+        userAuthenticationRequired: true,
+        invalidatedByBiometricEnrollment: false,
+        requireHardwareBacking: true,
+      );
+      expect(lastMethod, 'generateKey');
+      expect(lastArgs!['alias'], 'a');
+      expect(lastArgs!['unlockedDeviceRequired'], true);
+      expect(lastArgs!['strongBox'], false);
+      expect(lastArgs!['userAuthenticationRequired'], true);
+      expect(lastArgs!['invalidatedByBiometricEnrollment'], false);
+      expect(lastArgs!['requireHardwareBacking'], true);
+    });
+  });
+
+  group('native error codes propagate as PlatformException', () {
     // The native layer now derives the prompt's authenticators from the key's
     // own KeyInfo and fails closed with `key_auth_type_unknown` when it can't
     // (unreadable type, or a non-auth key on the authenticating path). The
@@ -130,6 +155,52 @@ void main() {
             (e) => e.code,
             'code',
             'key_auth_type_unknown',
+          ),
+        ),
+      );
+    });
+
+    // The two recoverable codes added for the transient-vs-fatal taxonomy
+    // (M-5 decrypt_interrupted, L-8 unsupported_version) must also cross the
+    // facade untouched — the oubliette layer maps both to a recoverable
+    // exception; swallowing either into a generic failure would re-create the
+    // purge-a-healthy-profile hazard they exist to prevent.
+    test('decrypt surfaces decrypt_interrupted from the auth path', () async {
+      responder = (_) => throw PlatformException(code: 'decrypt_interrupted');
+      await expectLater(
+        ks.decrypt(
+          version: 1,
+          alias: 'a',
+          ciphertext: Uint8List.fromList([9]),
+          nonce: Uint8List(12),
+          aad: 'aad',
+          promptTitle: 'Unlock',
+        ),
+        throwsA(
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'decrypt_interrupted',
+          ),
+        ),
+      );
+    });
+
+    test('decrypt surfaces unsupported_version for future blobs', () async {
+      responder = (_) => throw PlatformException(code: 'unsupported_version');
+      await expectLater(
+        ks.decrypt(
+          version: 99,
+          alias: 'a',
+          ciphertext: Uint8List.fromList([9]),
+          nonce: Uint8List(12),
+          aad: 'aad',
+        ),
+        throwsA(
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'unsupported_version',
           ),
         ),
       );

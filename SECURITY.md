@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Email with details and a proof of concept if you
+Email <azad@satoshiportal.com> with details and a proof of concept if you
 have one. Please do not open a public issue for undisclosed vulnerabilities.
 We aim to acknowledge reports within a few business days.
 
@@ -136,6 +136,14 @@ and Apple Secure Enclave tiers.
   platform cannot provide. A missing/headless backend fails closed with
   `BackendUnavailableException`; a locked keyring with `KeyringLockedException`
   (both recoverable — never `purge()` in response).
+- **`store()`'s no-overwrite guarantee is per-isolate, not cross-process.** The
+  Secret Service API has no atomic put-if-absent — libsecret's store always
+  creates-or-replaces — so `already_exists` rests on a non-atomic search→store
+  precheck plus a per-isolate lock. Unlike Darwin, whose duplicate check is
+  atomic in the Keychain (`errSecDuplicateItem`), two processes (or two
+  isolates) racing `store()` on one slot can both pass the precheck and the
+  second write silently overwrites the first — the same cross-process
+  limitation as the Android `SharedPreferences` backend.
 - **Headless unlock is time-bounded.** If the keyring is locked and no unlock
   prompter is available (a headless/server session), the interactive unlock is
   capped (a detached timer cancels it after a timeout) and surfaces the
@@ -224,20 +232,27 @@ minimum OS for your app.
 - **Hardware backing.** On a real device the Android Keystore key is
   hardware-backed (TEE/StrongBox) automatically. `strongBox: true` is
   fail-closed (absent StrongBox → error, never a silent TEE downgrade). For the
-  general case, set **`requireHardwareBacking: true`** (a required choice — no
-  default; pass `false` to allow software keystores like emulators) to make
+  general case, set **`requireHardwareBacking: true`** — a required choice with
+  no default; every caller decides explicitly — to make
   key *generation* verify the key landed in secure hardware (`KeyInfo`:
   `getSecurityLevel()` on API 31+, `isInsideSecureHardware` on API 30) and, if
   not, delete it and fail with `hardware_unavailable` rather than keep a
-  software-keystore key. It defaults off so the library runs on software-only
-  keystores (emulators); **wallet apps holding seeds should set it true.** (For
+  software-keystore key. Pass `false` to allow software-only keystores
+  (emulators, tests); **wallet apps holding seeds should set it true.** (For
   a guarantee of *which* hardware, layer key attestation in your app.)
 - **Biometric-bypass CVEs are scoped to OS app-lock UIs, not our path.** Issues
   like CVE-2026-28895 (iOS) and the Pixel CVE-2024-53835/53840 class target the
   system's "require Face ID to open app" toggle or the biometric success
-  *callback*; Oubliette gates on the key itself — Android binds the operation to
-  a `CryptoObject` (work runs on the authenticated cipher) and Darwin uses a
-  data-bound `SecAccessControl`, so neither is satisfied by the bypassed UI.
+  *callback*; Oubliette does not gate on a UI callback — on Android the
+  operation is bound to a `CryptoObject` (work runs on the authenticated
+  cipher, so the keymaster itself refuses without auth), and on Darwin the
+  `SecAccessControl` gates the ciphertext *item*: the Keychain will not release
+  the blob without user presence. Note the Darwin gate is item-bound, not
+  key-operation-bound — the shared SE key carries only `.privateKeyUsage`, so
+  the SEP would decrypt for an in-process caller that already holds the
+  ciphertext. That caller is past the trust boundary anyway (see "an attacker
+  already inside the app's Keychain ACL" above); the auth gate defends the
+  path to the ciphertext, and a bypassed UI satisfies neither platform's gate.
   Keep devices patched regardless.
 - **Post-quantum:** for **at-rest** secrets the confidentiality primitive is
   AES-256 (symmetric), which is already quantum-adequate — Grover only halves

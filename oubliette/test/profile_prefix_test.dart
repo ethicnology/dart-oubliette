@@ -7,6 +7,8 @@ import 'package:oubliette/src/slot.dart';
 /// constructors must reject collisions with those reserved prefixes.
 void main() {
   group('Android default prefixes are distinct (#11)', () {
+    setUp(AndroidSecretAccess.resetCustomAliasRegistry);
+
     const profiles = <String, AndroidSecretAccess>{
       'evenLocked': AndroidSecretAccess.evenLocked(
         strongBox: false,
@@ -125,6 +127,41 @@ void main() {
         throwsA(isA<ArgumentError>()),
       );
     });
+
+    // L-2: two custom profiles sharing a Keystore alias would share key
+    // material — purge() of one deletes the shared key and permanently bricks
+    // the other. The per-isolate registry rejects the second claim.
+    test(
+      'custom rejects a keyAlias already claimed by another custom profile',
+      () {
+        // First claim succeeds.
+        AndroidSecretAccess.custom(
+          prefix: 'domain_a_',
+          keyAlias: 'shared_key',
+          strongBox: false,
+          requireHardwareBacking: false,
+          unlockedDeviceRequired: true,
+          invalidatedByBiometricEnrollment: false,
+          promptTitle: null,
+          promptSubtitle: null,
+        );
+        // Second claim with the same alias but a different prefix — the exact
+        // collision that would brick the first profile on purge().
+        expect(
+          () => AndroidSecretAccess.custom(
+            prefix: 'domain_b_',
+            keyAlias: 'shared_key',
+            strongBox: false,
+            requireHardwareBacking: false,
+            unlockedDeviceRequired: true,
+            invalidatedByBiometricEnrollment: false,
+            promptTitle: null,
+            promptSubtitle: null,
+          ),
+          throwsA(isA<ArgumentError>()),
+        );
+      },
+    );
   });
 
   group('Darwin default prefixes are distinct (#12 / #13)', () {

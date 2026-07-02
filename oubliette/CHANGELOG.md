@@ -1,11 +1,44 @@
 # Changelog
 
 This is the single changelog for the whole project: the `oubliette` package and
-its bundled platform plugins `keychain` (iOS/macOS) and `keystore` (Android).
+its bundled platform plugins `keychain` (iOS/macOS), `keystore` (Android), and
+`secret_service` (Linux).
 
 ## 1.0.0
 
-* **Security audit fixes (security-hardening branch).**
+* **Security audit fixes (2026-07 full audit).**
+  * **Two new recoverable Android error codes.** `decrypt_interrupted` (a
+    transient keymaster operation failure *after* a successful auth — e.g. a
+    system-pruned operation slot) and `unsupported_version` (a blob written by
+    a **newer** scheme version — an app downgrade) both map to the recoverable
+    `BackendUnavailableException` instead of the fatal `decrypt_failed` bucket.
+    Retry / upgrade the app; the data is intact — never purge.
+  * **Write-side payload cap (Android).** The read path's per-field cap
+    (64 Ki base64 chars, ~48 KiB decoded) is now enforced symmetrically at
+    `store()`, so an oversized secret fails the write up front instead of
+    storing a blob every later `fetch` would reject as corrupt.
+  * **Darwin `exists()` no longer throws on auth-gated items.** On an
+    authenticated profile, a present-but-auth-gated item now reports `true`
+    instead of surfacing the UI-suppressed probe's `interaction_not_allowed`
+    as a misleading recoverable auth error (which no retry could satisfy).
+  * **Darwin SE decrypt classifies transient failures.** `enclaveDecrypt` now
+    inspects the underlying `CFError` and surfaces interaction/auth-class
+    conditions as the existing recoverable auth codes
+    (`interaction_not_allowed`, `auth_cancelled`, `biometry_lockout`,
+    `auth_failed`); only genuine decryption failures remain the fatal
+    `se_decrypt_failed`.
+  * **Linux: decrypted buffers are freed, and keyring I/O left the GTK
+    thread.** The read path now calls `secret_password_free` (wipe **and**
+    free) instead of the wipe-only `secret_password_wipe`, fixing a per-fetch
+    leak of libsecret's mlocked secure-memory pool; libsecret work runs off
+    the GTK platform thread, so a locked keyring no longer freezes the window
+    while the user is meant to interact with the unlock dialog.
+  * **`USE_BIOMETRIC` is declared by the keystore plugin itself** and
+    manifest-merged into consuming apps — the authenticated profiles no longer
+    depend on every consumer remembering the permission.
+  * **`Keystore.generateKey`'s `userAuthenticationRequired` is now required**
+    in the Dart facade (no fail-open default), matching its sibling
+    security flags and the Kotlin side's mandatory-args contract.
   * `DarwinSecretAccess.custom` now rejects `biometryCurrentSetOnly: true` with
     `authenticationRequired: false` at construction (`ArgumentError`), and the
     Darwin native layer rejects the same combination on `secItemAdd`

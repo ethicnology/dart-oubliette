@@ -3,10 +3,16 @@ package com.oubliette.keystore
 import android.hardware.biometrics.BiometricManager
 import android.hardware.biometrics.BiometricPrompt
 import android.os.CancellationSignal
+// The FRAMEWORK keystore exception (public API since 33; present — and thrown
+// as the cipher-failure cause — on every device back to minSdk 30; `is` checks
+// resolve the class, and hidden-API enforcement restricts members, not class
+// resolution). NOT java.security.KeyStoreException, which is a different type.
+import android.security.KeyStoreException
 import android.util.Log
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel.Result
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 
 // android.hardware.biometrics.BiometricPrompt does NOT expose this as a
@@ -30,6 +36,83 @@ private fun decryptErrorCode(t: Throwable): String = when (t) {
   is KeyAuthTypeUnknownException -> "key_auth_type_unknown"
   else -> "decrypt_failed"
 }
+
+/**
+ * Whether [t] — or anything in its bounded cause chain — is a bare framework
+ * [KeyStoreException] carrying no stronger classification.
+ *
+ * On the authenticated paths, `Cipher.init` opens a keymaster operation BEFORE
+ * the unbounded BiometricPrompt. Keymaster operation slots are a small
+ * system-wide pool, so any other process doing crypto while our prompt waits on
+ * the user can prune our operation; the post-auth `doFinal` then throws a bare
+ * [KeyStoreException] ("operation expired" / "Key user not authenticated"),
+ * usually wrapped in an `IllegalBlockSizeException` or `ProviderException`.
+ * Both the key and the on-disk blob are healthy — a fresh init + prompt
+ * succeeds — so this must surface as the recoverable `decrypt_interrupted`,
+ * never the fatal fallback bucket whose documented remedy is "the blob is bad".
+ *
+ * [AEADBadTagException] anywhere in the chain vetoes the match: a failed GCM
+ * tag is a genuine this-blob-does-not-authenticate signal (some keymasters
+ * chain a KeyStoreException cause under it) and must stay `decrypt_failed`.
+ * Permanent invalidation can never reach this classifier: the scheme wraps it
+ * as [KeyInvalidatedException] first (see V1Scheme.isPermanentInvalidation),
+ * and the post-auth code maps consult the typed classification before this one.
+ */
+private fun isTransientKeystoreInterruption(t: Throwable): Boolean {
+  var current: Throwable? = t
+  var depth = 0
+  var sawKeyStoreException = false
+  while (current != null && depth < 8) { // bounded: malicious/cyclic chains
+    if (current is AEADBadTagException) return false
+    if (current is KeyStoreException) sawKeyStoreException = true
+    current = current.cause
+    depth++
+  }
+  return sawKeyStoreException
+}
+
+/**
+ * Post-authentication `doFinal` failures get one extra classification pass on
+ * top of the typed code maps: a transient keymaster interruption (see
+ * [isTransientKeystoreInterruption]) becomes the recoverable
+ * `decrypt_interrupted` instead of the fatal fallback. Typed classifications
+ * still win — a doFinal-deferred enrollment invalidation is genuine key loss
+ * and must stay `key_invalidated`.
+ *
+ * Deliberately the SAME code on the encrypt path: the failure mode (operation
+ * pruned during the prompt) and the remedy (retry; never purge) are identical,
+ * and the Dart layer maps this one stable code to its one recoverable
+ * "backend hiccup" exception.
+ */
+private fun postAuthEncryptErrorCode(t: Throwable): String {
+  val code = encryptErrorCode(t)
+  return if (code == "encrypt_failed" && isTransientKeystoreInterruption(t)) {
+    "decrypt_interrupted"
+  } else {
+    code
+  }
+}
+
+private fun postAuthDecryptErrorCode(t: Throwable): String {
+  val code = decryptErrorCode(t)
+  return if (code == "decrypt_failed" && isTransientKeystoreInterruption(t)) {
+    "decrypt_interrupted"
+  } else {
+    code
+  }
+}
+
+/**
+ * Stable message for `decrypt_interrupted`. Fixed text, not `t.message`: the
+ * underlying keymaster strings vary by vendor, and the guidance (retry, never
+ * purge) is the part the caller must see. Diagnostic hygiene holds — no alias,
+ * no payload content.
+ */
+private const val INTERRUPTED_MESSAGE =
+  "Transient keystore operation failure (keymaster operation lost during authentication) — retry; do not purge."
+
+private fun postAuthErrorMessage(code: String, t: Throwable): String =
+  if (code == "decrypt_interrupted") INTERRUPTED_MESSAGE else t.message ?: t.toString()
 
 internal fun KeystorePlugin.handleAuthenticateEncrypt(call: MethodCall, result: Result) {
   val plaintext = call.argument<ByteArray>("plaintext")
@@ -91,11 +174,17 @@ internal fun KeystorePlugin.handleAuthenticateEncrypt(call: MethodCall, result: 
                 )
               }
             } catch (e: Exception) {
-              // Classified, not hard-coded: keymasters that defer the
-              // enrollment-invalidation check to doFinal throw here (wrapped —
-              // see V1Scheme.isPermanentInvalidation), and that key-loss must
-              // surface as key_invalidated, not as a retryable encrypt_failed.
-              mainHandler.post { result.error(encryptErrorCode(e), e.message ?: e.toString(), null) }
+              // Classified, not hard-coded — in both directions. A keymaster
+              // that defers the enrollment-invalidation check to doFinal throws
+              // here (wrapped — see V1Scheme.isPermanentInvalidation), and that
+              // key-loss must surface as key_invalidated, not as a retryable
+              // encrypt_failed. Conversely, a keymaster operation pruned while
+              // the prompt was up throws a bare KeyStoreException here, and
+              // that transient loss must surface as the recoverable
+              // decrypt_interrupted (see postAuthEncryptErrorCode), not as a
+              // failure that reads like the key is broken.
+              val code = postAuthEncryptErrorCode(e)
+              mainHandler.post { result.error(code, postAuthErrorMessage(code, e), null) }
             } finally {
               plaintext.fill(0)
             }
@@ -131,7 +220,18 @@ internal fun KeystorePlugin.handleAuthenticateDecrypt(call: MethodCall, result: 
   postCrypto(result) {
     val scheme = SchemeRegistry.schemeFor(version)
     if (scheme == null) {
-      mainHandler.post { result.error("decrypt_failed", "Unsupported version.", null) }
+      // Append-only, gapless registry + versionArgument()'s >= 1 floor: an
+      // unknown version can only be a blob written by a NEWER release (app
+      // rollback / sideloaded downgrade). Recoverable — upgrade the app; a
+      // fatal decrypt_failed here would steer the caller toward purging a
+      // healthy slot (see the identical branch in handleDecrypt).
+      mainHandler.post {
+        result.error(
+          "unsupported_version",
+          "Payload was written by a newer version of this library — upgrade the app; do not purge.",
+          null
+        )
+      }
       return@postCrypto
     }
     val cipher: Cipher
@@ -176,8 +276,13 @@ internal fun KeystorePlugin.handleAuthenticateDecrypt(call: MethodCall, result: 
               }
             } catch (e: Exception) {
               // Classified (see the encrypt path): a doFinal-deferred
-              // invalidation must map to key_invalidated, not decrypt_failed.
-              mainHandler.post { result.error(decryptErrorCode(e), e.message ?: e.toString(), null) }
+              // invalidation must map to key_invalidated, and a keymaster
+              // operation pruned during the prompt must map to the recoverable
+              // decrypt_interrupted — only a genuine GCM/tag failure (an
+              // AEADBadTagException) stays in the fatal decrypt_failed bucket
+              // (see postAuthDecryptErrorCode).
+              val code = postAuthDecryptErrorCode(e)
+              mainHandler.post { result.error(code, postAuthErrorMessage(code, e), null) }
             } finally {
               decrypted?.fill(0)
             }
@@ -208,15 +313,17 @@ internal fun KeystorePlugin.handleAuthenticateDecrypt(call: MethodCall, result: 
  * which would otherwise double-answer the Result or wipe a buffer mid-doFinal.
  *
  * LIFECYCLE CANCELLATION: the prompt's CancellationSignal is published to the
- * plugin (pendingAuthCancellation) so activity destroy / rotation / engine
- * teardown force-cancels it (KeystorePlugin.cancelPendingAuthentication),
- * routing through onAuthenticationError → claim() → onError (plaintext wipe).
- * This closes the window where an OEM that fails to fire ERROR_CANCELED on
- * activity destruction would otherwise leave the Future pending and an
- * encrypt-path plaintext unwiped until process death. There is still no
- * TIMEOUT, on purpose: a live prompt legitimately waits on the user
- * indefinitely, and a guessed deadline would cancel real authentications — only
- * a real lifecycle event triggers the cancellation.
+ * plugin's live set (pendingAuthCancellations) so activity destroy / rotation /
+ * engine teardown force-cancels every in-flight prompt
+ * (KeystorePlugin.cancelPendingAuthentication), each routing through
+ * onAuthenticationError → claim() → onError (plaintext wipe). This closes the
+ * window where an OEM that fails to fire ERROR_CANCELED on activity destruction
+ * would otherwise leave the Future pending and an encrypt-path plaintext
+ * unwiped until process death — for ALL concurrent prompts, not just the newest
+ * (a single slot would let a second prompt evict the first from lifecycle
+ * coverage). There is still no TIMEOUT, on purpose: a live prompt legitimately
+ * waits on the user indefinitely, and a guessed deadline would cancel real
+ * authentications — only a real lifecycle event triggers the cancellation.
  */
 internal fun KeystorePlugin.authenticate(
   cipher: Cipher,
@@ -250,13 +357,15 @@ internal fun KeystorePlugin.authenticate(
   val cancellationSignal = CancellationSignal()
   // Publish the signal so a detach (activity destroy / rotation / engine
   // teardown) can force-cancel this prompt and trigger the onError plaintext
-  // wipe — see KeystorePlugin.cancelPendingAuthentication. Cleared on every
-  // terminal path, but only if it is still OURS (identity check), so a second
-  // concurrent prompt's signal is never nulled out from under it.
-  pendingAuthCancellation = cancellationSignal
-  val clearPending = {
-    if (pendingAuthCancellation === cancellationSignal) pendingAuthCancellation = null
-  }
+  // wipe — see KeystorePlugin.cancelPendingAuthentication. A SET of live
+  // signals, so concurrent prompts each stay covered (a single slot would let
+  // this prompt evict a previous one from lifecycle cancellation). Removal on
+  // every terminal path is inherently ours-only: each prompt removes exactly
+  // the signal instance it added (CancellationSignal uses identity equality),
+  // so it can never strip a concurrent prompt's coverage — the same guarantee
+  // the old single-slot identity check provided, now by construction.
+  pendingAuthCancellations.add(cancellationSignal)
+  val clearPending = { pendingAuthCancellations.remove(cancellationSignal) }
   val onErrorClearing = { clearPending(); onError() }
   val onSuccessClearing = { c: Cipher -> clearPending(); onSuccess(c) }
 
@@ -276,8 +385,14 @@ internal fun KeystorePlugin.authenticate(
       // Without DEVICE_CREDENTIAL the platform prompt REQUIRES a negative
       // button. Tapping it cancels the signal, which routes the outcome through
       // onAuthenticationError(BIOMETRIC_ERROR_CANCELED) → auth_cancelled — a
-      // single delivery path for the Result.
-      builder.setNegativeButton("Cancel", executor) { _, _ ->
+      // single delivery path for the Result. The label is the platform's own
+      // localized "Cancel" resource, never a hardcoded English literal — this
+      // button gates access to the user's secrets and must be readable in the
+      // device locale.
+      builder.setNegativeButton(
+        currentActivity.getString(android.R.string.cancel),
+        executor
+      ) { _, _ ->
         cancellationSignal.cancel()
       }
     }

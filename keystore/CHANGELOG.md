@@ -7,6 +7,29 @@ changes scoped to this package.
 
 ## 1.0.0
 
+* **New recoverable error codes: `decrypt_interrupted` and `unsupported_version`.**
+  A `KeyStoreException` at `doFinal` on the authenticated decrypt path (the
+  keymaster operation opened before the unbounded biometric prompt can be
+  pruned system-wide during it) now surfaces as `decrypt_interrupted` — a
+  transient, retryable condition — instead of folding into the fatal
+  `decrypt_failed`. A blob whose scheme version is newer than this reader
+  (app downgrade: rollback, sideload) surfaces as `unsupported_version` —
+  upgrade the app; the data is intact. Neither should ever be answered with
+  destructive recovery.
+* **Write-side payload cap.** The read path's per-field limit (64 Ki base64
+  chars, ~48 KiB decoded) is now enforced symmetrically when building the
+  `EncryptedPayload` at store time, so an oversized secret fails the write up
+  front instead of storing a blob every later read would reject as corrupt.
+* **The plugin manifest declares `USE_BIOMETRIC`.** The platform
+  `BiometricPrompt#authenticate` requires it, and this plugin deliberately
+  avoids androidx (whose manifest would have merged it in). It is now declared
+  in the plugin's own `AndroidManifest.xml` and manifest-merged into every
+  consumer, so the authenticated profiles no longer break at runtime in apps
+  that forgot the permission.
+* **`userAuthenticationRequired` is required in the Dart facade** (no
+  fail-open `false` default on `Keystore.generateKey`), matching its sibling
+  security flags (`strongBox`, `requireHardwareBacking`) and the Kotlin side's
+  mandatory-args contract.
 * **In-flight biometric prompts are cancelled on activity/engine detach.** The
   prompt's `CancellationSignal` is published to the plugin and force-cancelled on
   activity destroy, configuration-change (rotation), and engine teardown. This

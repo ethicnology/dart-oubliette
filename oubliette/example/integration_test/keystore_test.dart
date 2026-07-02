@@ -42,6 +42,8 @@ void main() {
         unlockedDeviceRequired: false,
         strongBox: false,
         requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
       );
       final exists = await facade.containsAlias(alias);
       expect(exists, isTrue);
@@ -55,6 +57,8 @@ void main() {
         unlockedDeviceRequired: false,
         strongBox: false,
         requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
       );
       final payload = await facade.encrypt(
         alias: alias,
@@ -76,6 +80,8 @@ void main() {
         unlockedDeviceRequired: false,
         strongBox: false,
         requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
       );
       final first = await facade.encrypt(
         alias: alias,
@@ -103,6 +109,8 @@ void main() {
           unlockedDeviceRequired: false,
           strongBox: false,
           requireHardwareBacking: false,
+          userAuthenticationRequired: false,
+          invalidatedByBiometricEnrollment: true,
         );
         final encrypted = await facade.encrypt(
           alias: alias,
@@ -126,6 +134,8 @@ void main() {
         unlockedDeviceRequired: false,
         strongBox: false,
         requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
       );
       final encrypted = await facade.encrypt(
         alias: alias,
@@ -151,6 +161,8 @@ void main() {
         unlockedDeviceRequired: false,
         strongBox: false,
         requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
       );
       final encrypted = await facade.encrypt(
         alias: alias,
@@ -178,6 +190,8 @@ void main() {
         unlockedDeviceRequired: false,
         strongBox: false,
         requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
       );
       final encrypted = await facade.encrypt(
         alias: alias,
@@ -207,6 +221,8 @@ void main() {
         unlockedDeviceRequired: false,
         strongBox: false,
         requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
       );
       final encrypted = await facade.encrypt(
         alias: alias,
@@ -289,6 +305,8 @@ void main() {
         unlockedDeviceRequired: false,
         strongBox: false,
         requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
       );
       expect(await facade.containsAlias(alias), isTrue);
       await facade.deleteEntry(alias);

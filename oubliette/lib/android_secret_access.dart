@@ -1,3 +1,5 @@
+import 'package:meta/meta.dart';
+
 import 'src/slot.dart';
 
 const _evenLockedKeyAlias = 'oubliette_even_locked';
@@ -16,6 +18,15 @@ const _reservedKeyAliases = [
   _authenticatedKeyAlias,
   _authenticatedFatalKeyAlias,
 ];
+
+/// Custom aliases already claimed by a `custom` profile in this isolate (L-2).
+/// Two custom profiles sharing a Keystore alias would share key material:
+/// `purge()` of one deletes the shared key and permanently bricks the other —
+/// violating "purge() of one profile never touches another" (SECURITY.md). The
+/// set is per-isolate (Dart has no cross-isolate shared state), so cross-
+/// isolate / cross-process alias collisions are still the caller's
+/// responsibility — documented on the `custom` constructor.
+final Set<String> _customKeyAliases = <String>{};
 
 const _reservedPrefixes = [
   _evenLockedPrefix,
@@ -300,6 +311,24 @@ class AndroidSecretAccess {
         'keyAlias "$keyAlias" is reserved for a named profile. Use a unique alias.',
       );
     }
+    // Fail-closed: `invalidatedByBiometricEnrollment` only has any effect on a
+    // key whose authenticator set is biometric-only, and that set is selected
+    // by `userAuthenticationRequired` — which is `true` only when `promptTitle`
+    // is non-null. Passing `invalidatedByBiometricEnrollment: true` with
+    // `promptTitle: null` would silently mint a no-auth key whose enrollment
+    // trip-wire is a no-op: the caller asked for a protection and got none,
+    // exactly the fail-open failure mode the README's *Fail-Closed
+    // Authentication* section rules out (and the Darwin counterpart guards as
+    // `biometryCurrentSetOnly && !authenticationRequired`).
+    if (invalidatedByBiometricEnrollment && promptTitle == null) {
+      throw ArgumentError.value(
+        invalidatedByBiometricEnrollment,
+        'invalidatedByBiometricEnrollment',
+        'requires a non-null promptTitle (otherwise the key has no '
+            'authentication requirement and the enrollment-invalidation '
+            'flag is a silent no-op)',
+      );
+    }
     // Storage slots are `prefix + slotSeparator + key`. The separator's
     // position encodes the prefix length, so two *distinct* prefixes can never
     // produce colliding slots — even when one nests under the other. The only
@@ -314,5 +343,29 @@ class AndroidSecretAccess {
         );
       }
     }
+    // L-2: reject a keyAlias already claimed by another custom profile in this
+    // isolate. Two custom profiles sharing a Keystore alias share key material:
+    // purge() of one deletes the key and bricks the other. The check is last so
+    // that validation errors above throw BEFORE the alias is claimed (a
+    // rejected constructor must not pollute the registry). Per-isolate only —
+    // cross-isolate / cross-process collisions remain the caller's responsibility.
+    if (!_customKeyAliases.add(keyAlias)) {
+      throw ArgumentError.value(
+        keyAlias,
+        'keyAlias',
+        'is already in use by another custom AndroidSecretAccess in this '
+            'isolate. Two custom profiles must not share a Keystore alias — '
+            'purge() of one would delete the shared key and brick the other. '
+            'Use a unique alias per security domain.',
+      );
+    }
   }
+
+  /// Clears the per-isolate custom-alias registry. For testing only: production
+  /// code never needs to reset the registry (a custom profile's alias is
+  /// claimed for the isolate's lifetime, which is the correct invariant —
+  /// re-claiming it with a different security domain is exactly the collision
+  /// this guard prevents).
+  @visibleForTesting
+  static void resetCustomAliasRegistry() => _customKeyAliases.clear();
 }

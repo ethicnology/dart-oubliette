@@ -1,14 +1,14 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:keystore/keystore.dart';
 import 'package:oubliette/oubliette.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'src/fetch.dart';
 import 'src/slot.dart';
 
-class AndroidOubliette extends Oubliette {
+class AndroidOubliette extends Oubliette with OublietteFetch {
   AndroidOubliette({required this.access}) : super.internal();
 
   final Keystore _keystore = Keystore();
@@ -65,13 +65,12 @@ class AndroidOubliette extends Oubliette {
 
   @override
   Future<void> init() async {
-    final existed = await _keystore.containsAlias(access.keyAlias);
+    // No init banner: an earlier revision debugPrint-ed the profile's key
+    // alias here — an identifier errors.dart deliberately keeps out of
+    // toString() (a custom alias can encode a tenant/user id, and debugPrint
+    // is not stripped in release). Logging what the redaction doctrine hides
+    // would undo it.
     await _ensureKey();
-    debugPrint(
-      existed
-          ? '[Oubliette] Android key already exists: ${access.keyAlias}'
-          : '[Oubliette] Android key generated: ${access.keyAlias}',
-    );
   }
 
   @override
@@ -105,16 +104,31 @@ class AndroidOubliette extends Oubliette {
           // already yields a BIOMETRIC_STRONG-only prompt.
         ),
       );
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(storedKey, ep.toJson());
+      // The persistence step is routed through _mapError like the encrypt
+      // above: the facade contract promises typed OublietteExceptions, and a
+      // raw PlatformException escaping only from the SharedPreferences write
+      // would give a caller nothing to branch `recoverable` on (parity with
+      // Darwin/Linux, whose native add is already inside _mapError). Unknown
+      // preference-store codes still rethrow untouched, per the fail-closed
+      // unknown-code rule.
+      await _mapError(key, () async {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(storedKey, ep.toJson());
+      });
     });
   }
 
   @override
   Future<Uint8List?> fetch(String key) async {
     final storedKey = _storedKey(key);
-    final prefs = await SharedPreferences.getInstance();
-    final payload = prefs.getString(storedKey);
+    // The blob read goes through _mapError like the decrypt below: a failing
+    // preference store must surface consistently with every other backend
+    // failure on this facade, never as a raw PlatformException only on the
+    // read-the-blob step.
+    final payload = await _mapError(key, () async {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(storedKey);
+    });
     if (payload == null) return null;
 
     final EncryptedPayload ep;
@@ -261,8 +275,13 @@ class AndroidOubliette extends Oubliette {
 
   @override
   Future<void> trash(String key) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_storedKey(key));
+    // _mapError on the preference-store call (like Darwin/Linux trash): the
+    // facade contract promises typed OublietteExceptions, so a failing delete
+    // must not escape as a raw PlatformException a caller may treat as fatal.
+    await _mapError(key, () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_storedKey(key));
+    });
   }
 
   @override
@@ -291,8 +310,16 @@ class AndroidOubliette extends Oubliette {
 
   @override
   Future<bool> exists(String key) async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.containsKey(_storedKey(key));
+    // _mapError on the preference-store call (parity with trash/store/fetch):
+    // the facade contract promises typed OublietteExceptions, so a failing
+    // SharedPreferences access must not escape as a raw PlatformException a
+    // caller may treat as fatal. `containsKey` itself is synchronous, but
+    // `getInstance()` can throw, and the typed-error contract applies to the
+    // whole operation (L-3).
+    return _mapError(key, () async {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.containsKey(_storedKey(key));
+    });
   }
 
   @override
@@ -302,13 +329,17 @@ class AndroidOubliette extends Oubliette {
     // begins with `prefix + slotSeparator` (the separator's position encodes the
     // prefix length, so a nested sibling never matches). Return the logical keys
     // with that owned-prefix stripped — never the raw slots, never any value.
-    final prefs = await SharedPreferences.getInstance();
-    final owned = access.prefix + slotSeparator;
-    return prefs
-        .getKeys()
-        .where((k) => k.startsWith(owned))
-        .map((k) => k.substring(owned.length))
-        .toList(growable: false);
+    // Routed through _mapError (parity with exists/trash/store/fetch): the
+    // facade contract promises typed OublietteExceptions on every path.
+    return _mapError('<keys>', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final owned = access.prefix + slotSeparator;
+      return prefs
+          .getKeys()
+          .where((k) => k.startsWith(owned))
+          .map((k) => k.substring(owned.length))
+          .toList(growable: false);
+    });
   }
 
   /// Runs [body] after any in-flight operation for [key] completes, so same-key

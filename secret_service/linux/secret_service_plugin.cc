@@ -54,13 +54,19 @@ struct _SecretServicePlugin {
 G_DEFINE_TYPE(SecretServicePlugin, secret_service_plugin, g_object_get_type())
 
 // Frees a gchar* secret in place, zeroing it first (best effort).
-// secret_password_wipe() clears the bytes before releasing the heap, unlike
-// secret_password_free() which leaves the decrypted secret readable in freed
-// memory until the allocator reuses it. This is the only place the plugin holds
-// raw plaintext (the read path), so it is the one place worth wiping.
+// secret_password_free() (= egg_secure_strfree, verified against libsecret
+// 0.21.7) ZEROES the bytes and then FREES the allocation — returning a pointer
+// from libsecret's mlocked secure-memory pool to the pool, or plain-freeing an
+// ordinary heap pointer. secret_password_wipe() (= egg_secure_strclear) only
+// zeroes and NEVER frees: used as a cleanup it would leak one secure-pool
+// allocation per read, eventually exhausting RLIMIT_MEMLOCK — after which
+// libsecret silently falls back to ordinary *pageable* memory for every future
+// secret transfer, degrading the non-pageable property process-wide (plus an
+// unbounded RSS leak). This is the only place the plugin holds raw plaintext
+// (the read path), so it is the one place worth wiping — and it must free too.
 #define secret_autofree _GLIB_CLEANUP(secret_cleanup_free)
 static inline void secret_cleanup_free(gchar** p) {
-  if (*p) secret_password_wipe(*p);
+  if (*p) secret_password_free(*p);
 }
 
 // ---------------------------------------------------------------------------
@@ -291,13 +297,20 @@ static FlMethodResponse* handle_contains(const gchar* slot) {
                       const_cast<char*>(kSchema.name));
 
   g_autoptr(GError) error = nullptr;
-  // Bound the call (LINUX-2): SECRET_SEARCH_UNLOCK matches the old lookup's
-  // unlock-on-access behaviour, so a keyring that re-locked since warmup
-  // re-prompts here, outside the warmup watchdog — cap it.
+  // SECRET_SEARCH_ALL only — deliberately NOT SECRET_SEARCH_UNLOCK (same
+  // rationale as handle_delete_by_prefix): existence is decided entirely by
+  // the ATTRIBUTES, and libsecret's search matches and returns LOCKED items
+  // too — the flag only controls whether matched items are actively unlocked,
+  // which matters solely for reading their secret VALUE (the read path, which
+  // keeps unlock-on-access). UNLOCK here would actively unlock EVERY
+  // collection holding a fmt-matching item — including one an attacker/other
+  // app planted an oubliette-tagged item in — an unlock-prompt storm for a
+  // question the attributes already answer. Still bounded (LINUX-2): a
+  // slow/hung provider surfaces as keyring_timeout, never as "absent".
   OpWatchdog* watchdog = op_watchdog_arm();
   GList* items = secret_service_search_sync(
       service, &kSchema, attrs,
-      static_cast<SecretSearchFlags>(SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK),
+      static_cast<SecretSearchFlags>(SECRET_SEARCH_ALL),
       watchdog->cancellable, &error);
   op_watchdog_finish(watchdog);
   g_hash_table_unref(attrs);
@@ -321,8 +334,8 @@ static FlMethodResponse* handle_write(const gchar* slot, const gchar* value) {
   // Duplicate check is an ATTRIBUTE-only question: search (no LOAD_SECRETS) so
   // the existing item's secret value is never decrypted/transferred just to test
   // for its presence — see handle_contains. Scope to this app's items (slot +
-  // fmt). Bound both the search and the store (LINUX-2): either can re-prompt if
-  // the keyring relocked.
+  // fmt). Bound both the search and the store (LINUX-2): the store can re-prompt
+  // if the keyring relocked, and the search can stall on a slow/hung provider.
   GHashTable* attrs = g_hash_table_new(g_str_hash, g_str_equal);
   g_hash_table_insert(attrs, const_cast<char*>("slot"),
                       const_cast<char*>(slot));
@@ -335,10 +348,17 @@ static FlMethodResponse* handle_write(const gchar* slot, const gchar* value) {
                       const_cast<char*>(kSchema.name));
 
   g_autoptr(GError) lookup_error = nullptr;
+  // SECRET_SEARCH_ALL only — deliberately NOT SECRET_SEARCH_UNLOCK: the
+  // dup-check is an existence question, and locked items match and are
+  // returned without the flag (see handle_contains for the full rationale —
+  // UNLOCK would let a planted item trigger an unlock-prompt storm across
+  // unrelated keyrings). A duplicate in a re-locked collection is still found
+  // and still fails closed as already_exists; the store below fails with the
+  // recoverable keyring_locked if the default collection re-locked.
   OpWatchdog* lookup_watchdog = op_watchdog_arm();
   GList* existing = secret_service_search_sync(
       service, &kSchema, attrs,
-      static_cast<SecretSearchFlags>(SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK),
+      static_cast<SecretSearchFlags>(SECRET_SEARCH_ALL),
       lookup_watchdog->cancellable, &lookup_error);
   op_watchdog_finish(lookup_watchdog);
   g_hash_table_unref(attrs);
@@ -578,10 +598,178 @@ static FlMethodResponse* handle_list_by_prefix(const gchar* prefix) {
   return FL_METHOD_RESPONSE(fl_method_success_response_new(list));
 }
 
-static void secret_service_plugin_handle_method_call(
-    SecretServicePlugin* self, FlMethodCall* method_call) {
-  g_autoptr(FlMethodResponse) response = nullptr;
+// ---------------------------------------------------------------------------
+// Off-platform-thread execution (M-9). Every handler above runs blocking
+// *_sync libsecret calls; run inline on the GTK platform thread, each
+// watchdog-bounded call could freeze the whole window (no input, no redraw)
+// for up to kUnlockTimeoutSeconds — and handle_write chains THREE bounded
+// calls — precisely while the user is expected to interact with the unlock
+// dialog the freeze hides. So the libsecret work runs on a worker thread and
+// only the response is delivered back on the platform thread.
+//
+// Threading contract:
+// - Argument parsing/validation stays on the platform thread
+//   (secret_service_plugin_handle_method_call): bad_args / not_implemented
+//   never touch libsecret, cannot block, and respond inline.
+// - Valid operations are pushed to a single-threaded, process-global, FIFO
+//   GThreadPool. ONE worker thread means operations are serialized exactly as
+//   the platform thread implicitly serialized them before this refactor — the
+//   Dart layer's locks are per-isolate only, so without native serialization
+//   two isolates could interleave libsecret state.
+// - The worker owns plain g_strdup'ed copies of the string arguments, NOT the
+//   FlValue objects (FlValue refcounting is not atomic; copies remove every
+//   cross-thread aliasing question). The `value` copy is secret material and
+//   is wiped before free.
+// - The FlMethodCall is kept alive by a g_object_ref held by the work item
+//   (GObject refcounts ARE atomic). The plugin instance is deliberately NOT
+//   captured: no handler reads plugin state, so plugin disposal while an
+//   operation is in flight cannot use-after-free anything.
+// - Responses are delivered via g_idle_add at G_PRIORITY_DEFAULT on the
+//   default GMainContext — the GTK platform thread's context — because the
+//   FlBinaryMessenger API is not thread-safe (DEFAULT, not DEFAULT_IDLE, so a
+//   continuously-redrawing app cannot starve the reply).
+//   fl_method_call_respond runs exactly once per call on every path: inline
+//   for parse failures and the no-worker fallback, in the idle callback
+//   otherwise — the branches are mutually exclusive by construction.
+// - The OpWatchdog machinery is thread-agnostic (its own detached timer thread
+//   plus a thread-safe GCancellable; no main-loop or platform-thread
+//   dependency), so the handlers' timeout semantics are unchanged on the
+//   worker thread. Likewise libsecret's *_sync API is documented safe to call
+//   from any thread (it iterates a private GMainContext internally).
+// ---------------------------------------------------------------------------
 
+enum class SecretOp {
+  kContains,
+  kWrite,
+  kRead,
+  kDelete,
+  kDeleteByPrefix,
+  kListByPrefix,
+};
+
+// One queued method call. Owns copies of the string arguments and a ref on the
+// FlMethodCall; `response` is produced by the worker and consumed (responded +
+// unreffed) on the platform thread.
+struct WorkItem {
+  SecretOp op;
+  gchar* slot;    // owned; nullptr when the op takes no slot
+  gchar* value;   // owned; nullptr except for write; wiped before free
+  gchar* prefix;  // owned; nullptr when the op takes no prefix
+  FlMethodCall* call;          // owned ref
+  FlMethodResponse* response;  // owned once set
+};
+
+static void work_item_free(WorkItem* item) {
+  g_free(item->slot);
+  if (item->value != nullptr) {
+    // The write value is the caller's secret payload (base64 of the stored
+    // bytes); this copy exists only to cross threads, so zero it before
+    // releasing. secret_password_wipe is documented for any NUL-terminated
+    // string (a plain memset) and, as an external call, cannot be elided by
+    // the compiler the way a local memset-before-free can.
+    secret_password_wipe(item->value);
+    g_free(item->value);
+  }
+  g_free(item->prefix);
+  g_clear_object(&item->response);
+  g_object_unref(item->call);
+  g_free(item);
+}
+
+// Runs the (blocking) libsecret handler for [item]. Called on the worker
+// thread — or, in the degraded no-worker fallback, on the platform thread.
+// Always returns a response: even an impossible op value produces an error
+// rather than a dropped (never-answered) call.
+static FlMethodResponse* run_secret_op(const WorkItem* item) {
+  switch (item->op) {
+    case SecretOp::kContains:
+      return handle_contains(item->slot);
+    case SecretOp::kWrite:
+      return handle_write(item->slot, item->value);
+    case SecretOp::kRead:
+      return handle_read(item->slot);
+    case SecretOp::kDelete:
+      return handle_delete(item->slot);
+    case SecretOp::kDeleteByPrefix:
+      return handle_delete_by_prefix(item->prefix);
+    case SecretOp::kListByPrefix:
+      return handle_list_by_prefix(item->prefix);
+  }
+  return error_response("secret_service_error", "Unknown internal operation.");
+}
+
+// Platform thread (idle callback): deliver the worker's response. This is the
+// only thread allowed to touch the messenger, and the FlMethodCall ref held by
+// the item keeps the call (and its channel) alive until here even if the
+// plugin instance was disposed while the worker ran.
+static gboolean respond_on_platform_thread(gpointer data) {
+  WorkItem* item = static_cast<WorkItem*>(data);
+  fl_method_call_respond(item->call, item->response, nullptr);
+  work_item_free(item);  // releases the response and the call ref
+  return G_SOURCE_REMOVE;
+}
+
+// Worker thread: run the blocking handler, then hand the response back to the
+// platform thread. The item's ownership transfers to the idle callback.
+static void secret_op_worker(gpointer data, gpointer user_data) {
+  WorkItem* item = static_cast<WorkItem*>(data);
+  item->response = run_secret_op(item);
+  g_idle_add_full(G_PRIORITY_DEFAULT, respond_on_platform_thread, item,
+                  nullptr);
+}
+
+// Lazily creates the single worker. Process-global and never freed: method
+// calls can arrive for as long as the process lives, and a plugin
+// re-registration (engine restart) reuses the same queue, keeping the
+// serialization property global rather than per-instance. Exclusive with
+// max_threads = 1: the one thread is spawned HERE, so a later
+// g_thread_pool_push can never need (and never fail to spawn) a thread — a
+// pushed item is guaranteed to run and respond. Only ever called from the
+// platform thread (the method-call callback), so the lazy init needs no lock.
+// On thread-spawn failure returns nullptr (retried on the next call) and the
+// caller degrades to inline execution.
+static GThreadPool* secret_worker_pool() {
+  static GThreadPool* pool = nullptr;
+  if (pool == nullptr) {
+    pool = g_thread_pool_new(secret_op_worker, nullptr, 1 /* max_threads */,
+                             TRUE /* exclusive */, nullptr);
+  }
+  return pool;
+}
+
+// Queues [op] for the worker (copying the string arguments; nullptrs pass
+// through g_strdup unchanged). Fallback: if no worker thread could be created,
+// run the operation inline on the platform thread — the pre-M-9 behavior
+// (frozen UI for the bounded call, but correct, fail-closed results) — rather
+// than dropping the call or aborting the host app; the same degrade-not-abort
+// posture as op_watchdog_arm's timer fallback.
+static void dispatch_secret_op(FlMethodCall* method_call, SecretOp op,
+                               const gchar* slot, const gchar* value,
+                               const gchar* prefix) {
+  WorkItem* item = g_new0(WorkItem, 1);
+  item->op = op;
+  item->slot = g_strdup(slot);
+  item->value = g_strdup(value);
+  item->prefix = g_strdup(prefix);
+  item->call = FL_METHOD_CALL(g_object_ref(method_call));
+  item->response = nullptr;
+
+  GThreadPool* pool = secret_worker_pool();
+  if (pool != nullptr) {
+    g_thread_pool_push(pool, item, nullptr);
+    return;
+  }
+
+  item->response = run_secret_op(item);
+  fl_method_call_respond(item->call, item->response, nullptr);
+  work_item_free(item);
+}
+
+// Platform thread entry point: validate, then either respond inline (argument
+// errors — they never touch libsecret) or queue the operation for the worker.
+// Exactly one of the two happens per call.
+static void secret_service_plugin_handle_method_call(
+    FlMethodCall* method_call) {
   const gchar* method = fl_method_call_get_name(method_call);
   FlValue* args = fl_method_call_get_args(method_call);
 
@@ -589,7 +777,8 @@ static void secret_service_plugin_handle_method_call(
   // value); fl_value_get_type asserts (g_return_val_if_fail) on NULL, which
   // would abort the host process. Reject it as bad_args before touching it.
   if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
-    response = error_response("bad_args", "Arguments are not a map.");
+    g_autoptr(FlMethodResponse) response =
+        error_response("bad_args", "Arguments are not a map.");
     fl_method_call_respond(method_call, response, nullptr);
     return;
   }
@@ -630,26 +819,33 @@ static void secret_service_plugin_handle_method_call(
   // the U+001D slot separator (checked via strlen below), so a NUL-truncated
   // prefix that loses its trailing separator is rejected on those paths anyway.
 
+  // Validation failures respond inline below; a still-nullptr `response` at
+  // the end of the chain means the operation was handed to the worker, which
+  // responds later (never both — see the M-9 threading contract above).
+  g_autoptr(FlMethodResponse) response = nullptr;
+
   if (strcmp(method, "contains") == 0) {
     if (!slot)
       response = error_response("bad_args", "Missing slot.");
     else
-      response = handle_contains(slot);
+      dispatch_secret_op(method_call, SecretOp::kContains, slot, nullptr,
+                         nullptr);
   } else if (strcmp(method, "write") == 0) {
     if (!slot || !value)
       response = error_response("bad_args", "Missing slot or value.");
     else
-      response = handle_write(slot, value);
+      dispatch_secret_op(method_call, SecretOp::kWrite, slot, value, nullptr);
   } else if (strcmp(method, "read") == 0) {
     if (!slot)
       response = error_response("bad_args", "Missing slot.");
     else
-      response = handle_read(slot);
+      dispatch_secret_op(method_call, SecretOp::kRead, slot, nullptr, nullptr);
   } else if (strcmp(method, "delete") == 0) {
     if (!slot)
       response = error_response("bad_args", "Missing slot.");
     else
-      response = handle_delete(slot);
+      dispatch_secret_op(method_call, SecretOp::kDelete, slot, nullptr,
+                         nullptr);
   } else if (strcmp(method, "deleteByPrefix") == 0) {
     // Reject an empty prefix: g_str_has_prefix(slot, "") is always true, so an
     // empty prefix would purge EVERY oubliette item across all profiles. The
@@ -670,7 +866,8 @@ static void secret_service_plugin_handle_method_call(
         response = error_response(
             "bad_args", "Prefix must end at the reserved slot separator.");
       else
-        response = handle_delete_by_prefix(prefix);
+        dispatch_secret_op(method_call, SecretOp::kDeleteByPrefix, nullptr,
+                           nullptr, prefix);
     }
   } else if (strcmp(method, "listByPrefix") == 0) {
     // Same guards as deleteByPrefix: a non-empty, separator-terminated prefix.
@@ -684,13 +881,16 @@ static void secret_service_plugin_handle_method_call(
         response = error_response(
             "bad_args", "Prefix must end at the reserved slot separator.");
       else
-        response = handle_list_by_prefix(prefix);
+        dispatch_secret_op(method_call, SecretOp::kListByPrefix, nullptr,
+                           nullptr, prefix);
     }
   } else {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
   }
 
-  fl_method_call_respond(method_call, response, nullptr);
+  if (response != nullptr) {
+    fl_method_call_respond(method_call, response, nullptr);
+  }
 }
 
 static void secret_service_plugin_dispose(GObject* object) {
@@ -705,8 +905,12 @@ static void secret_service_plugin_init(SecretServicePlugin* self) {}
 
 static void method_call_cb(FlMethodChannel* channel, FlMethodCall* method_call,
                            gpointer user_data) {
-  SecretServicePlugin* plugin = SECRET_SERVICE_PLUGIN(user_data);
-  secret_service_plugin_handle_method_call(plugin, method_call);
+  // `user_data` (the plugin ref held by the channel) is deliberately unused:
+  // the handlers are stateless, and NOT threading the plugin instance into the
+  // worker means plugin disposal while an operation is in flight cannot
+  // use-after-free — the work item's g_object_ref on the FlMethodCall is what
+  // keeps the response path alive (see the M-9 threading contract).
+  secret_service_plugin_handle_method_call(method_call);
 }
 
 void secret_service_plugin_register_with_registrar(

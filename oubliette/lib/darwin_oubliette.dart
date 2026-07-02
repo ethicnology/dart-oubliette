@@ -1,13 +1,13 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:keychain/keychain.dart';
 import 'package:oubliette/oubliette.dart';
 
+import 'src/fetch.dart';
 import 'src/slot.dart';
 
-class DarwinOubliette extends Oubliette {
+class DarwinOubliette extends Oubliette with OublietteFetch {
   DarwinOubliette({required this.access})
     : _keychain = Keychain(config: access.toConfig()),
       super.internal();
@@ -80,15 +80,11 @@ class DarwinOubliette extends Oubliette {
   @override
   Future<void> init() async {
     if (!access.secureEnclave) return;
-    final existed = await _mapError(
-      '<init>',
-      () => _keychain.ensureEnclaveKeyPair(),
-    );
-    debugPrint(
-      existed
-          ? '[Oubliette] Darwin SE key already exists (service: ${access.service})'
-          : '[Oubliette] Darwin SE key generated (service: ${access.service})',
-    );
+    // No init banner: an earlier revision debugPrint-ed the profile's service
+    // here — an identifier errors.dart deliberately keeps out of toString()
+    // (it can encode a tenant/user id, and debugPrint is not stripped in
+    // release). Logging what the redaction doctrine hides would undo it.
+    await _mapError('<init>', () => _keychain.ensureEnclaveKeyPair());
   }
 
   @override
@@ -98,13 +94,13 @@ class DarwinOubliette extends Oubliette {
       try {
         present = await exists(key);
       } on AuthenticationFailedException {
-        // On an authenticated profile contains() cannot return a definite
-        // answer: the UI-suppressed probe (kSecUseAuthenticationUIFail) makes
-        // the OS report a presence-gated item with errSecInteractionNotAllowed
-        // even when it plainly exists (see KeychainQueries.contains doc). Don't
-        // let that surface as a misleading "authenticate & retry"; fall through
-        // to secItemAdd, whose errSecDuplicateItem → `already_exists` →
-        // StateError is the authoritative put-if-absent for these profiles
+        // exists() already translates the authenticated-profile probe signal
+        // (present item reported as errSecInteractionNotAllowed) back into
+        // `true`, so what reaches this catch is a probe that could not answer
+        // at all — e.g. the device is locked on a non-authenticated profile.
+        // Don't let that surface as a misleading "authenticate & retry" from a
+        // *write*; fall through to secItemAdd, whose errSecDuplicateItem →
+        // `already_exists` → StateError is the authoritative put-if-absent
         // (parity with Android, which reads SharedPreferences and yields the
         // same StateError). A genuinely-absent key still returns false here.
         present = false;
@@ -115,23 +111,33 @@ class DarwinOubliette extends Oubliette {
         );
       }
       await _ensureKey();
-      // SecItemAdd is the authoritative put-if-absent (errSecDuplicateItem →
-      // native `already_exists`). If a concurrent writer won the race the
-      // best-effort precheck above cannot close, unify it with the precheck so
-      // store() throws ONE error type for "already present", never a raw
-      // PlatformException. Nothing is overwritten either way.
+      // The header-prepended copy handed to the channel is library-owned
+      // plaintext (README: "the library only wipes the buffers it owns").
+      // Zero it in a `finally` on every path — success and failure alike: the
+      // method channel serializes its own copy of the bytes before the await
+      // completes, so nothing still needs this buffer afterwards.
+      final wrapped = _wrap(value);
       try {
-        await _mapError(
-          key,
-          () => _keychain.secItemAdd(_storedKey(key), _wrap(value)),
-        );
-      } on PlatformException catch (e) {
-        if (e.code == 'already_exists') {
-          throw StateError(
-            'A value already exists for key "$key". Call trash() first.',
+        // SecItemAdd is the authoritative put-if-absent (errSecDuplicateItem →
+        // native `already_exists`). If a concurrent writer won the race the
+        // best-effort precheck above cannot close, unify it with the precheck so
+        // store() throws ONE error type for "already present", never a raw
+        // PlatformException. Nothing is overwritten either way.
+        try {
+          await _mapError(
+            key,
+            () => _keychain.secItemAdd(_storedKey(key), wrapped),
           );
+        } on PlatformException catch (e) {
+          if (e.code == 'already_exists') {
+            throw StateError(
+              'A value already exists for key "$key". Call trash() first.',
+            );
+          }
+          rethrow;
         }
-        rethrow;
+      } finally {
+        wrapped.fillRange(0, wrapped.length, 0);
       }
     });
   }
@@ -143,7 +149,21 @@ class DarwinOubliette extends Oubliette {
       () => _keychain.secItemCopyMatching(_storedKey(key)),
     );
     if (stored == null) return null;
-    return _unwrap(key, stored);
+    try {
+      return _unwrap(key, stored);
+    } on PayloadCorruptException {
+      // The refused blob is plaintext for non-SE profiles — it must not be
+      // discarded unzeroed just because its header failed validation (the
+      // header byte is the only part _unwrap judged; the rest is the secret).
+      // Best-effort like useAndForget: the channel may hand back an
+      // unmodifiable buffer.
+      try {
+        stored.fillRange(0, stored.length, 0);
+      } on UnsupportedError {
+        // Unmodifiable method channel buffer — cannot zero it.
+      }
+      rethrow;
+    }
   }
 
   /// Translates known native keychain error codes into typed
@@ -285,8 +305,38 @@ class DarwinOubliette extends Oubliette {
   });
 
   @override
-  Future<bool> exists(String key) {
-    return _mapError(key, () => _keychain.contains(_storedKey(key)));
+  Future<bool> exists(String key) async {
+    try {
+      return await _mapError(key, () => _keychain.contains(_storedKey(key)));
+    } on AuthenticationFailedException catch (e) {
+      // On an authenticated profile the UI-suppressed probe
+      // (kSecUseAuthenticationUIFail) makes the OS answer for a PRESENT item
+      // with errSecInteractionNotAllowed — a genuinely absent item still
+      // returns errSecItemNotFound (a clean `false` above). That makes the
+      // "error" the presence answer: no amount of user authentication ever
+      // makes the suppressed probe itself succeed, so surfacing it as a
+      // recoverable AuthenticationFailedException sends a compliant caller
+      // into an unwinnable retry loop — or worse, tempts it to read the throw
+      // as "absent" and re-onboard over a live secret. Translate exactly that
+      // probe signal back to `true`, the same reality store()'s precheck
+      // already accounts for.
+      //
+      // Deliberately narrow, fail-closed on ambiguity: only the native
+      // `interaction_not_allowed` code, and only when this profile is
+      // auth-gated. Every other auth failure (cancelled prompt, biometry
+      // lockout, `auth_failed`) rethrows untouched — those are genuine gate
+      // failures, not the probe's present-but-gated signal. On a
+      // NON-authenticated profile `interaction_not_allowed` means the device
+      // is locked (the probe could not run at all), where "present" would be
+      // a guess — it stays a recoverable error to retry after unlock.
+      final cause = e.cause;
+      if (access.authenticationRequired &&
+          cause is PlatformException &&
+          cause.code == 'interaction_not_allowed') {
+        return true;
+      }
+      rethrow;
+    }
   }
 
   @override

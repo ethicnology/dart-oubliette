@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -173,6 +174,69 @@ void main() {
           '{"version":1,"nonce":"AQIDBAUGBwgJCgsM","ciphertext":"Kiss","aad":"a"}',
         ),
         throwsA(isA<FormatException>()),
+      );
+    });
+  });
+
+  // WRITE/READ SYMMETRY. The read path has always capped fields (above); these
+  // pin the write-side mirror. Without it, an oversized secret stores
+  // successfully and then EVERY read rejects it as corruption — self-inflicted,
+  // permanent data stranding. The invariant under test: anything constructable
+  // (and therefore storable) is readable back, and anything over the cap fails
+  // loudly at write time, before any data exists to strand.
+  group('write-side size caps (fail the write, never strand the data)', () {
+    EncryptedPayload build({
+      Uint8List? nonce,
+      Uint8List? ciphertext,
+      String aad = 'a',
+      String keyAlias = 'k',
+    }) => EncryptedPayload(
+      version: 1,
+      nonce: nonce ?? Uint8List(12),
+      ciphertext: ciphertext ?? Uint8List.fromList([42]),
+      aad: aad,
+      keyAlias: keyAlias,
+    );
+
+    test('rejects a ciphertext one byte over the cap at construction', () {
+      expect(
+        () => build(ciphertext: Uint8List(EncryptedPayload.maxFieldBytes + 1)),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('rejects an oversized nonce at construction', () {
+      expect(
+        () => build(nonce: Uint8List(EncryptedPayload.maxFieldBytes + 1)),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('rejects an oversized aad / keyAlias at construction', () {
+      final huge = 'a' * (EncryptedPayload.maxFieldChars + 1);
+      expect(() => build(aad: huge), throwsA(isA<ArgumentError>()));
+      expect(() => build(keyAlias: huge), throwsA(isA<ArgumentError>()));
+    });
+
+    test('boundary: a maxFieldBytes ciphertext writes AND reads back', () {
+      // The largest storable field must survive the full round trip: 48 KiB of
+      // bytes base64-encodes to exactly the 64 Ki-char read cap, so a payload
+      // the constructor accepts can never be rejected by fromMap. A drift
+      // between the two constants (write cap above read cap) fails here.
+      final maxCiphertext = Uint8List.fromList(
+        List.generate(EncryptedPayload.maxFieldBytes, (i) => i % 251),
+      );
+      final written = build(ciphertext: maxCiphertext);
+      final restored = EncryptedPayload.fromJson(written.toJson());
+      expect(restored.ciphertext, maxCiphertext);
+      expect(restored.nonce, written.nonce);
+    });
+
+    test('the shared constants agree (write cap encodes to the read cap)', () {
+      // 4 base64 chars per 3 bytes, exact at the boundary.
+      expect(
+        base64Encode(Uint8List(EncryptedPayload.maxFieldBytes)).length,
+        EncryptedPayload.maxFieldChars,
       );
     });
   });

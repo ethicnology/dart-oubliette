@@ -23,7 +23,10 @@ import 'dart:typed_data';
 import 'package:oubliette/oubliette.dart';
 
 final storage = Oubliette(
-  android: const AndroidSecretAccess.onlyUnlocked(strongBox: false),
+  android: const AndroidSecretAccess.onlyUnlocked(
+    strongBox: false,
+    requireHardwareBacking: false, // allow software keystores (emulators)
+  ),
   darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
 );
 
@@ -50,10 +53,18 @@ final signature = await storage.useAndForget('mnemonic', (bytes) async {
 > ```dart
 > final strongBox = await Keystore().isStrongBoxAvailable();
 > final storage = Oubliette(
->   android: AndroidSecretAccess.onlyUnlocked(strongBox: strongBox),
+>   android: AndroidSecretAccess.onlyUnlocked(
+>     strongBox: strongBox,
+>     requireHardwareBacking: true, // refuse a software-only keystore
+>   ),
 >   darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: true),
 > );
 > ```
+>
+> `requireHardwareBacking` is likewise a **required** choice with no default:
+> `true` makes key generation verify secure-hardware backing and refuse a
+> software keystore (`hardware_unavailable`) — wallet apps should set it true;
+> `false` allows software-only keystores (emulators).
 
 ## Key Design Decisions
 
@@ -150,6 +161,8 @@ never used to choose how the blob is decrypted.
 
 The encrypted payload is stored in standard `SharedPreferences` (not `EncryptedSharedPreferences`, which is deprecated). Since the payload is already AES-256-GCM encrypted by the Android Keystore, double-encryption would add complexity without meaningful security benefit.
 
+Payloads are size-capped **symmetrically**: the read path rejects any field above 64 Ki base64 chars (~48 KiB decoded), and the same cap is enforced at `store()` time, so an oversized secret fails the write up front instead of storing a blob that every later `fetch` would reject as corrupt. This library is for small secrets (seeds, tokens) — for bulk data, store a key here and encrypt the bulk elsewhere.
+
 ### No Cloud Sync
 
 On Darwin, `kSecAttrSynchronizable` is explicitly set to `false` on every keychain query. Secrets never leave the device via iCloud Keychain. This is deliberate: mnemonic phrases must remain device-local to prevent cloud-based exfiltration. Every profile is device-local by construction — the `custom` constructor rejects non-`ThisDeviceOnly` accessibility (`whenUnlocked`/`afterFirstUnlock`), so a secret can't ride an encrypted backup to another device either.
@@ -165,9 +178,19 @@ On Linux, secrets are stored in the freedesktop Secret Service via `libsecret`
 **software-encrypted** keyring protected by your login password — the Linux
 analog of the macOS legacy file-based keychain, and **not** hardware-backed.
 Each secret is stored as a **distinct Secret Service item** keyed by its slot
-(`prefix + U+001D + key`), never as one shared blob, so per-slot isolation,
-fail-closed `store`, and prefix-exact `purge()` all behave like the other
-platforms. The value carries the same frozen 1-byte format header as Darwin.
+(`prefix + U+001D + key`), never as one shared blob, so per-slot isolation and
+prefix-exact `purge()` behave like the other platforms. The value carries the
+same frozen 1-byte format header as Darwin.
+
+One honest caveat on fail-closed `store`: the Secret Service API has no atomic
+put-if-absent (`secret_password_store` always creates-or-replaces), so the
+`already_exists` guarantee rests on a search→store precheck plus a per-isolate
+lock — within one isolate exactly one creator wins. Unlike Darwin, whose
+duplicate check is atomic in the Keychain itself (`errSecDuplicateItem`), two
+*processes* (or two isolates) racing `store()` on the same slot can both pass
+the precheck, and the second write silently overwrites the first. This is the
+same documented cross-process limitation as Android's `SharedPreferences`
+backend — do not assume cross-process create atomicity on Linux.
 
 Because the keyring is unlocked at login and readable by any same-user process,
 and because there is no hardware-backed or per-operation-auth tier on the Linux
@@ -208,15 +231,15 @@ single decision-critical flag: **`recoverable`**.
 | Exception (`recoverable`) | Native code | Meaning / reaction |
 |---------------------------|-------------|--------------------|
 | `AuthenticationFailedException` (`true`) | `auth_failed`, `auth_error`, `auth_cancelled`, `interaction_not_allowed`, `device_locked`, `biometry_lockout`, `key_auth_type_unknown` | User cancelled/failed the prompt, the device was locked, or biometry is locked out (unlock with the passcode to re-enable). Data is intact — offer a retry. Never purge. |
-| `BackendUnavailableException` (`true`) | `encrypt_failed`, `detached`, `delete_entry_failed` (Android); `sec_item_add_failed`, `sec_item_delete_failed` (Darwin); `backend_unavailable`, `secret_service_error`, `keyring_timeout` (Linux) | An environmental backend/IO failure — the Keychain/Keystore/Secret Service was unavailable or returned a transient error. The secret itself is intact: fix the environment and retry. **Never** purge. |
+| `BackendUnavailableException` (`true`) | `encrypt_failed`, `detached`, `delete_entry_failed`, `decrypt_interrupted`, `unsupported_version` (Android); `sec_item_add_failed`, `sec_item_delete_failed`, `sec_item_copy_failed`, `missing_entitlement`, `se_key_fetch_failed`, `se_key_gen_failed`, `se_encrypt_failed`, `access_control_failed`, `se_ensure_key_failed` (Darwin); `backend_unavailable`, `secret_service_error`, `keyring_timeout` (Linux) | An environmental backend/IO failure — the Keychain/Keystore/Secret Service was unavailable or returned a transient error. The secret itself is intact: fix the environment and retry. **Never** purge. Two Android codes deserve a note: `decrypt_interrupted` is a transient keymaster operation failure after a successful auth (e.g. a pruned operation slot) — just retry; `unsupported_version` means the blob was written by a **newer** scheme version (an app downgrade) — upgrade the app; the data is fine. |
 | `KeyringLockedException` (`true`) | `keyring_locked` (Linux) | The Secret Service keyring is locked. Unlock it (gnome-keyring / KWallet) and retry. **Never** purge. |
 | `PayloadTamperException` (`false`) | — (Dart, Android) | Stored blob's slot metadata doesn't match the live profile (relocated/tampered). Treat the secret as compromised; overwrite via `trash()` + `store()`. |
-| `PayloadCorruptException` (`false`) | — (Dart) | Stored blob is malformed (bad version/nonce/ciphertext, or unknown Darwin format header). On-disk corruption; recover the slot via `trash()` + `store()` or `purge()`. |
+| `PayloadCorruptException` (`false`) | — (Dart); `payload_corrupt` (Linux) | Stored blob is malformed (bad version/nonce/ciphertext, or unknown Darwin format header). On-disk corruption; recover the slot via `trash()` + `store()` or `purge()`. |
 | `KeyInvalidatedException` (`false`) | `key_invalidated` | Key permanently invalidated by the OS — a new biometric enrolled (`authenticatedFatal`) or the secure lock screen removed/reset (**any** authenticated profile). Secrets under it are unrecoverable; recover with `purge()` then `init()`. |
-| `KeyNotFoundException` (`false`) | `key_not_found` | The profile key alias is gone (Keystore cleared, or restored from a backup without key material) but a blob remains — the blob is unreadable. Recover with `purge()` then `init()`. |
-| `DecryptionFailedException` (`false`) | `decrypt_failed`, `se_decrypt_failed` | The key is intact but this blob failed authenticated decryption (corruption/tamper/key mismatch). Overwrite the slot or `purge()`. |
+| `KeyNotFoundException` (`false`) | `key_not_found` (Android), `se_key_missing` (Darwin) | The profile key is gone (Keystore cleared, SE key absent, or restored from a backup without key material) but a blob remains — the blob is unreadable. Recover with `purge()` then `init()`. |
+| `DecryptionFailedException` (`false`) | `decrypt_failed` (Android), `se_decrypt_failed` (Darwin) | The key is intact but this blob failed authenticated decryption (corruption/tamper/key mismatch). Overwrite the slot or `purge()`. On Darwin, transient Secure Enclave conditions (device locked mid-operation, auth interruptions) no longer land here — they surface as the recoverable auth codes above. |
 
-The native codes above are platform-specific (e.g. `se_decrypt_failed` and `interaction_not_allowed` are Darwin-only; `device_locked`/`key_auth_type_unknown`/`key_invalidated`/`key_not_found` are Android-only; `biometry_lockout` is Android + Darwin) — match on the typed exception, not the code.
+The native codes above are platform-specific (e.g. `se_decrypt_failed` and `interaction_not_allowed` are Darwin-only; `device_locked`/`key_auth_type_unknown`/`key_invalidated` are Android-only; `key_not_found` is Android with `se_key_missing` as its Darwin counterpart; `biometry_lockout` is Android + Darwin) — match on the typed exception, not the code.
 
 Errors still surfaced as raw `PlatformException` (operational, not data-semantic):
 `strongbox_unavailable` (StrongBox requested but absent — pre-flight with
@@ -228,7 +251,7 @@ various `*_failed` generation/IO codes.
 
 ## Platform requirements
 
-- **Android:** `minSdkVersion` **30** (Android 11) — required so `setUserAuthenticationParameters` is always available; on API 29 the authenticated profiles would silently generate a key with no user-auth requirement. Apps using `authenticated`/`authenticatedFatal` profiles must declare `<uses-permission android:name="android.permission.USE_BIOMETRIC" />`. StrongBox (dedicated SE chip) is optional and explicitly requested via the `strongBox` parameter (fail-closed).
+- **Android:** `minSdkVersion` **30** (Android 11) — required so `setUserAuthenticationParameters` is always available; on API 29 the authenticated profiles would silently generate a key with no user-auth requirement. The plugin declares `<uses-permission android:name="android.permission.USE_BIOMETRIC" />` in its own manifest (merged into consuming apps automatically), so apps using `authenticated`/`authenticatedFatal` profiles no longer strictly need to declare it themselves — though doing so remains good documentation of intent. StrongBox (dedicated SE chip) is optional and explicitly requested via the `strongBox` parameter (fail-closed).
 - **iOS:** iOS 13+. Apps using `authenticated`/`authenticatedFatal` profiles must add an `NSFaceIDUsageDescription` string to `Info.plist`, or Face ID prompts crash.
 - **macOS:** macOS 10.15+. The legacy file-based keychain works with no code signing. The `authenticated`/`authenticatedFatal` profiles use the Data Protection keychain, which requires code signing and the `keychain-access-groups` entitlement.
 
@@ -241,7 +264,7 @@ consuming app's pipeline responsibility.
 | Tool | Version | Pinned by |
 |------|---------|-----------|
 | Flutter | 3.44.1 | `.fvmrc` |
-| Dart | 3.12.1 (via Flutter pin) | every `pubspec.yaml` (`sdk: 3.12.1`) |
+| Dart | 3.12.1 (via Flutter pin) | `.fvmrc` pins the exact version; every `pubspec.yaml` declares the floor (`sdk: ">=3.12.1 <4.0.0"`) |
 | AGP | 9.2.0 (built-in Kotlin) | `keystore/android/build.gradle`, example |
 | Gradle | 9.5.1 (+ `distributionSha256Sum`) | wrapper `gradle-wrapper.properties` |
 | Kotlin | 2.4.0 | `build.gradle` |
@@ -250,9 +273,14 @@ consuming app's pipeline responsibility.
 | CocoaPods | 1.16.2 | `Podfile.lock` |
 | compile SDK / build-tools | 36 / 36.0.0 | `build.gradle` |
 
-NDK is not applicable — this plugin has no native C/C++; the engine's NDK is
-fixed by the Flutter version. Runtime deps are kept to official packages only
-(`shared_preferences`, `meta`); `dart_mappable` and the `build_runner` codegen
+NDK is not applicable on Android — the plugin has no Android C/C++; the
+engine's NDK is fixed by the Flutter version. (The Linux backend compiles one
+C++ file against libsecret via the standard Flutter CMake toolchain.) Runtime
+deps are the official packages `shared_preferences` and `meta`, plus one
+third-party crypto dependency: `pointycastle ^4.0.0`, used only by the optional
+`PassphraseVault` layer for Argon2id / AES-GCM / HKDF. Audit it accordingly —
+the core store/fetch path does all cryptography in the platform Keystore /
+Keychain / keyring, not in Dart. `dart_mappable` and the `build_runner` codegen
 step were removed.
 
 ## Running the example
@@ -269,15 +297,16 @@ cd oubliette/example && flutter test integration_test/
 
 ## Packages
 
-This repository is a monorepo with three packages:
+This repository is a monorepo with four packages:
 
 | Package | Description |
 |---------|-------------|
-| [`oubliette/`](oubliette/) | Main plugin — platform-agnostic `init`/`store`/`useAndForget`/`trash`/`exists`/`keys`/`purge` API over `Uint8List` values. Delegates to `keychain` and `keystore` via `default_package`. |
+| [`oubliette/`](oubliette/) | Main plugin — platform-agnostic `init`/`store`/`useAndForget`/`trash`/`exists`/`keys`/`purge` API over `Uint8List` values. Delegates to `keychain` (ios/macos), `keystore` (android), and `secret_service` (linux) via `default_package`. |
 | [`keychain/`](keychain/) | Standalone Flutter plugin wrapping the iOS/macOS Keychain (`SecItem` API). Shared Swift source for both platforms. |
 | [`keystore/`](keystore/) | Standalone Flutter plugin wrapping the Android Keystore. Versioned encryption schemes (currently AES-256-GCM v1) with `EncryptedPayload` serialisation. |
+| [`secret_service/`](secret_service/) | Standalone Flutter plugin wrapping the freedesktop Secret Service via libsecret on Linux (gnome-keyring / KWallet). |
 
-`keychain` and `keystore` can be used independently if you only need direct access to the native APIs.
+`keychain`, `keystore`, and `secret_service` can be used independently if you only need direct access to the native APIs.
 
 ## AI agent guidance
 

@@ -2,7 +2,7 @@ PODS:
   - Flutter (1.0.0)
   - integration_test (0.0.1):
     - Flutter
-  - keychain (0.0.1):
+  - keychain (1.0.0):
     - Flutter
     - FlutterMacOS
   - shared_preferences_foundation (0.0.1):

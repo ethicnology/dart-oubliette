@@ -1,13 +1,13 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:oubliette/oubliette.dart';
 import 'package:secret_service/secret_service.dart';
 
+import 'src/fetch.dart';
 import 'src/slot.dart';
 
-class LinuxOubliette extends Oubliette {
+class LinuxOubliette extends Oubliette with OublietteFetch {
   LinuxOubliette({required this.access}) : super.internal();
 
   final LinuxSecretAccess access;
@@ -80,10 +80,11 @@ class LinuxOubliette extends Oubliette {
       null,
       () => _service.contains(_storedKey('__oubliette_init_probe__')),
     );
-    debugPrint(
-      '[Oubliette] Linux Secret Service reachable (prefix: '
-      '${access.prefix})',
-    );
+    // No init banner: an earlier revision debugPrint-ed the profile's prefix
+    // here — an identifier errors.dart deliberately keeps out of toString()
+    // (a custom prefix can encode a tenant/user id, and debugPrint is not
+    // stripped in release). Logging what the redaction doctrine hides would
+    // undo it.
   }
 
   @override
@@ -108,15 +109,25 @@ class LinuxOubliette extends Oubliette {
       // search→store window is unguarded and last-writer-wins (the racing create
       // overwrites). This is the same documented cross-process limitation as
       // Android; do not assume cross-process create atomicity here.
+      // The header-prepended copy handed to the channel is library-owned
+      // plaintext (README: "the library only wipes the buffers it owns").
+      // Zero it in a `finally` on every path — success and failure alike: the
+      // facade base64-encodes its own copy before the await completes, so
+      // nothing still needs this buffer afterwards.
+      final wrapped = _wrap(value);
       try {
-        await _mapError(key, () => _service.add(_storedKey(key), _wrap(value)));
-      } on PlatformException catch (e) {
-        if (e.code == 'already_exists') {
-          throw StateError(
-            'A value already exists for key "$key". Call trash() first.',
-          );
+        try {
+          await _mapError(key, () => _service.add(_storedKey(key), wrapped));
+        } on PlatformException catch (e) {
+          if (e.code == 'already_exists') {
+            throw StateError(
+              'A value already exists for key "$key". Call trash() first.',
+            );
+          }
+          rethrow;
         }
-        rethrow;
+      } finally {
+        wrapped.fillRange(0, wrapped.length, 0);
       }
     });
   }
@@ -125,7 +136,20 @@ class LinuxOubliette extends Oubliette {
   Future<Uint8List?> fetch(String key) async {
     final stored = await _mapError(key, () => _service.get(_storedKey(key)));
     if (stored == null) return null;
-    return _unwrap(key, stored);
+    try {
+      return _unwrap(key, stored);
+    } on PayloadCorruptException {
+      // The refused blob is the plaintext secret (the Secret Service stores it
+      // as-is under the keyring's own encryption) — it must not be discarded
+      // unzeroed just because its header failed validation. Best-effort like
+      // useAndForget: the facade may hand back an unmodifiable buffer.
+      try {
+        stored.fillRange(0, stored.length, 0);
+      } on UnsupportedError {
+        // Unmodifiable buffer — cannot zero it.
+      }
+      rethrow;
+    }
   }
 
   /// Translates native Secret Service error codes into typed

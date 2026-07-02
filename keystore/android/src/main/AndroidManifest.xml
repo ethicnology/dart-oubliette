@@ -1,7 +1,17 @@
 <!-- No `package` attribute: the namespace lives in build.gradle (`namespace =
      "com.oubliette.keystore"`). AGP 8+ removed the manifest `package` attribute
-     and AGP 9 errors on it. No permissions are declared: the platform
-     BiometricPrompt (API 28+) needs none — USE_BIOMETRIC / USE_FINGERPRINT
-     applied only to the removed FingerprintManager. -->
+     and AGP 9 errors on it.
+
+     USE_BIOMETRIC is REQUIRED: android.hardware.biometrics.BiometricPrompt#
+     authenticate is @RequiresPermission(USE_BIOMETRIC) — the permission did not
+     die with FingerprintManager (only USE_FINGERPRINT did). It is declared HERE,
+     in the plugin's own manifest, so manifest-merge carries it into every
+     consuming app: this plugin deliberately avoids androidx.biometric (whose
+     library manifest would have merged the permission in as a side effect), so
+     nothing else supplies it. Without it the authenticated profiles fail at
+     runtime with a recoverable-looking auth_error that no retry can ever fix.
+     Normal-level (install-time) permission — no runtime prompt, no user-visible
+     cost for consumers that never authenticate. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 </manifest>

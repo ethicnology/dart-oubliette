@@ -3,6 +3,12 @@ description: "Cross-platform secure storage for Flutter (Android Keystore, iOS/m
 version: 1.0.0
 homepage: https://github.com/ethicnology/dart-oubliette
 repository: https://github.com/ethicnology/dart-oubliette
+topics:
+  - secure-storage
+  - keychain
+  - keystore
+  - security
+  - cryptography
 
 resolution: workspace
 

@@ -100,6 +100,7 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    AndroidSecretAccess.resetCustomAliasRegistry();
     mock = _MockKeystore();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, mock.handle);

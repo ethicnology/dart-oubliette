@@ -7,6 +7,8 @@ import 'package:oubliette/oubliette.dart';
 /// pinned explicitly — not just the prefix (covered in profile_prefix_test).
 void main() {
   group('AndroidSecretAccess profile → flags', () {
+    setUp(AndroidSecretAccess.resetCustomAliasRegistry);
+
     test('evenLocked', () {
       const a = AndroidSecretAccess.evenLocked(
         strongBox: false,
@@ -94,8 +96,8 @@ void main() {
       expect(withPrompt.userAuthenticationRequired, true);
 
       final noPrompt = AndroidSecretAccess.custom(
-        prefix: 'p_',
-        keyAlias: 'a',
+        prefix: 'q_',
+        keyAlias: 'b',
         strongBox: false,
         requireHardwareBacking: false,
         unlockedDeviceRequired: true,
@@ -105,6 +107,29 @@ void main() {
       );
       expect(noPrompt.userAuthenticationRequired, false);
     });
+
+    // M-1: `invalidatedByBiometricEnrollment` is a no-op without auth
+    // (promptTitle == null ⇒ userAuthenticationRequired == false ⇒ the key's
+    // authenticator set is never biometric-only, so enrollment invalidation
+    // can never fire). Allowing it would silently drop a requested protection.
+    test(
+      'custom rejects invalidatedByBiometricEnrollment without a prompt',
+      () {
+        expect(
+          () => AndroidSecretAccess.custom(
+            prefix: 'p_',
+            keyAlias: 'c',
+            strongBox: false,
+            requireHardwareBacking: false,
+            unlockedDeviceRequired: true,
+            invalidatedByBiometricEnrollment: true,
+            promptTitle: null,
+            promptSubtitle: null,
+          ),
+          throwsA(isA<ArgumentError>()),
+        );
+      },
+    );
   });
 
   group('DarwinSecretAccess profile → flags', () {

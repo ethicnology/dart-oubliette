@@ -17,6 +17,7 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import java.security.KeyStore
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Reads the scheme-version argument without silent Long→Int truncation: a Dart
@@ -51,30 +52,46 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     internal val mainHandler = Handler(Looper.getMainLooper())
 
     /**
-     * The CancellationSignal of an in-flight BiometricPrompt, or null when none
-     * is showing. Set when [authenticate] shows a prompt and read on the
-     * platform thread when the activity/engine detaches (see
-     * [cancelPendingAuthentication]). `@Volatile` because it is written on the
-     * platform thread and could be read from a detach callback delivered on the
-     * same thread — volatile keeps the publish visible and cheap.
+     * The CancellationSignals of every in-flight BiometricPrompt (empty when
+     * none is showing). Each prompt adds its own signal when shown and removes
+     * exactly that signal on its first terminal callback (see [authenticate]);
+     * activity/engine detach cancels them all (see
+     * [cancelPendingAuthentication]).
+     *
+     * A SET, not a single slot: a second concurrent prompt (two isolates, or an
+     * app racing two authenticated reads) would evict the first from a single
+     * slot, so on activity destroy only the newest would be force-cancelled —
+     * reopening, for the older prompt, the exact OEM ERROR_CANCELED gap this
+     * mechanism exists to close (pending Future + unwiped encrypt-path
+     * plaintext until process death). ConcurrentHashMap-backed: every add /
+     * remove / sweep happens on the platform thread today, but `cancel()`
+     * synchronously re-enters the prompt's terminal callback, which removes the
+     * signal *while the detach sweep is iterating* — the keySet view's weakly
+     * consistent iterator tolerates that reentrancy where a plain HashSet would
+     * throw ConcurrentModificationException mid-teardown.
      */
-    @Volatile
-    internal var pendingAuthCancellation: CancellationSignal? = null
+    internal val pendingAuthCancellations: MutableSet<CancellationSignal> =
+        ConcurrentHashMap.newKeySet()
 
     /**
-     * Proactively cancels any in-flight BiometricPrompt on activity/engine
+     * Proactively cancels every in-flight BiometricPrompt on activity/engine
      * detach. The platform is *supposed* to fire ERROR_CANCELED when its host
      * activity is destroyed, but some OEMs don't — leaving the Dart Future
      * pending and an encrypt-path plaintext unwiped until process death. We force
-     * the cancellation ourselves: `cancel()` routes through
+     * the cancellation ourselves: each `cancel()` routes through
      * onAuthenticationError → the single-delivery `claim()` → the `onError`
      * finalizer that wipes the plaintext, then fails the Future. This is NOT a
      * timeout (a live prompt still waits on the user indefinitely) — it is the
      * lifecycle-driven cancellation the prompt's residual note calls for.
      */
     private fun cancelPendingAuthentication() {
-        pendingAuthCancellation?.cancel()
-        pendingAuthCancellation = null
+        // cancel() re-enters the prompt's terminal callback synchronously on
+        // some OEMs, which removes the signal from the set mid-iteration — safe
+        // on the weakly consistent iterator. The trailing clear() sweeps any
+        // signal whose OEM delivers the error callback late (or never), so a
+        // stale signal can't accumulate across attach/detach cycles.
+        for (signal in pendingAuthCancellations) signal.cancel()
+        pendingAuthCancellations.clear()
     }
 
     /**
@@ -327,7 +344,21 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             try {
                 val scheme = SchemeRegistry.schemeFor(version)
                 if (scheme == null) {
-                    mainHandler.post { result.error("decrypt_failed", "Unsupported version.", null) }
+                    // The registry is append-only and gapless (1..CURRENT_VERSION),
+                    // and versionArgument() already rejected anything below 1 — so
+                    // an unknown version here can only mean the blob was written by
+                    // a NEWER release (app rollback, sideloaded downgrade). The data
+                    // is intact and readable by the version that wrote it; the fatal
+                    // `decrypt_failed` ("this blob is bad") would steer a compliant
+                    // caller toward purging a healthy slot. Distinct, recoverable
+                    // code instead: upgrade the app; never purge.
+                    mainHandler.post {
+                        result.error(
+                            "unsupported_version",
+                            "Payload was written by a newer version of this library — upgrade the app; do not purge.",
+                            null
+                        )
+                    }
                     return@postCrypto
                 }
                 plaintext = scheme.decrypt(alias, ciphertext, nonce, aad)

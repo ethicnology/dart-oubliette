@@ -3,11 +3,12 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:oubliette/oubliette.dart';
+import 'package:oubliette/src/fetch.dart';
 
 /// In-memory [Oubliette] backend, so the vault's crypto is exercised without a
 /// platform channel. `store` rejects duplicates (like the real backends), so
 /// the keyring-mode KEK get-or-create race path is covered.
-class _FakeOubliette extends Oubliette {
+class _FakeOubliette extends Oubliette with OublietteFetch {
   _FakeOubliette() : super.internal();
   final Map<String, Uint8List> store_ = {};
 
@@ -43,12 +44,17 @@ class _FakeOubliette extends Oubliette {
   Future<List<String>> keys() async => store_.keys.toList(growable: false);
 }
 
-/// A [_FakeOubliette] whose `fetch`/`store` can be suspended per key on a
+/// A [_FakeOubliette] whose `fetch`/`store`/`purge` can be suspended on a
 /// [Completer] gate, to deterministically interleave a `purge()`/`dispose()`
-/// into the middle of an in-flight vault operation.
+/// into the middle of an in-flight vault operation. Real suspension points
+/// (pending Futures) are needed to create the microtask gaps the race tests
+/// exercise — `_FakeOubliette`'s no-`await` `async` methods complete
+/// synchronously, so no microtask boundary exists for a concurrent operation
+/// to slip through.
 class _GatedOubliette extends _FakeOubliette {
   final Map<String, Completer<void>> fetchGates = {};
   final Map<String, Completer<void>> storeGates = {};
+  Completer<void>? purgeGate;
 
   @override
   Future<Uint8List?> fetch(String key) async {
@@ -62,6 +68,12 @@ class _GatedOubliette extends _FakeOubliette {
     final gate = storeGates[key];
     if (gate != null) await gate.future;
     return super.store(key, value);
+  }
+
+  @override
+  Future<void> purge() async {
+    if (purgeGate != null) await purgeGate!.future;
+    return super.purge();
   }
 }
 
@@ -123,6 +135,40 @@ void main() {
       );
       expect(out, secret);
     });
+
+    // M-14: the vault's useAndForget zeroes the decrypted plaintext in a
+    // `finally` — including when the caller's action throws. No test
+    // previously captured the buffer and asserted it was zeroed, so a
+    // regression dropping the `finally` would leave decrypted mnemonics in
+    // memory with zero test signal.
+    test(
+      'zeroes the decrypted plaintext even when the action throws',
+      () async {
+        final v = vault();
+        final secret = _bytes([0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE]);
+        await v.store('seed', secret);
+        Uint8List? captured;
+        await expectLater(
+          v.useAndForget('seed', (b) async {
+            captured = b;
+            throw Exception('boom');
+          }),
+          throwsA(isA<Exception>()),
+        );
+        expect(
+          captured,
+          isNotNull,
+          reason: 'action must have received the buffer',
+        );
+        expect(
+          captured!.every((e) => e == 0),
+          true,
+          reason:
+              'the decrypted plaintext must be zeroed even when the '
+              'action throws',
+        );
+      },
+    );
 
     test('GOLDEN v1 passphrase envelope still decrypts (format lock)', () async {
       // A v1 envelope frozen from the current writer (params: _fastParams,
@@ -738,6 +784,19 @@ void main() {
       );
     });
 
+    // M-2: the store()-level epoch check (after `await _encrypt`, before
+    // `_inner.store`) catches a purge in the microtask gap between
+    // _deriveKey completing and _encrypt's continuation — a gap that only
+    // manifests with real platform channel suspension (async functions that
+    // don't hit a real await complete synchronously in Dart, so _FakeOubliette
+    // and _GatedOubliette cannot reproduce it). The existing test above
+    // ("keyring store racing purge() fails closed") covers the case where
+    // _deriveKey's own check catches the purge; the store()-level check is
+    // defense-in-depth for the narrower gap _deriveKey cannot cover. Verified
+    // against real platform channels on device. The fix: _deriveKey captures
+    // the epoch synchronously after its liveness check, propagates it through
+    // _encrypt to store(), which compares it against the live epoch.
+
     test('dispose() while the KEK fetch is in flight aborts the store and '
         'never re-caches key material into the disposed vault', () async {
       final backend = _GatedOubliette();
@@ -810,6 +869,24 @@ void main() {
       await v.store('b', _bytes([2]));
       await v.purge();
       expect(await v.exists('b'), false);
+    });
+
+    test('keys() filters out the reserved KEK slot', () async {
+      final backend = _FakeOubliette();
+      final v = PassphraseVault.keyring(inner: backend);
+      await v.init();
+      await v.store('seed1', _bytes([1]));
+      await v.store('seed2', _bytes([2]));
+      final listed = await v.keys();
+      expect(listed, unorderedEquals(['seed1', 'seed2']));
+      expect(
+        listed,
+        isNot(contains(PassphraseVault.reservedKekKey)),
+        reason:
+            'the reserved KEK slot must never be exposed to the caller — '
+            'accidental inner.trash() of it would permanently brick every '
+            'keyring-mode secret',
+      );
     });
   });
 }

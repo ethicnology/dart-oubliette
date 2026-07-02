@@ -3,6 +3,12 @@ description: Flutter plugin exposing the freedesktop Secret Service (libsecret) 
 version: 1.0.0
 homepage: https://github.com/ethicnology/dart-oubliette
 repository: https://github.com/ethicnology/dart-oubliette
+topics:
+  - secure-storage
+  - linux
+  - libsecret
+  - keyring
+  - security
 
 resolution: workspace
 

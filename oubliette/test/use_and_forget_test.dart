@@ -2,8 +2,9 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:oubliette/oubliette.dart';
+import 'package:oubliette/src/fetch.dart';
 
-class _FakeOubliette extends Oubliette {
+class _FakeOubliette extends Oubliette with OublietteFetch {
   _FakeOubliette() : super.internal();
 
   final Map<String, Uint8List> _store = {};

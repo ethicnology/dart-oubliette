@@ -5,9 +5,13 @@ version: 2
 updates:
   - package-ecosystem: "pub"
     directories:
+      # The workspace root is where the single pubspec.lock and melos resolve;
+      # the members are listed so their own constraint files get coverage too.
+      - "/"
       - "/oubliette"
       - "/keystore"
       - "/keychain"
+      - "/secret_service"
       - "/oubliette/example"
     schedule:
       interval: "weekly"

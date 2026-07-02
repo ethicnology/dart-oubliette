@@ -25,11 +25,15 @@ let package = Package(
                 .product(name: "FlutterFramework", package: "FlutterFramework")
             ],
             resources: [
-                // If your plugin requires a privacy manifest, for example if it collects user
-                // data, update the PrivacyInfo.xcprivacy file to describe your plugin's
-                // privacy impact, and then uncomment these lines. For more information, see
+                // Apple privacy manifest. The plugin collects no data and uses
+                // no required-reason APIs, so the manifest declares exactly
+                // that (all-empty / tracking false) — shipping the explicit
+                // negative declaration is the compliance requirement; omitting
+                // the file leaves the host app to answer for this SDK. Kept in
+                // sync with the CocoaPods side via the podspec's
+                // `resource_bundles`. See
                 // https://developer.apple.com/documentation/bundleresources/privacy_manifest_files
-                // .process("PrivacyInfo.xcprivacy"),
+                .process("PrivacyInfo.xcprivacy"),
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)

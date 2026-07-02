@@ -69,6 +69,31 @@ func applyEnclaveDataProtection(_ query: inout [String: Any], _ params: EnclaveP
 /// `service ?? "default"` form conflated `service=nil` with `service="default"`.
 /// Accessibility is included so a profile that changes its accessibility gets a
 /// fresh key instead of reusing the previous (possibly weaker) policy.
+///
+/// FROZEN FORMAT — do not change this construction. The tag is the on-keychain
+/// identity of every permanent, non-exportable SE key ever minted; altering how
+/// the tag is derived (even to "improve" it) would make `fetchEnclaveKeyPair`
+/// miss every existing key and strand all ciphertext encrypted under them.
+///
+/// Precision note on the length prefix: `value.count` counts Swift
+/// `Character`s (grapheme clusters), while the assembled tag is UTF-8 encoded —
+/// so the prefix is NOT the byte length of the value that follows. Injectivity
+/// nonetheless holds: the prefix's job is only to keep one component's value
+/// from forging another component's boundary, and the boundary markers (`|`,
+/// `label:`) are plain ASCII scalars that can never be absorbed into a
+/// preceding grapheme cluster — a value cannot "eat" a separator by ending in
+/// a combining sequence, so two distinct `(service, accessibility, accessGroup)`
+/// tuples always serialize to distinct tags. (A byte-length prefix would be
+/// robust by inspection, but switching to one is exactly the frozen-format
+/// change ruled out above.)
+///
+/// Unicode-normalization caveat for callers: components are hashed as the
+/// exact scalar sequences supplied. Canonically-equivalent but
+/// differently-composed strings (e.g. an NFC "é" vs NFD "e"+U+0301 in the
+/// service name) produce DIFFERENT tags and therefore distinct SE keys — a
+/// caller that starts normalizing (or de-normalizing) its service/group
+/// strings will silently stop finding its existing keys. Callers must keep
+/// their string composition byte-stable.
 func enclaveKeyTag(params: EnclaveParams) -> Data? {
   func part(_ label: String, _ value: String?) -> String {
     guard let value = value else { return "\(label):-" }
@@ -225,13 +250,34 @@ func enclaveEncrypt(data: Data, publicKey: SecKey) -> Data? {
   return ciphertext as Data
 }
 
-func enclaveDecrypt(data: Data, privateKey: SecKey) -> Data? {
+/// Outcome of a Secure Enclave decrypt. Mirrors `EnclaveKeyFetch`'s
+/// success-vs-diagnosable-failure split: `failure` carries the underlying
+/// `CFError` (when the Security framework produced one) instead of discarding
+/// it, because the caller MUST be able to tell a transient, auth-layer
+/// condition apart from a genuine decryption failure. `SecKeyCreateDecryptedData`
+/// on an SE key evaluates the item/key access policy at call time, so it can
+/// fail for reasons that have nothing to do with the ciphertext: the device
+/// locked between the item read and the decrypt (interaction not allowed), the
+/// user cancelled the presence prompt, or biometry is locked out. Collapsing
+/// those into one nil — the previous shape — steered the Dart layer's
+/// `se_decrypt_failed` → `DecryptionFailedException` (recoverable: false,
+/// documented remedy "overwrite or purge()") path into destroying an intact
+/// secret over a transient condition. The error is optional because the API
+/// contract allows a nil result with no error populated; that residual case is
+/// classified conservatively by the caller (as a decrypt failure).
+enum EnclaveDecryptResult {
+  case success(Data)
+  case failure(CFError?)
+}
+
+func enclaveDecrypt(data: Data, privateKey: SecKey) -> EnclaveDecryptResult {
   var error: Unmanaged<CFError>?
   guard let plaintext = SecKeyCreateDecryptedData(privateKey, enclaveAlgorithm, data as CFData, &error) else {
-    if let err = error?.takeRetainedValue() {
+    let err = error?.takeRetainedValue()
+    if let err = err {
       NSLog("KeychainPlugin: SE decrypt failed: \(err.localizedDescription)")
     }
-    return nil
+    return .failure(err)
   }
-  return plaintext as Data
+  return .success(plaintext as Data)
 }

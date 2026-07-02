@@ -127,6 +127,8 @@ void main() {
           unlockedDeviceRequired: false,
           strongBox: true,
           requireHardwareBacking: false,
+          userAuthenticationRequired: false,
+          invalidatedByBiometricEnrollment: true,
         ),
         throwsA(
           isA<PlatformException>().having(

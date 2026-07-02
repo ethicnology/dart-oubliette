@@ -65,6 +65,116 @@ private func statusFlutterError(_ status: OSStatus, fallbackCode: String) -> Flu
   }
 }
 
+/// Classifies the authentication-related read statuses into their stable
+/// codes, or returns `nil` when [status] is not authentication-related (the
+/// caller falls through to its own fallback). This is THE classification for
+/// auth-class failures on the read path — shared by the item read (the
+/// OSStatus from `SecItemCopyMatching`) and the Secure Enclave decrypt (the
+/// OSStatus carried inside `SecKeyCreateDecryptedData`'s CFError, see
+/// `enclaveDecryptFlutterError`) — so both stages of one read classify
+/// identically. A transient auth condition surfacing at either stage must
+/// never masquerade as permanent data loss: every code returned here maps to
+/// a *recoverable* Dart exception whose remedy is retry/authenticate, never
+/// `purge()`.
+private func authStatusFlutterError(_ status: OSStatus, params: KeychainParams) -> FlutterError? {
+  switch status {
+  case errSecUserCanceled:
+    return FlutterError(code: "auth_cancelled", message: "User cancelled authentication.", details: nil)
+  case errSecAuthFailed:
+    // Biometry *lockout* (too many failed Touch/Face ID attempts; clearing
+    // it requires a passcode unlock of the device) also surfaces as
+    // `errSecAuthFailed` — the OSStatus does not expose the underlying
+    // LAError, so it cannot be told from a single mismatched attempt by
+    // status alone. Probe a fresh LAContext to distinguish: when biometry is
+    // locked out, `canEvaluatePolicy` fails with `LAError.biometryLockout`.
+    // Both map to AuthenticationFailedException (recoverable, never purge),
+    // but the distinct `biometry_lockout` code lets the caller show the right
+    // hint ("unlock with your passcode to re-enable biometrics") instead of
+    // "try again".
+    //
+    // Only meaningful for a biometry-ONLY item (the fatal
+    // `biometryCurrentSetOnly` profile). A `.userPresence` item accepts the
+    // device passcode as a fallback, so a biometry lockout does NOT block its
+    // access — reporting `biometry_lockout` there would wrongly tell the user
+    // biometrics are their only path. Probe only when the item is
+    // biometry-only; otherwise the failure is an ordinary `auth_failed`.
+    // Gate on BOTH flags: `.biometryCurrentSet` is only ever applied to an
+    // authenticated item (see createAccessControl / secItemAdd), so a probe
+    // with biometryCurrentSetOnly but no authenticationRequired could never
+    // describe how the item was actually stored.
+    if params.authenticationRequired && params.biometryCurrentSetOnly {
+      let probe = LAContext()
+      var probeError: NSError?
+      let biometryUsable = probe.canEvaluatePolicy(
+        .deviceOwnerAuthenticationWithBiometrics, error: &probeError)
+      probe.invalidate()
+      if !biometryUsable, probeError?.code == LAError.biometryLockout.rawValue {
+        return FlutterError(code: "biometry_lockout", message: "Biometry is locked out; unlock the device with the passcode to re-enable it.", details: nil)
+      }
+    }
+    return FlutterError(code: "auth_failed", message: "Authentication failed.", details: nil)
+  case errSecInteractionNotAllowed:
+    return FlutterError(code: "interaction_not_allowed", message: "Keychain interaction not allowed (device locked?).", details: nil)
+  default:
+    return nil
+  }
+}
+
+/// Maps the `CFError` from a failed Secure Enclave decrypt to a FlutterError.
+///
+/// `se_decrypt_failed` maps in Dart to `DecryptionFailedException`
+/// (recoverable: false, documented remedy "overwrite or purge()"), so it is
+/// reserved for GENUINE decryption failures — corrupt/foreign ciphertext, a
+/// key/algorithm mismatch. Everything the auth layer can throw transiently
+/// must be routed to the same recoverable codes the item-read path uses, or a
+/// device that locks between the item read and the SE decrypt would steer a
+/// compliant caller into destroying an intact secret. Two error shapes cover
+/// the auth layer:
+///
+/// - `NSOSStatusErrorDomain`: Security-framework statuses. Reuses
+///   `authStatusFlutterError` verbatim (`errSecInteractionNotAllowed` →
+///   `interaction_not_allowed`, `errSecUserCanceled` → `auth_cancelled`,
+///   `errSecAuthFailed` → `auth_failed` with the biometry-lockout probe) so
+///   the two stages of one read cannot drift apart.
+/// - `LAErrorDomain`: LocalAuthentication errors. ANY error in this domain
+///   is by construction an authentication-layer outcome — the SEP never
+///   evaluated (let alone rejected) the ciphertext — so none of them may land
+///   in the fatal bucket: cancel-class codes → `auth_cancelled`,
+///   `biometryLockout` → `biometry_lockout`, `notInteractive` (the LA analog
+///   of interaction-not-allowed) → `interaction_not_allowed`, and every
+///   remaining LA code → `auth_failed`.
+///
+/// A missing or unrecognized error falls through to `se_decrypt_failed`:
+/// with no evidence of an auth-layer cause, reporting a recoverable code
+/// would invite an infinite retry loop against genuinely bad ciphertext.
+private func enclaveDecryptFlutterError(_ error: CFError?, params: KeychainParams) -> FlutterError {
+  if let error = error {
+    // CFError conforms to Swift.Error; bridge via Error → NSError for uniform
+    // domain/code access (avoids relying on direct CF↔NS toll-free casts).
+    let nsError = error as Error as NSError
+    if nsError.domain == NSOSStatusErrorDomain,
+       // `Int32(exactly:)` never traps: a code outside OSStatus range is not
+       // a Security status and falls through to the fatal bucket below.
+       let status = Int32(exactly: nsError.code),
+       let authError = authStatusFlutterError(status, params: params) {
+      return authError
+    }
+    if nsError.domain == LAErrorDomain {
+      switch nsError.code {
+      case LAError.userCancel.rawValue, LAError.appCancel.rawValue, LAError.systemCancel.rawValue:
+        return FlutterError(code: "auth_cancelled", message: "User cancelled authentication.", details: nil)
+      case LAError.biometryLockout.rawValue:
+        return FlutterError(code: "biometry_lockout", message: "Biometry is locked out; unlock the device with the passcode to re-enable it.", details: nil)
+      case LAError.notInteractive.rawValue:
+        return FlutterError(code: "interaction_not_allowed", message: "Keychain interaction not allowed (device locked?).", details: nil)
+      default:
+        return FlutterError(code: "auth_failed", message: "Authentication failed.", details: nil)
+      }
+    }
+  }
+  return FlutterError(code: "se_decrypt_failed", message: "Secure Enclave decryption failed.", details: nil)
+}
+
 public class KeychainPlugin: NSObject, FlutterPlugin {
   public static func register(with registrar: FlutterPluginRegistrar) {
     #if os(iOS)
@@ -212,9 +322,27 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
     autoreleasepool {
       var query = keychainReadQuery(params: params, returnData: true)
       var authContext: LAContext?
-      if let prompt = params.authenticationPrompt {
+      // Gate the hardened context on `authenticationRequired` — the flag that
+      // says an ACL evaluation will happen — with the prompt string merely
+      // optional. Gating on the prompt (the previous shape) meant an
+      // auth-required read WITHOUT a prompt got the system-managed implicit
+      // context and silently lost BOTH hardening properties below; a cosmetic
+      // omission must never weaken the auth posture. The prompt-only case
+      // (`authenticationPrompt` set, `authenticationRequired` false) also
+      // keeps the context: the read params may not match how the item was
+      // actually stored, and if the item turns out to be ACL-gated the
+      // caller's reason string — and the hardening — should still apply.
+      if params.authenticationRequired || params.authenticationPrompt != nil {
         let context = LAContext()
-        context.localizedReason = prompt
+        // Set the reason only when the caller provided a non-empty one.
+        // LocalAuthentication rejects an EMPTY `localizedReason` (assertion at
+        // evaluation time), while an *unset* reason is fine for a
+        // keychain-ACL-driven prompt: the OS falls back to its default dialog
+        // text — less specific, but safe. So absent/empty prompt ⇒ leave the
+        // property untouched and let the OS default stand.
+        if let prompt = params.authenticationPrompt, !prompt.isEmpty {
+          context.localizedReason = prompt
+        }
         // Freeze the zero-reuse intent: a successful evaluation must never
         // pre-authorize a *later* operation. The default is already 0, but
         // pinning it here guards against a future SDK widening that silent
@@ -260,9 +388,23 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
             box.deliver(FlutterError(code: "se_key_fetch_failed", message: secErrorMessage(fetchStatus), details: nil))
             return
           }
-          guard var plaintext = enclaveDecrypt(data: rawData, privateKey: privateKey) else {
+          // DECRYPT: classify, never collapse. `SecKeyCreateDecryptedData`
+          // evaluates the access policy at call time, so it fails not only for
+          // bad ciphertext but for transient auth-layer conditions (device
+          // locked mid-read, prompt cancelled, biometry lockout). Those must
+          // surface under the same recoverable codes the item read uses —
+          // `se_decrypt_failed` is fatal in the Dart taxonomy (its documented
+          // remedy destroys the item), so it is reserved for genuine
+          // decryption failures. See `enclaveDecryptFlutterError`.
+          var plaintext: Data
+          switch enclaveDecrypt(data: rawData, privateKey: privateKey) {
+          case .success(let decrypted):
+            plaintext = decrypted
+          case .failure(let decryptError):
+            // Same wipe discipline as the se_key_missing / se_key_fetch_failed
+            // branches above: the ciphertext copy is dropped before delivering.
             rawData.wipe()
-            box.deliver(FlutterError(code: "se_decrypt_failed", message: "Secure Enclave decryption failed.", details: nil))
+            box.deliver(enclaveDecryptFlutterError(decryptError, params: params))
             return
           }
           rawData.wipe()
@@ -276,46 +418,18 @@ public class KeychainPlugin: NSObject, FlutterPlugin {
         }
       case errSecItemNotFound:
         box.deliver(nil)
-      case errSecUserCanceled:
-        box.deliver(FlutterError(code: "auth_cancelled", message: "User cancelled authentication.", details: nil))
-      case errSecAuthFailed:
-        // Biometry *lockout* (too many failed Touch/Face ID attempts; clearing
-        // it requires a passcode unlock of the device) also surfaces here as
-        // `errSecAuthFailed` — SecItemCopyMatching does not expose the
-        // underlying LAError, so it cannot be told from a single mismatched
-        // attempt by OSStatus alone. Probe a fresh LAContext to distinguish:
-        // when biometry is locked out, `canEvaluatePolicy` fails with
-        // `LAError.biometryLockout`. Both map to AuthenticationFailedException
-        // (recoverable, never purge), but the distinct `biometry_lockout` code
-        // lets the caller show the right hint ("unlock with your passcode to
-        // re-enable biometrics") instead of "try again".
-        //
-        // Only meaningful for a biometry-ONLY item (the fatal
-        // `biometryCurrentSetOnly` profile). A `.userPresence` item accepts the
-        // device passcode as a fallback, so a biometry lockout does NOT block its
-        // access — reporting `biometry_lockout` there would wrongly tell the user
-        // biometrics are their only path. Probe only when the item is
-        // biometry-only; otherwise the failure is an ordinary `auth_failed`.
-        // Gate on BOTH flags: `.biometryCurrentSet` is only ever applied to an
-        // authenticated item (see createAccessControl / secItemAdd), so a probe
-        // with biometryCurrentSetOnly but no authenticationRequired could never
-        // describe how the item was actually stored.
-        if params.authenticationRequired && params.biometryCurrentSetOnly {
-          let probe = LAContext()
-          var probeError: NSError?
-          let biometryUsable = probe.canEvaluatePolicy(
-            .deviceOwnerAuthenticationWithBiometrics, error: &probeError)
-          probe.invalidate()
-          if !biometryUsable, probeError?.code == LAError.biometryLockout.rawValue {
-            box.deliver(FlutterError(code: "biometry_lockout", message: "Biometry is locked out; unlock the device with the passcode to re-enable it.", details: nil))
-            return
-          }
-        }
-        box.deliver(FlutterError(code: "auth_failed", message: "Authentication failed.", details: nil))
-      case errSecInteractionNotAllowed:
-        box.deliver(FlutterError(code: "interaction_not_allowed", message: "Keychain interaction not allowed (device locked?).", details: nil))
       default:
-        box.deliver(statusFlutterError(status, fallbackCode: "sec_item_copy_failed"))
+        // Auth-class statuses (`errSecUserCanceled`, `errSecAuthFailed` with
+        // the biometry-lockout probe, `errSecInteractionNotAllowed`) are
+        // classified by the shared helper — the SAME one the SE-decrypt error
+        // path uses, so a transient auth condition maps to identical codes
+        // whether it strikes at the item read or at the decrypt. See
+        // `authStatusFlutterError` for the classification rationale.
+        if let authError = authStatusFlutterError(status, params: params) {
+          box.deliver(authError)
+        } else {
+          box.deliver(statusFlutterError(status, fallbackCode: "sec_item_copy_failed"))
+        }
       }
     }
     }

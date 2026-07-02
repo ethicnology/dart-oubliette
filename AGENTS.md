@@ -147,15 +147,35 @@ make integration  # integration tests (needs a device/emulator)
 make help         # list every target
 ```
 
-Each target runs `fvm exec dart run melos run <script>` (the repo pins
-Flutter 3.44.1 / Dart 3.12.1 via `.fvmrc`). It deliberately does **not** use a
-globally-activated `melos` — a global activation is tied to one SDK and breaks
-under a different Dart (system vs fvm). On a machine/CI where the right
-Dart+Flutter are already on PATH, drop fvm: `make test RUNNER=`. Run the example
-app with `cd oubliette/example && fvm flutter run`.
+The Dart-workspace targets (`analyze`/`test`/`format`) run
+`fvm exec dart run melos run <script>`; the native/example targets
+(`get`/`apk`/`kotlin-test`/`integration`) call `fvm exec flutter`/Gradle
+directly (the repo pins Flutter 3.44.1 / Dart 3.12.1 via `.fvmrc`). It
+deliberately does **not** use a globally-activated `melos` — a global
+activation is tied to one SDK and breaks under a different Dart (system vs
+fvm). On a machine/CI where the right Dart+Flutter are already on PATH, drop
+fvm: `make test RUNNER=`. Run the example app with
+`cd oubliette/example && fvm flutter run`.
 
-CI runs the same workspace scripts directly: `flutter pub get` →
-`dart run melos run analyze` → `dart run melos run test` (no global melos).
+CI (`.github/workflows/ci.yml`) is broader than the Dart workspace scripts:
+
+- **analyze-and-test** — `flutter pub get` → `dart run melos run format`
+  (format gate) → `melos run analyze` → `melos run test` (no global melos).
+- **linux-build** — builds the example for Linux desktop, the compile gate for
+  the `secret_service` C++ plugin (CMake + libsecret).
+- **android-build** — builds the example debug APK (compiles all plugin
+  Kotlin), then runs the keystore Kotlin JVM unit tests through the example's
+  Gradle build with a dead-test guard (0 executed tests hard-fails, so the
+  append-only `SchemeRegistry` contract can't silently stop being tested).
+- **darwin-build** — builds the example for macOS **and** iOS
+  (`--no-codesign`; shared Darwin Swift, different SDKs), then runs the macOS
+  RunnerTests (Secure-Enclave tag/collision logic).
+- **android-integration** — real-Keystore integration tests on a hardware-
+  accelerated emulator (API 35).
+- **macos-integration** — integration tests against the real macOS file-based
+  Keychain on the runner.
+
+All actions are pinned to full commit SHAs with `permissions: contents: read`.
 
 Biometric, Secure Enclave, and StrongBox paths cannot be exercised on
 simulators/CI — verify them manually on real devices with an enrolled credential

@@ -183,7 +183,12 @@ class V1Scheme(
    * it is indistinguishable from a prompt/key authenticator mismatch or a
    * pruned operation slot, and misclassifying a transient failure as key-loss
    * is the exact mistake the error taxonomy exists to prevent (the caller may
-   * respond to key_invalidated with an irreversible purge).
+   * respond to key_invalidated with an irreversible purge). On the
+   * authenticated paths those bare KeyStoreExceptions get their own positive
+   * classification — the recoverable `decrypt_interrupted` (see
+   * BiometricAuth's isTransientKeystoreInterruption) — rather than falling
+   * into the fatal encrypt_failed/decrypt_failed buckets, whose documented
+   * remedy would likewise steer a caller toward purging a healthy slot.
    */
   private fun isPermanentInvalidation(t: Throwable): Boolean {
     var current: Throwable? = t

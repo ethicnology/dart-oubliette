@@ -45,9 +45,14 @@ final class SecretService {
   /// channel. The native libsecret attribute / D-Bus string is a C string, so a
   /// NUL silently truncates the value there — breaking the byte-exact slot
   /// scoping (a truncated prefix could match foreign items; two distinct keys
-  /// sharing a NUL-truncation prefix would collide into one item). The native
-  /// plugin also rejects this as a defense-in-depth backstop (`bad_args`); this
-  /// surfaces it early as a clear developer-facing [ArgumentError]. Mirrors the
+  /// sharing a NUL-truncation prefix would collide into one item). This guard
+  /// is the authoritative and ONLY enforcement: the native plugin CANNOT
+  /// re-check, because the embedder hands it the string as an already
+  /// NUL-terminated C string (truncated before native code ever sees it) and
+  /// exposes no byte-length getter to compare against. The one indirect native
+  /// backstop is that deleteByPrefix/listByPrefix require the prefix to END in
+  /// the U+001D separator, so a NUL-truncated prefix that lost its trailing
+  /// separator is rejected (`bad_args`) on those two paths only. Mirrors the
   /// empty-prefix guard in [deleteByPrefix].
   static void _rejectNul(String value, String name) {
     if (value.codeUnits.contains(0)) {
@@ -137,6 +142,18 @@ final class SecretService {
     final result = await _channel.invokeListMethod<String>('listByPrefix', {
       'prefix': prefix,
     });
-    return result ?? const [];
+    if (result == null) {
+      // The native handler always returns a list (possibly empty); a null
+      // reply is a protocol violation (malformed reply / misbehaving host).
+      // Fail closed like [contains] rather than reporting a profile that may
+      // actually hold secrets as empty — a caller acting on "no keys" (e.g.
+      // re-onboarding) could otherwise clobber live data. Prefixes, like
+      // slots, are not secret (attributes are stored in the clear).
+      throw PlatformException(
+        code: 'secret_service_error',
+        message: 'listByPrefix returned no result for prefix "$prefix"',
+      );
+    }
+    return result;
   }
 }

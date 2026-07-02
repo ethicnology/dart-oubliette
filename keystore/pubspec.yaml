@@ -3,6 +3,12 @@ description: Flutter plugin exposing the Android Keystore (AES-256-GCM) via a ty
 version: 1.0.0
 homepage: https://github.com/ethicnology/dart-oubliette
 repository: https://github.com/ethicnology/dart-oubliette
+topics:
+  - secure-storage
+  - keystore
+  - android
+  - security
+  - cryptography
 
 resolution: workspace
 

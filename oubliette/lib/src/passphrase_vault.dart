@@ -250,8 +250,28 @@ final class PassphraseVault {
   Future<void> store(String key, Uint8List value) async {
     _checkDisposed();
     _checkKey(key);
-    final envelope = await _encrypt(key, value);
-    await _inner.store(key, envelope);
+    // _encrypt captures the epoch it operated under (after any _ensureKeyringKek
+    // retry). The `await _encrypt` is itself a suspension point: a purge()/
+    // dispose() that completes in the microtask gap between _encrypt's future
+    // resolving and this continuation running bumps the epoch AFTER _encrypt's
+    // internal checks passed. Without this post-await re-check the envelope
+    // (encrypted under a now-destroyed KEK) would be written by _inner.store,
+    // and the next KEK mint makes it permanently undecryptable — the exact race
+    // the doc promises a StateError for. Comparing against the epoch _encrypt
+    // reports (not one captured before the await) correctly distinguishes a
+    // purge that crossed the retry (envelope valid under the new epoch — passes)
+    // from a purge that landed after _encrypt returned (envelope under a
+    // destroyed KEK — aborts).
+    final result = await _encrypt(key, value);
+    if (_disposed || result.epoch != _kekEpoch) {
+      _zero(result.envelope);
+      throw StateError(
+        'PassphraseVault was disposed or purged during an in-flight '
+        'store; the operation was aborted to avoid writing data '
+        'encrypted under destroyed key material',
+      );
+    }
+    await _inner.store(key, result.envelope);
   }
 
   /// Fetches and decrypts the secret for [key], passes the plaintext to
@@ -288,6 +308,21 @@ final class PassphraseVault {
     _checkDisposed();
     _checkKey(key);
     return _inner.exists(key);
+  }
+
+  /// Lists the logical keys of every secret currently stored under this vault,
+  /// filtering out the reserved internal KEK slot ([reservedKekKey]).
+  ///
+  /// Without this passthrough, a caller enumerating via `inner.keys()` would
+  /// see the reserved KEK slot and could accidentally `inner.trash()` it —
+  /// making every keyring-mode secret permanently undecryptable (mass data
+  /// loss) while bypassing the vault's own reserved-key guard. This method
+  /// never exposes that slot.
+  Future<List<String>> keys() async {
+    _checkDisposed();
+    return (await _inner.keys())
+        .where((k) => k != reservedKekKey)
+        .toList(growable: false);
   }
 
   /// Destroys the wrapped profile — including the keyring-mode KEK, so the
@@ -329,7 +364,10 @@ final class PassphraseVault {
 
   // --- crypto ---
 
-  Future<Uint8List> _encrypt(String key, Uint8List value) async {
+  Future<({Uint8List envelope, int epoch})> _encrypt(
+    String key,
+    Uint8List value,
+  ) async {
     final keyBytes = Uint8List.fromList(utf8.encode(key));
     final salt = _randomBytes(_saltLen);
     final nonce = _randomBytes(_nonceLen);
@@ -338,12 +376,17 @@ final class PassphraseVault {
     // logical key, so any header tamper fails the GCM tag rather than being
     // silently honored.
     final aad = _concat(header, keyBytes);
-    final kek = await _deriveKey(salt, keyBytes);
+    final derived = await _deriveKey(salt, keyBytes);
     try {
-      final ct = _gcm(true, kek, nonce, aad, value);
-      return _concat(header, ct);
+      final ct = _gcm(true, derived.key, nonce, aad, value);
+      // Propagate the epoch captured by _deriveKey (synchronously after its
+      // liveness check) — NOT the current _kekEpoch, which may have been
+      // bumped by a purge in the microtask gap between _deriveKey completing
+      // and this continuation running. store() compares this against the live
+      // epoch to detect that gap.
+      return (envelope: _concat(header, ct), epoch: derived.epoch);
     } finally {
-      _zero(kek);
+      _zero(derived.key);
     }
   }
 
@@ -411,9 +454,13 @@ final class PassphraseVault {
       );
     }
     final aad = _concat(header, keyBytes);
-    final Uint8List kek;
+    final Uint8List derivedKey;
     try {
-      kek = await _deriveKey(salt, keyBytes, paramsOverride: storedParams);
+      derivedKey = (await _deriveKey(
+        salt,
+        keyBytes,
+        paramsOverride: storedParams,
+      )).key;
     } on ArgumentError catch (e) {
       // Defensive: a malformed (but in-range) value reaching the KDF is still
       // corruption, not a recoverable crypto failure.
@@ -422,12 +469,12 @@ final class PassphraseVault {
       );
     }
     try {
-      return _gcm(false, kek, nonce, aad, ct);
+      return _gcm(false, derivedKey, nonce, aad, ct);
     } on InvalidCipherTextException catch (e) {
       // Wrong passphrase, wrong key, or a tampered blob — all fail the GCM tag.
       throw DecryptionFailedException(key: key, cause: e);
     } finally {
-      _zero(kek);
+      _zero(derivedKey);
     }
   }
 
@@ -473,13 +520,16 @@ final class PassphraseVault {
     }
   }
 
-  Future<Uint8List> _deriveKey(
+  Future<({Uint8List key, int epoch})> _deriveKey(
     Uint8List salt,
     Uint8List keyBytes, {
     Argon2idParams? paramsOverride,
   }) async {
     if (_mode == _modePassphrase) {
-      return _argon2(_passphrase!, salt, paramsOverride ?? _params);
+      return (
+        key: _argon2(_passphrase!, salt, paramsOverride ?? _params),
+        epoch: _kekEpoch,
+      );
     }
     final vaultKek = await _ensureKeyringKek();
     // The await above is a suspension point: a concurrent purge()/dispose()
@@ -497,8 +547,16 @@ final class PassphraseVault {
         'material',
       );
     }
+    // Capture the epoch SYNCHRONOUSLY after the liveness check — before any
+    // further microtask gap where a purge could land. This is the epoch under
+    // which the derived key is valid. store() compares it against the live
+    // epoch after `await _encrypt` resumes to detect a purge that slipped
+    // into the microtask gap between _deriveKey completing and _encrypt's
+    // continuation running (a gap _deriveKey's own check cannot cover, since
+    // the check already passed by the time the future resolves).
+    final epoch = _kekEpoch;
     // Per-slot subkey: HKDF(vaultKek, salt, info = the logical key).
-    return _hkdf(vaultKek, salt, keyBytes);
+    return (key: _hkdf(vaultKek, salt, keyBytes), epoch: epoch);
   }
 
   /// Serializes the envelope header (everything before the ciphertext). Used

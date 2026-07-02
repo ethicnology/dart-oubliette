@@ -15,10 +15,14 @@ access.
 final keystore = Keystore();
 
 final strongBox = await keystore.isStrongBoxAvailable();
+// Every security flag is required — no fail-open defaults (see below).
 await keystore.generateKey(
   alias: 'my_key',
   unlockedDeviceRequired: true,
   strongBox: strongBox,             // fail-closed: throws strongbox_unavailable if true & absent
+  userAuthenticationRequired: false,
+  invalidatedByBiometricEnrollment: true,
+  requireHardwareBacking: true,     // fail-closed: refuses a software-keystore key
 );
 
 final payload = await keystore.encrypt(alias: 'my_key', plaintext: bytes, aad: 'slot');
@@ -50,6 +54,14 @@ final plain = await keystore.decrypt(
   not the blob.
 - Cipher init runs under a per-call daemon-thread timeout (no shared executor);
   plaintext is wiped on every exit path.
+- **Hard payload size cap: ~48 KiB per field, enforced at write time.**
+  `EncryptedPayload` throws `ArgumentError` at construction for a
+  nonce/ciphertext above `maxFieldBytes` (48 KiB) or an aad/alias above
+  `maxFieldChars` (64 Ki chars) — the same limits the read path enforces —
+  so an oversized secret fails loudly up front instead of storing successfully
+  and then being rejected as corrupt on every subsequent read. This library
+  targets small secrets (mnemonics, tokens); chunk or re-architect anything
+  larger.
 
 ## Native error-code surface (stable contract)
 
@@ -75,8 +87,10 @@ id) — see the diagnostic-hygiene note in `EncryptionScheme.kt`.
 | `biometry_lockout` | yes | Too many failed biometric attempts (`ERROR_LOCKOUT` / `ERROR_LOCKOUT_PERMANENT`). The Dart layer flags it `lockout` so the caller can prompt the user to unlock with the device passcode to re-enable biometrics. |
 | `device_locked` | yes | An `UnlockedDeviceRequired` (non-authenticated) key cannot decrypt while the screen is locked (`KeyguardManager` probe). Retry once the device is unlocked. |
 | `detached` | yes | The plugin detached mid-operation; the Future is failed explicitly rather than hung. |
+| `decrypt_interrupted` | yes | The keymaster operation backing an authenticated encrypt/decrypt was pruned while the BiometricPrompt waited on the user (operation slots are a small system-wide pool), so the post-auth `doFinal` failed with a bare `KeyStoreException`. Key and blob are both intact — retry (fresh init + prompt); never purge. Same code on both directions: the failure mode and remedy are identical. |
+| `unsupported_version` | yes | The blob's scheme version is newer than this reader — it was written by a newer release (app rollback / sideloaded downgrade). The data is intact and readable by the version that wrote it. Upgrade the app; never purge. |
 | `encrypt_failed` | yes | A non-key-loss, apparently transient crypto failure on the encrypt path — nothing was written, so the stored data is intact. |
-| `decrypt_failed` | **no — the specific on-disk blob failed to authenticate** | A GCM tag / decrypt failure that is *not* a known key-loss. The ciphertext for this slot is unrecoverable. A deferred-invalidation failure is reclassified to `key_invalidated`, never left here. |
+| `decrypt_failed` | **no — the specific on-disk blob failed to authenticate** | A GCM tag / decrypt failure that is *not* a known key-loss. The ciphertext for this slot is unrecoverable. A deferred-invalidation failure is reclassified to `key_invalidated`, and a post-auth transient keymaster failure to `decrypt_interrupted` — never left here. |
 | `generate_key_failed` | yes | Any other key-generation failure. |
 | `contains_alias_failed` / `delete_entry_failed` / `is_strongbox_available_failed` | yes | Keystore-load/teardown failures on the respective calls. |
 
@@ -84,3 +98,8 @@ id) — see the diagnostic-hygiene note in `EncryptionScheme.kt`.
 
 `minSdk` 30 (Android 11): required so `setUserAuthenticationParameters` is always
 available for authenticated keys.
+
+The plugin's own manifest declares `android.permission.USE_BIOMETRIC` (required
+by the platform `BiometricPrompt#authenticate`; normal-level, install-time, no
+runtime prompt), so manifest-merge carries it into every consuming app — apps
+do not need to declare it themselves.

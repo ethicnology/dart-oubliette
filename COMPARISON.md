@@ -15,15 +15,16 @@ against the FSS version you use before relying on them.
 |---|---|---|
 | Android at-rest | historically `EncryptedSharedPreferences` (`androidx.security.crypto`, deprecated); **removed in FSS v10**, which moved to its own RSA-OAEP + AES-GCM scheme | Direct Android Keystore AES-256-GCM; SharedPreferences holds **only** ciphertext |
 | iOS/macOS at-rest | Keychain item | Keychain item, optional Secure Enclave ECIES wrap |
+| Linux at-rest | Secret Service via libsecret | Secret Service via libsecret too — the same software tier (keyring-encrypted, **no** hardware backing on either library). Oubliette stores one item per slot with a frozen format header, and deliberately offers **no** authenticated/hardware profile on Linux, so an app can never believe it got a protection the desktop cannot provide |
 | Upgrade data-loss | Recurring class of reported issues (key reset / unreadable data after upgrades, OEM/backup edge cases) | **Designed against it**: versioned + frozen format, append-only scheme registry, frozen slot naming, golden vectors fail CI on drift |
 | On-disk format versioning | None exposed | Per-blob scheme `version` (Android) + 1-byte format header (Darwin) |
 | Security profiles | Per-call `IOSOptions`/`AndroidOptions`; easy to vary accidentally | Four named profiles (`evenLocked`/`onlyUnlocked`/`authenticated`/`authenticatedFatal`) pinning a fixed flag set; `custom` for the rest |
-| Hardware backing | StrongBox best-effort (retries without it on failure) | Hardware-backed automatically on real devices; StrongBox/SE never silently downgrade; **opt-in `requireHardwareBacking`** verifies + refuses a software-only keystore at key generation (`hardware_unavailable`) |
+| Hardware backing | StrongBox best-effort (retries without it on failure) | Hardware-backed automatically on real Android/Darwin devices; StrongBox/SE never silently downgrade; **opt-in `requireHardwareBacking`** verifies + refuses a software-only keystore at key generation (`hardware_unavailable`). Linux has no hardware tier, and none is pretended |
 | Per-operation auth | Supported via options | Bound to the Keystore key / `SecAccessControl`; auth is cryptographic, not cosmetic |
 | Error model | Largely `PlatformException` strings | Sealed `OublietteException` with a `recoverable` flag so callers never `purge()` recoverable data |
 | Key invalidation | Often surfaces as opaque failure / silent loss | Typed `KeyInvalidatedException`; key never auto-deleted; explicit `purge()` recovery |
 | Memory hygiene | Returns `String` | `Uint8List` + `useAndForget` zeroes the buffer in a `finally` |
-| API surface | Broad (`read`/`write`/`readAll`/`deleteAll`/…) | Deliberately small (`init`/`store`/`fetch` via `useAndForget`/`trash`/`exists`/`purge`); no `read`, no `update` |
+| API surface | Broad (`read`/`write`/`readAll`/`deleteAll`/…) | Deliberately small (`init`/`store`/`fetch` via `useAndForget`/`trash`/`exists`/`keys`/`purge`); no `read`, no `update` — `keys()` lists key *names* only, never values |
 | Scope / maturity | General-purpose, battle-tested, huge install base | Narrow, wallet-focused, new |
 
 ## Where Oubliette is deliberately stricter
@@ -41,7 +42,8 @@ against the FSS version you use before relying on them.
 ## Where FSS is the better choice
 
 - You need a **general key/value secure store** with `readAll`/`deleteAll`,
-  broad platform coverage (incl. Linux/Windows/web), and a large community.
+  Windows or web coverage (Oubliette ships Android, iOS, macOS, and Linux —
+  no Windows/web), and a large community.
 - You want **string values** and a minimal mental model rather than profiles,
   `Uint8List`, and `useAndForget`.
 - You need a **proven, widely-deployed** dependency today; Oubliette is new and
@@ -50,7 +52,9 @@ against the FSS version you use before relying on them.
 ## Honest limitations of Oubliette
 
 - New and less battle-tested than FSS.
-- Android + iOS/macOS only (no Linux/Windows/web).
+- Android, iOS, macOS, and Linux only (no Windows/web). The Linux backend is a
+  **software tier** (libsecret / Secret Service): no hardware backing and no
+  authenticated profiles — stated plainly rather than papered over.
 - Hardware-backed crypto, biometric, and on-device upgrade behaviour are
   validated on CI/device — not from a pure-Dart checkout.
 - `authenticatedFatal` and SE/StrongBox strictness can surface more "the user

@@ -12,6 +12,15 @@ final class Keystore {
     return result ?? false;
   }
 
+  /// Every security-critical flag is `required` with **no default** — this
+  /// facade is documented as usable standalone, so a hidden default would be a
+  /// fail-open trap: [userAuthenticationRequired] silently defaulting to
+  /// `false` would mint a no-auth key for a caller who merely forgot the flag,
+  /// and a defaulted [invalidatedByBiometricEnrollment] would silently pick the
+  /// key's authenticator set (see below). The Kotlin side already errors on a
+  /// missing flag rather than defaulting it (`bad_args`); requiring them here
+  /// moves that refusal to compile time.
+  ///
   /// When [userAuthenticationRequired] is `true`,
   /// [invalidatedByBiometricEnrollment] also selects the key's authenticator
   /// set: `true` makes the key **biometric-only** (`AUTH_BIOMETRIC_STRONG`,
@@ -26,8 +35,8 @@ final class Keystore {
     required String alias,
     required bool unlockedDeviceRequired,
     required bool strongBox,
-    bool userAuthenticationRequired = false,
-    bool invalidatedByBiometricEnrollment = true,
+    required bool userAuthenticationRequired,
+    required bool invalidatedByBiometricEnrollment,
     required bool requireHardwareBacking,
   }) async {
     await _channel.invokeMethod<void>('generateKey', {
@@ -58,8 +67,10 @@ final class Keystore {
   ///
   /// When a [promptTitle] is supplied the authenticating path may additionally
   /// throw `"auth_cancelled"` (user cancelled), `"auth_error"`, `"auth_failed"`,
-  /// or `"detached"`. See the README "Native error-code surface" table for the
-  /// full stable contract.
+  /// `"detached"`, or `"decrypt_interrupted"` (the keymaster operation opened
+  /// before the prompt was pruned while it waited on the user — transient;
+  /// retry, never purge). See the README "Native error-code surface" table for
+  /// the full stable contract.
   ///
   /// The prompt's allowed authenticators are derived authoritatively by the
   /// native layer from the key's own `KeyInfo` (`getUserAuthenticationType()`):
@@ -100,10 +111,14 @@ final class Keystore {
   /// - `"key_invalidated"` if the key was permanently invalidated
   ///   (e.g. biometric enrollment changed).
   /// - `"decrypt_failed"` for other decryption errors.
+  /// - `"unsupported_version"` if the blob's scheme [version] is newer than
+  ///   this reader (app rollback/downgrade). The data is intact and readable
+  ///   by the release that wrote it — upgrade the app; never purge.
   /// - `"key_auth_type_unknown"` — see [encrypt].
   /// When a [promptTitle] is supplied, the auth-path codes listed in [encrypt]
-  /// (`auth_cancelled`, `auth_error`, `auth_failed`, `detached`) apply too. The
-  /// prompt's authenticator set is fixed by the key's `KeyInfo` (see [encrypt]).
+  /// (`auth_cancelled`, `auth_error`, `auth_failed`, `detached`,
+  /// `decrypt_interrupted`) apply too. The prompt's authenticator set is fixed
+  /// by the key's `KeyInfo` (see [encrypt]).
   Future<Uint8List> decrypt({
     required int version,
     required String alias,

@@ -34,20 +34,70 @@ import 'dart:typed_data';
 /// per-blob [version] selects the crypto scheme from an append-only registry; a
 /// shipped scheme version is never removed, so old blobs always decrypt.
 /// See `SECURITY.md` → *Stability & upgrade contract*.
+///
+/// ### Size limit (write/read symmetric)
+///
+/// Every field is capped — [maxFieldBytes] (~48 KiB) per binary field at
+/// construction, [maxFieldChars] base64/string chars at [fromMap]. The two caps
+/// are the same limit in different units and share one constant, so a payload
+/// that can be constructed (and therefore stored) is always readable back:
+/// an oversized secret fails loudly at write time with an [ArgumentError]
+/// instead of stranding data that parses as corruption on every later read.
 final class EncryptedPayload {
+  /// Per-field size ceiling in base64/string characters, enforced on the READ
+  /// path ([fromMap]) as defense-in-depth against a pathological blob in
+  /// attacker-writable storage. Shared with the write-side byte cap
+  /// ([maxFieldBytes]) so the two paths can never drift apart: anything the
+  /// constructor accepts serialises within this cap, and anything within this
+  /// cap deserialises without hitting the constructor's guard.
+  static const int maxFieldChars = 64 * 1024;
+
+  /// Decoded-bytes equivalent of [maxFieldChars], enforced on the WRITE path
+  /// (the constructor): base64 emits 4 chars per 3 bytes, so 48 KiB of bytes
+  /// encodes to exactly the 64 Ki-char read cap. Without this symmetric guard
+  /// an oversized secret would store successfully and then fail EVERY
+  /// subsequent read as corruption — permanently stranded data, the silent-loss
+  /// failure the SECURITY.md upgrade contract pledges away. Failing the write
+  /// up front, with the limit in the message, keeps the invariant "whatever was
+  /// stored can be read back".
+  static const int maxFieldBytes = maxFieldChars ~/ 4 * 3; // 48 KiB
+
   final int version;
   final Uint8List nonce;
   final Uint8List ciphertext;
   final String aad;
   final String keyAlias;
 
-  const EncryptedPayload({
+  EncryptedPayload({
     required this.version,
     required this.nonce,
     required this.ciphertext,
     required this.aad,
     required this.keyAlias,
-  });
+  }) {
+    // Write-side mirror of the [fromMap] read caps (see [maxFieldBytes]).
+    // ArgumentError, not FormatException: this is invalid caller input at
+    // construction time, not a parse of untrusted stored bytes. The messages
+    // state sizes and limits only — never field content, which includes the
+    // ciphertext and a possibly tenant-identifying aad/alias (the same
+    // diagnostic-hygiene rule as [fromMap]).
+    if (nonce.length > maxFieldBytes || ciphertext.length > maxFieldBytes) {
+      throw ArgumentError(
+        'EncryptedPayload nonce/ciphertext exceeds $maxFieldBytes bytes '
+        '(~48 KiB): storing it would succeed but every subsequent read would '
+        'reject it as corrupt, permanently stranding the data '
+        '(nonce: ${nonce.length} B, ciphertext: ${ciphertext.length} B)',
+      );
+    }
+    if (aad.length > maxFieldChars || keyAlias.length > maxFieldChars) {
+      throw ArgumentError(
+        'EncryptedPayload aad/keyAlias exceeds $maxFieldChars characters: '
+        'storing it would succeed but every subsequent read would reject it '
+        'as corrupt, permanently stranding the data '
+        '(aad: ${aad.length}, keyAlias: ${keyAlias.length})',
+      );
+    }
+  }
 
   Map<String, dynamic> toMap() => {
     'version': version,
@@ -93,8 +143,10 @@ final class EncryptedPayload {
     // at getInstance — so these are belt-and-suspenders against a pathological /
     // oversized entry, not a primary control. The limits are generous:
     // oubliette stores small secrets (mnemonics, tokens), never multi-MB blobs.
+    // [maxFieldChars] is the shared constant the constructor enforces
+    // symmetrically at write time (as [maxFieldBytes] decoded bytes), so a
+    // payload this library wrote can never be rejected here.
     const maxVersion = 1 << 20; // far above any realistic shipped scheme count
-    const maxFieldChars = 64 * 1024; // base64 chars (~48 KiB decoded)
     if (version > maxVersion) {
       throw FormatException(
         'EncryptedPayload version is implausibly large: $version',
