@@ -20,9 +20,7 @@ void main() {
   group('$Keychain (iOS / macOS) ${Platform.localeName}', () {
     late Keychain facade;
     const alias = 'integration_test_keychain_item';
-    final data = Uint8List.fromList(
-      utf8.encode('secret data for keychain'),
-    );
+    final data = Uint8List.fromList(utf8.encode('secret data for keychain'));
 
     setUpAll(() {
       facade = Keychain(
@@ -66,8 +64,7 @@ void main() {
     testWidgets('secItemCopyMatching returns null when alias does not exist', (
       tester,
     ) async {
-      final fetched =
-          await facade.secItemCopyMatching('nonexistent_alias_xyz');
+      final fetched = await facade.secItemCopyMatching('nonexistent_alias_xyz');
       expect(fetched, isNull);
     });
 
@@ -88,48 +85,29 @@ void main() {
       expect(
         () => facade.secItemAdd(alias, data),
         throwsA(
-          isA<PlatformException>().having((e) => e.code, 'code', 'already_exists'),
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'already_exists',
+          ),
         ),
       );
     });
   });
 
-  group('$Keychain with KeychainConfig (iOS / macOS) ${Platform.localeName}',
-      () {
-    const alias = 'config_test_item';
-    final data = Uint8List.fromList(utf8.encode('config test value'));
+  group(
+    '$Keychain with KeychainConfig (iOS / macOS) ${Platform.localeName}',
+    () {
+      const alias = 'config_test_item';
+      final data = Uint8List.fromList(utf8.encode('config test value'));
 
-    testWidgets('explicit accessibility in config is respected', (
-      tester,
-    ) async {
-      final facade = Keychain(
-        config: const KeychainConfig(
-          service: null,
-          accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
-          useDataProtection: false,
-          authenticationRequired: false,
-          biometryCurrentSetOnly: false,
-          authenticationPrompt: null,
-          secureEnclave: false,
-          accessGroup: null,
-        ),
-      );
-      addTearDown(() => facade.secItemDelete(alias));
-
-      await facade.secItemAdd(alias, data);
-      final exists = await facade.contains(alias);
-      expect(exists, isTrue);
-    });
-
-    testWidgets('every KeychainAccessibility value works via config', (
-      tester,
-    ) async {
-      for (final accessibility in KeychainAccessibility.values) {
-        final itemAlias = '${alias}_${accessibility.name}';
+      testWidgets('explicit accessibility in config is respected', (
+        tester,
+      ) async {
         final facade = Keychain(
-          config: KeychainConfig(
+          config: const KeychainConfig(
             service: null,
-            accessibility: accessibility,
+            accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
             useDataProtection: false,
             authenticationRequired: false,
             biometryCurrentSetOnly: false,
@@ -138,111 +116,137 @@ void main() {
             accessGroup: null,
           ),
         );
-        addTearDown(() => facade.secItemDelete(itemAlias));
+        addTearDown(() => facade.secItemDelete(alias));
 
-        await facade.secItemAdd(itemAlias, data);
-        expect(await facade.contains(itemAlias), isTrue);
-        final fetched = await facade.secItemCopyMatching(itemAlias);
-        expect(fetched, equals(data));
-      }
-    });
-  });
+        await facade.secItemAdd(alias, data);
+        final exists = await facade.contains(alias);
+        expect(exists, isTrue);
+      });
+
+      testWidgets('every KeychainAccessibility value works via config', (
+        tester,
+      ) async {
+        for (final accessibility in KeychainAccessibility.values) {
+          final itemAlias = '${alias}_${accessibility.name}';
+          final facade = Keychain(
+            config: KeychainConfig(
+              service: null,
+              accessibility: accessibility,
+              useDataProtection: false,
+              authenticationRequired: false,
+              biometryCurrentSetOnly: false,
+              authenticationPrompt: null,
+              secureEnclave: false,
+              accessGroup: null,
+            ),
+          );
+          addTearDown(() => facade.secItemDelete(itemAlias));
+
+          await facade.secItemAdd(itemAlias, data);
+          expect(await facade.contains(itemAlias), isTrue);
+          final fetched = await facade.secItemCopyMatching(itemAlias);
+          expect(fetched, equals(data));
+        }
+      });
+    },
+  );
 
   group(
-      '$Keychain with service config (iOS / macOS) ${Platform.localeName}',
-      () {
-    late Keychain facadeA;
-    late Keychain facadeB;
-    late Keychain facadeNoService;
-    const alias = 'service_test_item';
-    final dataA = Uint8List.fromList(utf8.encode('service_a_value'));
-    final dataB = Uint8List.fromList(utf8.encode('service_b_value'));
+    '$Keychain with service config (iOS / macOS) ${Platform.localeName}',
+    () {
+      late Keychain facadeA;
+      late Keychain facadeB;
+      late Keychain facadeNoService;
+      const alias = 'service_test_item';
+      final dataA = Uint8List.fromList(utf8.encode('service_a_value'));
+      final dataB = Uint8List.fromList(utf8.encode('service_b_value'));
 
-    setUpAll(() {
-      facadeA = Keychain(
-        config: const KeychainConfig(
-          service: 'com.test.serviceA',
-          accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
-          useDataProtection: false,
-          authenticationRequired: false,
-          biometryCurrentSetOnly: false,
-          authenticationPrompt: null,
-          secureEnclave: false,
-          accessGroup: null,
-        ),
-      );
-      facadeB = Keychain(
-        config: const KeychainConfig(
-          service: 'com.test.serviceB',
-          accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
-          useDataProtection: false,
-          authenticationRequired: false,
-          biometryCurrentSetOnly: false,
-          authenticationPrompt: null,
-          secureEnclave: false,
-          accessGroup: null,
-        ),
-      );
-      facadeNoService = Keychain(
-        config: const KeychainConfig(
-          service: null,
-          accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
-          useDataProtection: false,
-          authenticationRequired: false,
-          biometryCurrentSetOnly: false,
-          authenticationPrompt: null,
-          secureEnclave: false,
-          accessGroup: null,
-        ),
-      );
-    });
+      setUpAll(() {
+        facadeA = Keychain(
+          config: const KeychainConfig(
+            service: 'com.test.serviceA',
+            accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
+            useDataProtection: false,
+            authenticationRequired: false,
+            biometryCurrentSetOnly: false,
+            authenticationPrompt: null,
+            secureEnclave: false,
+            accessGroup: null,
+          ),
+        );
+        facadeB = Keychain(
+          config: const KeychainConfig(
+            service: 'com.test.serviceB',
+            accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
+            useDataProtection: false,
+            authenticationRequired: false,
+            biometryCurrentSetOnly: false,
+            authenticationPrompt: null,
+            secureEnclave: false,
+            accessGroup: null,
+          ),
+        );
+        facadeNoService = Keychain(
+          config: const KeychainConfig(
+            service: null,
+            accessibility: KeychainAccessibility.whenUnlockedThisDeviceOnly,
+            useDataProtection: false,
+            authenticationRequired: false,
+            biometryCurrentSetOnly: false,
+            authenticationPrompt: null,
+            secureEnclave: false,
+            accessGroup: null,
+          ),
+        );
+      });
 
-    tearDown(() async {
-      await facadeA.secItemDelete(alias);
-      await facadeB.secItemDelete(alias);
-      await facadeNoService.secItemDelete(alias);
-    });
+      tearDown(() async {
+        await facadeA.secItemDelete(alias);
+        await facadeB.secItemDelete(alias);
+        await facadeNoService.secItemDelete(alias);
+      });
 
-    testWidgets('same alias in different services are independent', (
-      tester,
-    ) async {
-      await facadeA.secItemAdd(alias, dataA);
-      await facadeB.secItemAdd(alias, dataB);
+      testWidgets('same alias in different services are independent', (
+        tester,
+      ) async {
+        await facadeA.secItemAdd(alias, dataA);
+        await facadeB.secItemAdd(alias, dataB);
 
-      final fetchedA = await facadeA.secItemCopyMatching(alias);
-      final fetchedB = await facadeB.secItemCopyMatching(alias);
+        final fetchedA = await facadeA.secItemCopyMatching(alias);
+        final fetchedB = await facadeB.secItemCopyMatching(alias);
 
-      expect(fetchedA, equals(dataA));
-      expect(fetchedB, equals(dataB));
-    });
+        expect(fetchedA, equals(dataA));
+        expect(fetchedB, equals(dataB));
+      });
 
-    testWidgets('contains is scoped to service', (tester) async {
-      await facadeA.secItemAdd(alias, dataA);
+      testWidgets('contains is scoped to service', (tester) async {
+        await facadeA.secItemAdd(alias, dataA);
 
-      expect(await facadeA.contains(alias), isTrue);
-      expect(await facadeB.contains(alias), isFalse);
-    });
+        expect(await facadeA.contains(alias), isTrue);
+        expect(await facadeB.contains(alias), isFalse);
+      });
 
-    testWidgets('delete in one service does not affect another', (
-      tester,
-    ) async {
-      await facadeA.secItemAdd(alias, dataA);
-      await facadeB.secItemAdd(alias, dataB);
+      testWidgets('delete in one service does not affect another', (
+        tester,
+      ) async {
+        await facadeA.secItemAdd(alias, dataA);
+        await facadeB.secItemAdd(alias, dataB);
 
-      await facadeA.secItemDelete(alias);
+        await facadeA.secItemDelete(alias);
 
-      expect(await facadeA.contains(alias), isFalse);
-      expect(await facadeB.contains(alias), isTrue);
-      expect(await facadeB.secItemCopyMatching(alias), equals(dataB));
-    });
+        expect(await facadeA.contains(alias), isFalse);
+        expect(await facadeB.contains(alias), isTrue);
+        expect(await facadeB.secItemCopyMatching(alias), equals(dataB));
+      });
 
-    testWidgets('no-service query matches items regardless of service', (
-      tester,
-    ) async {
-      await facadeA.secItemAdd(alias, dataA);
+      testWidgets('no-service query matches items regardless of service', (
+        tester,
+      ) async {
+        await facadeA.secItemAdd(alias, dataA);
 
-      final fetched = await facadeNoService.secItemCopyMatching(alias);
-      expect(fetched, isNotNull);
-    });
-  });
+        final fetched = await facadeNoService.secItemCopyMatching(alias);
+        expect(fetched, isNotNull);
+      });
+    },
+  );
 }

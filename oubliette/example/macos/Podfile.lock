@@ -1,6 +1,6 @@
 PODS:
   - FlutterMacOS (1.0.0)
-  - keychain (0.0.1):
+  - keychain (1.0.0):
     - Flutter
     - FlutterMacOS
   - shared_preferences_foundation (0.0.1):

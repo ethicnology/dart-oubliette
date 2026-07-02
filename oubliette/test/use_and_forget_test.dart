@@ -2,8 +2,9 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:oubliette/oubliette.dart';
+import 'package:oubliette/src/fetch.dart';
 
-class _FakeOubliette extends Oubliette {
+class _FakeOubliette extends Oubliette with OublietteFetch {
   _FakeOubliette() : super.internal();
 
   final Map<String, Uint8List> _store = {};
@@ -25,10 +26,18 @@ class _FakeOubliette extends Oubliette {
   }
 
   @override
+  Future<void> purge() async {
+    _store.clear();
+  }
+
+  @override
   Future<void> init() async {}
 
   @override
   Future<bool> exists(String key) async => _store.containsKey(key);
+
+  @override
+  Future<List<String>> keys() async => _store.keys.toList(growable: false);
 }
 
 void main() {

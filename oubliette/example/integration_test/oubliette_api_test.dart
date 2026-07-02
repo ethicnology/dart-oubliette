@@ -13,34 +13,55 @@ void main() {
 
     setUp(() {
       storage = Oubliette(
-        android: const AndroidSecretAccess.onlyUnlocked(strongBox: false),
+        android: const AndroidSecretAccess.onlyUnlocked(
+          strongBox: false,
+          requireHardwareBacking: false,
+        ),
         darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
       );
     });
 
-    testWidgets('store/useAndForget/trash bytes round-trip', (WidgetTester tester) async {
+    testWidgets('store/useAndForget/trash bytes round-trip', (
+      WidgetTester tester,
+    ) async {
       const key = 'api_test_bytes';
       final value = Uint8List.fromList(utf8.encode('secret bytes'));
       await storage.store(key, value);
-      final decoded = await storage.useAndForget<String>(key, (bytes) async => utf8.decode(bytes));
+      final decoded = await storage.useAndForget<String>(
+        key,
+        (bytes) async => utf8.decode(bytes),
+      );
       expect(decoded, 'secret bytes');
       await storage.trash(key);
-      final missing = await storage.useAndForget<String>(key, (bytes) async => utf8.decode(bytes));
+      final missing = await storage.useAndForget<String>(
+        key,
+        (bytes) async => utf8.decode(bytes),
+      );
       expect(missing, isNull);
     });
 
-    testWidgets('store/useAndForget/trash string-as-bytes round-trip', (WidgetTester tester) async {
+    testWidgets('store/useAndForget/trash string-as-bytes round-trip', (
+      WidgetTester tester,
+    ) async {
       const key = 'api_test_string';
       final value = Uint8List.fromList(utf8.encode('secret string'));
       await storage.store(key, value);
-      final fetched = await storage.useAndForget<String>(key, (bytes) async => utf8.decode(bytes));
+      final fetched = await storage.useAndForget<String>(
+        key,
+        (bytes) async => utf8.decode(bytes),
+      );
       expect(fetched, 'secret string');
       await storage.trash(key);
-      final missing = await storage.useAndForget<String>(key, (bytes) async => utf8.decode(bytes));
+      final missing = await storage.useAndForget<String>(
+        key,
+        (bytes) async => utf8.decode(bytes),
+      );
       expect(missing, isNull);
     });
 
-    testWidgets('exists returns true after store, false after trash', (WidgetTester tester) async {
+    testWidgets('exists returns true after store, false after trash', (
+      WidgetTester tester,
+    ) async {
       const key = 'api_test_exists';
       expect(await storage.exists(key), false);
       await storage.store(key, Uint8List.fromList([1, 2, 3]));
@@ -49,13 +70,17 @@ void main() {
       expect(await storage.exists(key), false);
     });
 
-    testWidgets('store fails if key already exists', (WidgetTester tester) async {
+    testWidgets('store fails if key already exists', (
+      WidgetTester tester,
+    ) async {
       const key = 'api_test_dup';
       await storage.store(key, Uint8List.fromList(utf8.encode('first')));
-      try {
-        await storage.store(key, Uint8List.fromList(utf8.encode('second')));
-        fail('Expected store to fail on duplicate key');
-      } catch (_) {}
+      // expectLater asserts the throw — a bare try/catch around `fail()` would
+      // swallow the TestFailure and pass even if the duplicate were accepted.
+      await expectLater(
+        storage.store(key, Uint8List.fromList(utf8.encode('second'))),
+        throwsA(isA<StateError>()),
+      );
       await storage.trash(key);
     });
   });

@@ -1,0 +1,32 @@
+name: secret_service
+description: Flutter plugin exposing the freedesktop Secret Service (libsecret) on Linux via a typed Dart facade.
+version: 1.0.0
+homepage: https://github.com/ethicnology/dart-oubliette
+repository: https://github.com/ethicnology/dart-oubliette
+topics:
+  - secure-storage
+  - linux
+  - libsecret
+  - keyring
+  - security
+
+resolution: workspace
+
+environment:
+  sdk: ">=3.12.1 <4.0.0"
+  flutter: ">=3.44.1"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    platforms:
+      linux:
+        pluginClass: SecretServicePlugin

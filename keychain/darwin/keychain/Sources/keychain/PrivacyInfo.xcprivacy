@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	Apple privacy manifest for the keychain plugin.
+
+	Every declaration below is deliberately empty/false and must stay that
+	way unless the plugin's behavior actually changes:
+	- The plugin never phones home, never embeds tracking, and never hands
+	  data to third parties (NSPrivacyTracking false, no tracking domains).
+	- It collects no data about the user (empty NSPrivacyCollectedDataTypes):
+	  secrets are stored on behalf of the app, on device, in the Keychain,
+	  and are never read back except to return them to the app itself.
+	- It calls none of Apple's "required reason" API categories (empty
+	  NSPrivacyAccessedAPITypes): the Security and LocalAuthentication
+	  frameworks it uses are not on that list (file timestamps, boot time,
+	  disk space, active keyboards, UserDefaults are — none are touched).
+
+	If a future change adds a required-reason API call, App Store review
+	will reject the host app unless the matching reason code is declared
+	here first.
+	-->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array/>
+</dict>
+</plist>

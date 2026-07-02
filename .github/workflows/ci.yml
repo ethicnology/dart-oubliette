@@ -1,0 +1,196 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege: this workflow only reads the repo (builds + tests). No job
+# needs write access to contents, issues, PRs, packages, or the token.
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: 3.44.1
+
+jobs:
+  analyze-and-test:
+    name: Analyze & Dart tests (melos workspace)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      - name: Resolve workspace
+        run: flutter pub get
+      - name: Check formatting (all packages)
+        run: dart run melos run format
+      - name: Analyze all packages
+        run: dart run melos run analyze
+      - name: Dart tests (all packages)
+        run: dart run melos run test
+
+  linux-build:
+    name: Linux build (compiles secret_service C++ plugin)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      # The Linux desktop toolchain + libsecret dev headers the plugin links.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libsecret-1-dev
+      # Building the example for Linux compiles the secret_service C++ plugin
+      # (CMake + libsecret) against the real Flutter embedding — the authoritative
+      # native gate for the Linux backend. The example has no committed linux/
+      # runner, so generate the ephemeral desktop scaffold first (does not touch
+      # lib/). This is the only automated compile gate for secret_service_plugin.cc.
+      - name: Build example for Linux (debug)
+        working-directory: oubliette/example
+        run: |
+          flutter create --platforms=linux .
+          flutter build linux --debug
+
+  android-build:
+    name: Android build (compiles plugin Kotlin)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      # Building the example debug APK compiles all plugin Kotlin against the
+      # real Flutter embedding + Android SDK (minSdk 30). This is the
+      # authoritative Kotlin gate — the standalone `keystore/android` module
+      # cannot compile its io.flutter.* imports without the embedding classpath.
+      - name: Build example debug APK
+        working-directory: oubliette/example
+        run: flutter build apk --debug
+      # Run the keystore module's JVM unit tests through the example's Gradle
+      # build (which supplies the Flutter embedding classpath the standalone
+      # module lacks). This is the only automated gate on the append-only
+      # SchemeRegistry contract — hard-fails on any drift.
+      - name: Kotlin unit tests (SchemeRegistry append-only contract)
+        working-directory: oubliette/example/android
+        run: |
+          ./gradlew :keystore:testDebugUnitTest
+          # Gradle exits 0 when it discovers zero tests, so assert the JUnit
+          # report actually executed tests — a dead SchemeRegistry contract guard
+          # (renamed source set / lost test engine) must hard-fail, not pass green.
+          count=$(grep -rhoE 'tests="[0-9]+"' ../build/keystore/test-results/testDebugUnitTest/*.xml 2>/dev/null | grep -oE '[0-9]+' | awk '{s+=$1} END{print s+0}')
+          echo "kotlin-test executed $count test(s)"
+          [ "${count:-0}" -gt 0 ] || { echo "::error::0 Kotlin tests executed — SchemeRegistry append-only contract guard is dead"; exit 1; }
+
+  darwin-build:
+    name: Darwin build + Swift unit tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      # Compiles the keychain Swift (incl. Secure Enclave tag logic).
+      - name: Build example macOS
+        working-directory: oubliette/example
+        run: flutter build macos --debug
+      # Compiles the same shared Darwin Swift against the iOS SDK. The source is
+      # shared (sharedDarwinSource), but the SDKs are not interchangeable — an
+      # iOS-only availability/API break would otherwise ship green behind the
+      # macOS-only build. No signing needed to compile.
+      - name: Build example iOS (no codesign)
+        working-directory: oubliette/example
+        run: flutter build ios --debug --no-codesign
+      # SE tag regression tests (RunnerTests) — pure logic, no device needed.
+      # Hard-fails: these are the only automated coverage of the Secure-Enclave
+      # tag/collision logic, so a swallowed failure would be a false green.
+      - name: macOS RunnerTests
+        working-directory: oubliette/example/macos
+        run: |
+          xcodebuild test \
+            -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -destination 'platform=macOS'
+
+  android-integration:
+    name: Android integration (real Keystore, emulator)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      # KVM is required for the hardware-accelerated emulator to boot.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # Exercises the REAL AndroidKeyStore (not mocks): cross-profile slot
+      # isolation, lazy-ensure / idempotent init, StrongBox fail-closed,
+      # PayloadTamperException, and the raw Keystore AES-GCM crypto
+      # (round-trip, AAD/nonce/ciphertext tamper → throw). Biometric and
+      # Secure-Enclave paths need an enrolled credential and are verified
+      # manually on a real device (device-only).
+      - name: Integration tests (emulator)
+        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          working-directory: oubliette/example
+          script: >-
+            flutter test
+            integration_test/refactor_regression_test.dart
+            integration_test/oubliette_api_test.dart
+            integration_test/plugin_integration_test.dart
+            integration_test/keystore_test.dart
+
+  macos-integration:
+    name: macOS integration (real Keychain)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      # Runs natively on the runner (no simulator) against the REAL macOS
+      # legacy file-based Keychain — works unsigned, no entitlements. Exercises
+      # the full KeychainPlugin native layer: secItemAdd/CopyMatching/Delete,
+      # every accessibility value, service scoping, cross-profile slot
+      # isolation, and PayloadTamperException. Biometric / Data-Protection /
+      # Secure-Enclave paths need a real device (GitHub macOS runners are VMs
+      # with no Secure Enclave) and are verified manually before release.
+      # Run each file as its own `flutter test` invocation. Running several
+      # integration files in one command relaunches the macOS GUI app between
+      # files, and the headless runner intermittently fails to foreground it
+      # ("log reader stopped" / "open returned 1"). A fresh process per file
+      # avoids that and isolates failures. `set -e` (default) fails the job on
+      # the first failing file.
+      - name: Integration tests (macOS desktop)
+        working-directory: oubliette/example
+        run: |
+          for t in keychain_test refactor_regression_test oubliette_api_test plugin_integration_test; do
+            echo "::group::integration_test/$t.dart"
+            flutter test "integration_test/$t.dart" -d macos
+            echo "::endgroup::"
+          done

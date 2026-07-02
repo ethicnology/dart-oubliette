@@ -1,12 +1,20 @@
 name: keychain
 description: Flutter plugin exposing the iOS/macOS Keychain (SecItem API) via a typed Dart facade.
-version: 0.0.1
-publish_to: 'none'
-homepage:
+version: 1.0.0
+homepage: https://github.com/ethicnology/dart-oubliette
+repository: https://github.com/ethicnology/dart-oubliette
+topics:
+  - secure-storage
+  - keychain
+  - ios
+  - macos
+  - security
+
+resolution: workspace
 
 environment:
-  sdk: ^3.10.4
-  flutter: ">=3.3.0"
+  sdk: ">=3.12.1 <4.0.0"
+  flutter: ">=3.44.1"
 
 dependencies:
   flutter:

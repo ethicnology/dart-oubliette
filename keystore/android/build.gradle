@@ -1,15 +1,15 @@
 group = "com.oubliette.keystore"
-version = "1.0-SNAPSHOT"
+version = "1.0.0"
 
 buildscript {
-    ext.kotlin_version = "2.2.20"
+    ext.kotlin_version = "2.4.0"
     repositories {
         google()
         mavenCentral()
     }
 
     dependencies {
-        classpath("com.android.tools.build:gradle:8.11.1")
+        classpath("com.android.tools.build:gradle:9.2.0")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version")
     }
 }
@@ -22,7 +22,6 @@ allprojects {
 }
 
 apply plugin: "com.android.library"
-apply plugin: "kotlin-android"
 
 android {
     namespace = "com.oubliette.keystore"
@@ -34,22 +33,24 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17
-    }
-
     sourceSets {
         main.java.srcDirs += "src/main/kotlin"
         test.java.srcDirs += "src/test/kotlin"
     }
 
     defaultConfig {
-        minSdk = 29
+        // API 30 (Android 11) floor: required so setUserAuthenticationParameters
+        // is always available. On API 29 the authenticated profiles would
+        // silently generate a key with no user-auth requirement.
+        minSdk = 30
     }
 
     dependencies {
-        testImplementation("org.jetbrains.kotlin:kotlin-test")
-        testImplementation("org.mockito:mockito-core:5.0.0")
+        // kotlin-test-junit5 binds the kotlin.test `@Test` annotations to the
+        // JUnit 5 Jupiter engine. Plain `kotlin-test` defaults to JUnit4, which
+        // the `useJUnitPlatform()` runner below cannot discover without an
+        // engine on the classpath — the contract test would silently not run.
+        testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     }
 
     testOptions {
@@ -62,5 +63,13 @@ android {
                showStandardStreams = true
             }
         }
+    }
+}
+
+// AGP 9 compiles Kotlin built-in (no kotlin-android plugin). Configure the JVM
+// target via the kotlin extension's compilerOptions (kotlinOptions is removed).
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
 }

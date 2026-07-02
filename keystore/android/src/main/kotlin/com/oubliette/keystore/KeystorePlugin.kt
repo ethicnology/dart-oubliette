@@ -1,10 +1,14 @@
 package com.oubliette.keystore
 
 import android.app.Activity
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.CancellationSignal
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
+import android.security.keystore.StrongBoxUnavailableException
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -13,7 +17,18 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import java.security.KeyStore
-import javax.crypto.SecretKey
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Reads the scheme-version argument without silent Long→Int truncation: a Dart
+ * int above 2^31−1 arrives over the channel as a Long, and a bare `toInt()`
+ * would wrap it into a small — wrong — scheme version instead of rejecting it.
+ * Returns null when the argument is absent or out of the valid range.
+ */
+internal fun MethodCall.versionArgument(): Int? {
+    val raw = argument<Number>("version")?.toLong() ?: return null
+    return if (raw in 1L..Int.MAX_VALUE.toLong()) raw.toInt() else null
+}
 
 class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
@@ -22,12 +37,82 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     internal var activity: Activity? = null
 
     private val keyStoreType = "AndroidKeyStore"
-    private val cryptoThread = HandlerThread("oubliette-crypto").also { it.start() }
-    private val cryptoHandler = Handler(cryptoThread.looper)
+
+    /**
+     * Background thread for keymaster Binder calls (Cipher.init, Cipher.doFinal,
+     * key gen). Created in [onAttachedToEngine] and torn down in
+     * [onDetachedFromEngine], then recreated on a subsequent attach — so a
+     * re-attached plugin instance never posts to a dead looper (which would
+     * silently drop the work and hang the awaiting Dart Future).
+     */
+    private lateinit var cryptoThread: HandlerThread
+    internal lateinit var cryptoHandler: Handler
+
+    /** Posts MethodChannel.Result callbacks back onto the platform thread. */
+    internal val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * The CancellationSignals of every in-flight BiometricPrompt (empty when
+     * none is showing). Each prompt adds its own signal when shown and removes
+     * exactly that signal on its first terminal callback (see [authenticate]);
+     * activity/engine detach cancels them all (see
+     * [cancelPendingAuthentication]).
+     *
+     * A SET, not a single slot: a second concurrent prompt (two isolates, or an
+     * app racing two authenticated reads) would evict the first from a single
+     * slot, so on activity destroy only the newest would be force-cancelled —
+     * reopening, for the older prompt, the exact OEM ERROR_CANCELED gap this
+     * mechanism exists to close (pending Future + unwiped encrypt-path
+     * plaintext until process death). ConcurrentHashMap-backed: every add /
+     * remove / sweep happens on the platform thread today, but `cancel()`
+     * synchronously re-enters the prompt's terminal callback, which removes the
+     * signal *while the detach sweep is iterating* — the keySet view's weakly
+     * consistent iterator tolerates that reentrancy where a plain HashSet would
+     * throw ConcurrentModificationException mid-teardown.
+     */
+    internal val pendingAuthCancellations: MutableSet<CancellationSignal> =
+        ConcurrentHashMap.newKeySet()
+
+    /**
+     * Proactively cancels every in-flight BiometricPrompt on activity/engine
+     * detach. The platform is *supposed* to fire ERROR_CANCELED when its host
+     * activity is destroyed, but some OEMs don't — leaving the Dart Future
+     * pending and an encrypt-path plaintext unwiped until process death. We force
+     * the cancellation ourselves: each `cancel()` routes through
+     * onAuthenticationError → the single-delivery `claim()` → the `onError`
+     * finalizer that wipes the plaintext, then fails the Future. This is NOT a
+     * timeout (a live prompt still waits on the user indefinitely) — it is the
+     * lifecycle-driven cancellation the prompt's residual note calls for.
+     */
+    private fun cancelPendingAuthentication() {
+        // cancel() re-enters the prompt's terminal callback synchronously on
+        // some OEMs, which removes the signal from the set mid-iteration — safe
+        // on the weakly consistent iterator. The trailing clear() sweeps any
+        // signal whose OEM delivers the error callback late (or never), so a
+        // stale signal can't accumulate across attach/detach cycles.
+        for (signal in pendingAuthCancellations) signal.cancel()
+        pendingAuthCancellations.clear()
+    }
+
+    /**
+     * Posts [block] to the crypto thread. [block] MUST deliver its result via
+     * [mainHandler] (MethodChannel.Result is @UiThread). If the looper is gone
+     * (plugin detached mid-call) the runnable never runs — [onDead] is invoked
+     * (e.g. to wipe a secret) and the Dart Future is failed explicitly so it
+     * cannot hang awaiting a result that will never arrive.
+     */
+    internal fun postCrypto(result: Result, onDead: () -> Unit = {}, block: () -> Unit) {
+        if (!cryptoHandler.post(block)) {
+            onDead()
+            mainHandler.post { result.error("detached", "Plugin detached during operation.", null) }
+        }
+    }
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "keystore")
         appContext = flutterPluginBinding.applicationContext
+        cryptoThread = HandlerThread("oubliette-crypto").also { it.start() }
+        cryptoHandler = Handler(cryptoThread.looper)
         channel.setMethodCallHandler(this)
     }
 
@@ -36,6 +121,10 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
+        // Rotation destroys the host activity; force-cancel any prompt so its
+        // plaintext is wiped now rather than relying on the OEM to fire
+        // ERROR_CANCELED on the recreated activity.
+        cancelPendingAuthentication()
         activity = null
     }
 
@@ -44,6 +133,7 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     override fun onDetachedFromActivity() {
+        cancelPendingAuthentication()
         activity = null
     }
 
@@ -67,18 +157,34 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 result.error("bad_args", "Missing alias.", null)
                 return
             }
-        cryptoHandler.post {
+        postCrypto(result) {
             try {
-                result.success(getKey(alias) != null)
+                // containsAlias, not getKey(): getKey actually loads the entry
+                // and can throw UnrecoverableKeyException for a half-invalidated
+                // key on some devices — turning "does it exist?" into an error.
+                // An invalidated-but-present key must report true so the ensure-
+                // key path doesn't try to regenerate it; the invalidation then
+                // surfaces properly as key_invalidated at encrypt/decrypt.
+                val keyStore = KeyStore.getInstance(keyStoreType)
+                keyStore.load(null)
+                val exists = keyStore.containsAlias(alias)
+                mainHandler.post { result.success(exists) }
             } catch (e: Exception) {
-                result.error("contains_alias_failed", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("contains_alias_failed", e.message ?: e.toString(), null) }
             }
         }
     }
 
     private fun handleGenerateKey(call: MethodCall, result: Result) {
-        val versionRaw = call.argument<Number>("version") ?: call.argument<Int>("version")
-        val version = versionRaw?.toInt() ?: SchemeRegistry.CURRENT_VERSION
+        val version = if (!call.hasArgument("version")) {
+            SchemeRegistry.CURRENT_VERSION
+        } else {
+            call.versionArgument()
+                ?: run {
+                    result.error("bad_args", "Invalid version.", null)
+                    return
+                }
+        }
         val alias = call.argument<String>("alias")
             ?: run {
                 result.error("bad_args", "Missing alias.", null)
@@ -89,30 +195,78 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 result.error("bad_args", "Missing unlockedDeviceRequired.", null)
                 return
             }
-        val wantsStrongBox = call.argument<Boolean>("strongBox") ?: true
-        val useStrongBox = wantsStrongBox &&
-                appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
-        val userAuthenticationRequired = call.argument<Boolean>("userAuthenticationRequired") ?: false
-        val invalidatedByBiometricEnrollment = call.argument<Boolean>("invalidatedByBiometricEnrollment") ?: true
-        cryptoHandler.post {
+        val strongBox = call.argument<Boolean>("strongBox")
+            ?: run {
+                result.error("bad_args", "Missing strongBox.", null)
+                return
+            }
+        // Required, no default: an auth flag silently defaulting to "no auth"
+        // would be a fail-open default. Every security-critical generation flag
+        // is chosen explicitly by the caller (the Dart facade always sends it),
+        // matching strongBox / unlockedDeviceRequired / invalidatedByBiometricEnrollment.
+        val userAuthenticationRequired = call.argument<Boolean>("userAuthenticationRequired")
+            ?: run {
+                result.error("bad_args", "Missing userAuthenticationRequired.", null)
+                return
+            }
+        val invalidatedByBiometricEnrollment = call.argument<Boolean>("invalidatedByBiometricEnrollment")
+            ?: run {
+                result.error("bad_args", "Missing invalidatedByBiometricEnrollment.", null)
+                return
+            }
+        // Opt-in hardware backing, required (no default): refusing a
+        // non-hardware-backed key is fail-closed, so absence must error rather
+        // than silently fall open to "don't require hardware". Emulator/CI
+        // leniency comes from the caller passing false explicitly, never from a
+        // hidden default. Wallets pass true.
+        val requireHardwareBacking = call.argument<Boolean>("requireHardwareBacking")
+            ?: run {
+                result.error("bad_args", "Missing requireHardwareBacking.", null)
+                return
+            }
+        postCrypto(result) {
             try {
+                // Fail closed: requesting StrongBox must yield StrongBox or a
+                // clear error — never a silent TEE downgrade. The feature flag
+                // is a pre-flight check; key generation below is the source of
+                // truth and may still throw StrongBoxUnavailableException.
+                if (strongBox &&
+                    !appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)) {
+                    mainHandler.post {
+                        result.error(
+                            "strongbox_unavailable",
+                            "StrongBox requested but FEATURE_STRONGBOX_KEYSTORE is absent on this device.",
+                            null
+                        )
+                    }
+                    return@postCrypto
+                }
                 val scheme = SchemeRegistry.schemeFor(version)
                 if (scheme == null) {
-                    result.error("generate_key_failed", "Unsupported version.", null)
-                    return@post
+                    mainHandler.post { result.error("generate_key_failed", "Unsupported version.", null) }
+                    return@postCrypto
                 }
                 scheme.generateKey(
                     alias,
                     unlockedDeviceRequired,
-                    useStrongBox,
+                    strongBox,
                     userAuthenticationRequired,
-                    invalidatedByBiometricEnrollment
+                    invalidatedByBiometricEnrollment,
+                    requireHardwareBacking
                 )
-                result.success(null)
-            } catch (e: IllegalStateException) {
-                result.error("already_exists", e.message ?: e.toString(), null)
+                mainHandler.post { result.success(null) }
+            } catch (e: StrongBoxUnavailableException) {
+                mainHandler.post { result.error("strongbox_unavailable", e.message ?: e.toString(), null) }
+            } catch (e: HardwareUnavailableException) {
+                mainHandler.post { result.error("hardware_unavailable", e.message ?: e.toString(), null) }
+            } catch (e: KeyAlreadyExistsException) {
+                // Exactly the duplicate-alias signal — never a broader
+                // IllegalStateException, which would let an unrelated keystore
+                // failure masquerade as "already exists" (treated as success
+                // by the Dart ensure-key path).
+                mainHandler.post { result.error("already_exists", e.message ?: e.toString(), null) }
             } catch (e: Exception) {
-                result.error("generate_key_failed", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("generate_key_failed", e.message ?: e.toString(), null) }
             }
         }
     }
@@ -123,16 +277,16 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 result.error("bad_args", "Missing alias.", null)
                 return
             }
-        cryptoHandler.post {
+        postCrypto(result) {
             try {
                 val keyStore = KeyStore.getInstance(keyStoreType)
                 keyStore.load(null)
                 if (keyStore.containsAlias(alias)) {
                     keyStore.deleteEntry(alias)
                 }
-                result.success(null)
+                mainHandler.post { result.success(null) }
             } catch (e: Exception) {
-                result.error("delete_entry_failed", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("delete_entry_failed", e.message ?: e.toString(), null) }
             }
         }
     }
@@ -142,30 +296,33 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         val aad = call.argument<String>("aad")
         val alias = call.argument<String>("alias")
         if (plaintext == null || aad == null || alias == null) {
+            plaintext?.fill(0)
             result.error("bad_args", "Missing plaintext, aad, or alias.", null)
             return
         }
-        cryptoHandler.post {
+        postCrypto(result, onDead = { plaintext.fill(0) }) {
             try {
                 val scheme = SchemeRegistry.schemeFor(SchemeRegistry.CURRENT_VERSION)
                     ?: run {
-                        result.error("encrypt_failed", "Unsupported version.", null)
-                        return@post
+                        mainHandler.post { result.error("encrypt_failed", "Unsupported version.", null) }
+                        return@postCrypto
                     }
                 val encryptResult = scheme.encrypt(alias, plaintext, aad)
-                result.success(
-                    mapOf(
-                        "version" to encryptResult.version,
-                        "nonce" to encryptResult.nonce,
-                        "ciphertext" to encryptResult.ciphertext
+                mainHandler.post {
+                    result.success(
+                        mapOf(
+                            "version" to encryptResult.version,
+                            "nonce" to encryptResult.nonce,
+                            "ciphertext" to encryptResult.ciphertext
+                        )
                     )
-                )
+                }
             } catch (e: KeyNotFoundException) {
-                result.error("key_not_found", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("key_not_found", e.message ?: e.toString(), null) }
             } catch (e: KeyInvalidatedException) {
-                result.error("key_invalidated", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("key_invalidated", e.message ?: e.toString(), null) }
             } catch (e: Exception) {
-                result.error("encrypt_failed", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("encrypt_failed", e.message ?: e.toString(), null) }
             } finally {
                 plaintext.fill(0)
             }
@@ -173,8 +330,7 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     private fun handleDecrypt(call: MethodCall, result: Result) {
-        val versionRaw = call.argument<Number>("version") ?: call.argument<Int>("version")
-        val version = versionRaw?.toInt()
+        val version = call.versionArgument()
         val ciphertext = call.argument<ByteArray>("ciphertext")
         val nonce = call.argument<ByteArray>("nonce")
         val aad = call.argument<String>("aad")
@@ -183,47 +339,97 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             result.error("bad_args", "Missing version, ciphertext, nonce, aad, or alias.", null)
             return
         }
-        cryptoHandler.post {
+        postCrypto(result) {
+            var plaintext: ByteArray? = null
             try {
                 val scheme = SchemeRegistry.schemeFor(version)
                 if (scheme == null) {
-                    result.error("decrypt_failed", "Unsupported version.", null)
-                    return@post
+                    // The registry is append-only and gapless (1..CURRENT_VERSION),
+                    // and versionArgument() already rejected anything below 1 — so
+                    // an unknown version here can only mean the blob was written by
+                    // a NEWER release (app rollback, sideloaded downgrade). The data
+                    // is intact and readable by the version that wrote it; the fatal
+                    // `decrypt_failed` ("this blob is bad") would steer a compliant
+                    // caller toward purging a healthy slot. Distinct, recoverable
+                    // code instead: upgrade the app; never purge.
+                    mainHandler.post {
+                        result.error(
+                            "unsupported_version",
+                            "Payload was written by a newer version of this library — upgrade the app; do not purge.",
+                            null
+                        )
+                    }
+                    return@postCrypto
                 }
-                val plaintext = scheme.decrypt(alias, ciphertext, nonce, aad)
-                result.success(plaintext.copyOf())
-                plaintext.fill(0)
+                plaintext = scheme.decrypt(alias, ciphertext, nonce, aad)
+                val out = plaintext.copyOf()
+                mainHandler.post {
+                    try {
+                        result.success(out)
+                    } finally {
+                        // success() serialises into the reply buffer synchronously,
+                        // so the copy is wiped the moment delivery returns. The
+                        // codec's own transfer buffer (and the Dart-side bytes) are
+                        // outside our reach — see SECURITY.md on plaintext lifetime.
+                        out.fill(0)
+                    }
+                }
             } catch (e: KeyNotFoundException) {
-                result.error("key_not_found", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("key_not_found", e.message ?: e.toString(), null) }
             } catch (e: KeyInvalidatedException) {
-                result.error("key_invalidated", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("key_invalidated", e.message ?: e.toString(), null) }
             } catch (e: Exception) {
-                result.error("decrypt_failed", e.message ?: e.toString(), null)
+                // An UnlockedDeviceRequired key (the onlyUnlocked profile) cannot
+                // DECRYPT while the screen is locked — Cipher.init throws a
+                // non-invalidation exception that would otherwise collapse into the
+                // FATAL `decrypt_failed`, steering a caller toward an irreversible
+                // purge(). That condition is transient and recoverable (retry after
+                // unlock), exactly as AndroidSecretAccess.unlockedDeviceRequired
+                // documents. Probe the lock state and surface the distinct,
+                // recoverable `device_locked` (mapped to AuthenticationFailedException
+                // in the Dart layer, mirroring Darwin's `interaction_not_allowed`).
+                // Only the lock-state branch is reclassified; a genuine decrypt
+                // failure on an unlocked device stays `decrypt_failed`.
+                val code = if (isDeviceLocked()) "device_locked" else "decrypt_failed"
+                mainHandler.post { result.error(code, e.message ?: e.toString(), null) }
+            } finally {
+                plaintext?.fill(0)
             }
         }
     }
 
     private fun handleIsStrongBoxAvailable(result: Result) {
-        cryptoHandler.post {
+        postCrypto(result) {
             try {
                 val available = appContext.packageManager
                     .hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
-                result.success(available)
+                mainHandler.post { result.success(available) }
             } catch (e: Exception) {
-                result.error("is_strongbox_available_failed", e.message ?: e.toString(), null)
+                mainHandler.post { result.error("is_strongbox_available_failed", e.message ?: e.toString(), null) }
             }
         }
     }
 
-    private fun getKey(alias: String): SecretKey? {
-        val keyStore = KeyStore.getInstance(keyStoreType)
-        keyStore.load(null)
-        return keyStore.getKey(alias, null) as? SecretKey
+    /**
+     * Whether the device is currently locked behind a secure lock screen. Used to
+     * tell a transient locked-device decrypt failure (recoverable — retry after
+     * unlock) apart from a genuine ciphertext/key decrypt failure (fatal). A
+     * false positive only over-classifies as recoverable (the safe direction: a
+     * caller retries instead of purging readable data); never the reverse.
+     */
+    internal fun isDeviceLocked(): Boolean {
+        val keyguard = appContext.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        return keyguard?.isDeviceLocked == true
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
-        SchemeRegistry.shutdownAll()
-        cryptoThread.quitSafely()
+        // Engine teardown: cancel any in-flight prompt (wiping its plaintext via
+        // the onError path) before the crypto thread is quit below.
+        cancelPendingAuthentication()
+        // Only the per-instance HandlerThread is torn down — it is recreated on
+        // the next attach. The schemes are stateless and process-static, so
+        // there is nothing else to shut down (and nothing to leave dead).
+        if (::cryptoThread.isInitialized) cryptoThread.quitSafely()
     }
 }

@@ -11,18 +11,14 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   if (!Platform.isAndroid) {
-    debugPrint(
-      'Keystore integration tests run only on Android. Skipping.',
-    );
+    debugPrint('Keystore integration tests run only on Android. Skipping.');
     return;
   }
 
   group('$Keystore (Android)', () {
     late Keystore facade;
     const alias = 'integration_test_keystore_key';
-    final plaintext = Uint8List.fromList(
-      utf8.encode('plaintext for keystore'),
-    );
+    final plaintext = Uint8List.fromList(utf8.encode('plaintext for keystore'));
     const aad = 'test_aad';
     const expectedEncryptionVersion = 1;
 
@@ -41,7 +37,14 @@ void main() {
     testWidgets('generateKey creates key and containsAlias returns true', (
       tester,
     ) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
+      await facade.generateKey(
+        alias: alias,
+        unlockedDeviceRequired: false,
+        strongBox: false,
+        requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
+      );
       final exists = await facade.containsAlias(alias);
       expect(exists, isTrue);
     });
@@ -49,7 +52,14 @@ void main() {
     testWidgets('encrypt returns nonce, ciphertext, version, aad, alias', (
       tester,
     ) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
+      await facade.generateKey(
+        alias: alias,
+        unlockedDeviceRequired: false,
+        strongBox: false,
+        requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
+      );
       final payload = await facade.encrypt(
         alias: alias,
         plaintext: plaintext,
@@ -62,9 +72,71 @@ void main() {
       expect(payload.keyAlias, alias);
     });
 
-    testWidgets('decrypt recovers plaintext using payload version, aad, alias',
-        (tester) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
+    testWidgets('two encrypts under the same key yield distinct nonces', (
+      tester,
+    ) async {
+      await facade.generateKey(
+        alias: alias,
+        unlockedDeviceRequired: false,
+        strongBox: false,
+        requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
+      );
+      final first = await facade.encrypt(
+        alias: alias,
+        plaintext: plaintext,
+        aad: aad,
+      );
+      final second = await facade.encrypt(
+        alias: alias,
+        plaintext: plaintext,
+        aad: aad,
+      );
+      // AES-GCM is catastrophically broken if a (key, nonce) pair ever repeats
+      // (NIST SP 800-38D). The native AndroidKeyStore provider must mint a fresh
+      // random 12-byte IV per encrypt — this is the only test that exercises the
+      // real hardware nonce source (the Dart-side mocks return a constant nonce).
+      expect(first.nonce, isNot(equals(second.nonce)));
+      expect(first.ciphertext, isNot(equals(second.ciphertext)));
+    });
+
+    testWidgets(
+      'decrypt recovers plaintext using payload version, aad, alias',
+      (tester) async {
+        await facade.generateKey(
+          alias: alias,
+          unlockedDeviceRequired: false,
+          strongBox: false,
+          requireHardwareBacking: false,
+          userAuthenticationRequired: false,
+          invalidatedByBiometricEnrollment: true,
+        );
+        final encrypted = await facade.encrypt(
+          alias: alias,
+          plaintext: plaintext,
+          aad: aad,
+        );
+        final decrypted = await facade.decrypt(
+          version: encrypted.version,
+          alias: encrypted.keyAlias,
+          ciphertext: encrypted.ciphertext,
+          nonce: encrypted.nonce,
+          aad: encrypted.aad,
+        );
+        expect(decrypted, equals(plaintext));
+      },
+    );
+
+    testWidgets('decrypt returns non-zeroed plaintext bytes', (tester) async {
+      await facade.generateKey(
+        alias: alias,
+        unlockedDeviceRequired: false,
+        strongBox: false,
+        requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
+      );
       final encrypted = await facade.encrypt(
         alias: alias,
         plaintext: plaintext,
@@ -78,25 +150,25 @@ void main() {
         aad: encrypted.aad,
       );
       expect(decrypted, equals(plaintext));
-    });
-
-    testWidgets('decrypt returns non-zeroed plaintext bytes', (tester) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
-      final encrypted = await facade.encrypt(alias: alias, plaintext: plaintext, aad: aad);
-      final decrypted = await facade.decrypt(
-        version: encrypted.version,
-        alias: encrypted.keyAlias,
-        ciphertext: encrypted.ciphertext,
-        nonce: encrypted.nonce,
-        aad: encrypted.aad,
-      );
-      expect(decrypted, equals(plaintext));
       expect(decrypted.any((b) => b != 0), isTrue);
     });
 
-    testWidgets('decrypt with wrong nonce throws PlatformException', (tester) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
-      final encrypted = await facade.encrypt(alias: alias, plaintext: plaintext, aad: aad);
+    testWidgets('decrypt with wrong nonce throws PlatformException', (
+      tester,
+    ) async {
+      await facade.generateKey(
+        alias: alias,
+        unlockedDeviceRequired: false,
+        strongBox: false,
+        requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
+      );
+      final encrypted = await facade.encrypt(
+        alias: alias,
+        plaintext: plaintext,
+        aad: aad,
+      );
       final wrongNonce = Uint8List(12);
       expect(
         () => facade.decrypt(
@@ -110,16 +182,93 @@ void main() {
       );
     });
 
-    testWidgets('encrypt with auth key requires authentication', (tester) async {
-      const authAlias = 'integration_test_auth_key';
+    testWidgets('decrypt with wrong aad throws (GCM AAD binding)', (
+      tester,
+    ) async {
       await facade.generateKey(
-        alias: authAlias,
+        alias: alias,
         unlockedDeviceRequired: false,
         strongBox: false,
-        userAuthenticationRequired: true,
+        requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
       );
+      final encrypted = await facade.encrypt(
+        alias: alias,
+        plaintext: plaintext,
+        aad: aad,
+      );
+      // The AAD is authenticated by GCM: decrypting with a different AAD must
+      // fail the tag check. This is the binding the Android trust boundary
+      // (slot-derived aad, not the on-disk copy) relies on.
+      await expectLater(
+        facade.decrypt(
+          version: encrypted.version,
+          alias: encrypted.keyAlias,
+          ciphertext: encrypted.ciphertext,
+          nonce: encrypted.nonce,
+          aad: 'a_different_aad',
+        ),
+        throwsA(isA<PlatformException>()),
+      );
+    });
+
+    testWidgets('decrypt with tampered ciphertext throws (GCM integrity)', (
+      tester,
+    ) async {
+      await facade.generateKey(
+        alias: alias,
+        unlockedDeviceRequired: false,
+        strongBox: false,
+        requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
+      );
+      final encrypted = await facade.encrypt(
+        alias: alias,
+        plaintext: plaintext,
+        aad: aad,
+      );
+      // Flip one byte of the ciphertext; the GCM tag must reject it.
+      final tampered = Uint8List.fromList(encrypted.ciphertext);
+      tampered[0] ^= 0xFF;
+      await expectLater(
+        facade.decrypt(
+          version: encrypted.version,
+          alias: encrypted.keyAlias,
+          ciphertext: tampered,
+          nonce: encrypted.nonce,
+          aad: encrypted.aad,
+        ),
+        throwsA(isA<PlatformException>()),
+      );
+    });
+
+    testWidgets('encrypt with auth key requires authentication', (
+      tester,
+    ) async {
+      const authAlias = 'integration_test_auth_key';
       try {
-        await facade.encrypt(
+        await facade.generateKey(
+          alias: authAlias,
+          unlockedDeviceRequired: false,
+          strongBox: false,
+          requireHardwareBacking: false,
+          userAuthenticationRequired: true,
+          // Explicit: false keeps the device-credential fallback, so this
+          // test can run on a device with only a PIN enrolled. (true now
+          // makes the key biometric-only — see Keystore.generateKey.)
+          invalidatedByBiometricEnrollment: false,
+        );
+      } on PlatformException {
+        // Creating a user-auth-required key needs a secure lock screen / enrolled
+        // credential. CI emulators have neither, so generation itself fails
+        // closed — the auth path can only be exercised on a real device. Skip.
+        return;
+      }
+      EncryptedPayload? result;
+      try {
+        result = await facade.encrypt(
           alias: authAlias,
           plaintext: plaintext,
           aad: aad,
@@ -127,9 +276,19 @@ void main() {
           promptSubtitle: 'Authenticate',
         );
       } on PlatformException catch (e) {
-        debugPrint('auth encrypt result: ${e.code} ${e.message}');
+        // Non-interactive CI (no enrolled credential, no prompt possible): a
+        // PlatformException is the expected outcome — assert it carries a real
+        // code rather than silently swallowing it (the old no-assertion path
+        // passed whether or not auth was enforced).
+        expect(e.code, isNotEmpty);
       } finally {
         await facade.deleteEntry(authAlias);
+      }
+      // If it DID return (interactive device with an enrolled credential), the
+      // payload must be well-formed — never a silent empty/garbage result.
+      if (result != null) {
+        expect(result.ciphertext, isNotEmpty);
+        expect(result.nonce, isNotEmpty);
       }
     });
 
@@ -141,7 +300,14 @@ void main() {
     testWidgets('deleteEntry removes key and containsAlias returns false', (
       tester,
     ) async {
-      await facade.generateKey(alias: alias, unlockedDeviceRequired: false, strongBox: false);
+      await facade.generateKey(
+        alias: alias,
+        unlockedDeviceRequired: false,
+        strongBox: false,
+        requireHardwareBacking: false,
+        userAuthenticationRequired: false,
+        invalidatedByBiometricEnrollment: true,
+      );
       expect(await facade.containsAlias(alias), isTrue);
       await facade.deleteEntry(alias);
       final exists = await facade.containsAlias(alias);

@@ -42,8 +42,15 @@ class _StorageTestPageState extends State<StorageTestPage> {
   Future<void> _save() async {
     final key = _keyController.text.trim();
     final value = _valueController.text;
-    if (key.isEmpty) { _setMessage('Enter a key.', error: true); return; }
-    setState(() { _loading = true; _message = null; _fetchedValue = null; });
+    if (key.isEmpty) {
+      _setMessage('Enter a key.', error: true);
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _message = null;
+      _fetchedValue = null;
+    });
     try {
       await widget.storage.store(key, Uint8List.fromList(utf8.encode(value)));
       if (!mounted) return;
@@ -59,8 +66,15 @@ class _StorageTestPageState extends State<StorageTestPage> {
 
   Future<void> _load() async {
     final key = _keyController.text.trim();
-    if (key.isEmpty) { _setMessage('Enter a key.', error: true); return; }
-    setState(() { _loading = true; _message = null; _fetchedValue = null; });
+    if (key.isEmpty) {
+      _setMessage('Enter a key.', error: true);
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _message = null;
+      _fetchedValue = null;
+    });
     try {
       await widget.storage.useAndForget<void>(key, (bytes) async {
         if (!mounted) return;
@@ -87,8 +101,15 @@ class _StorageTestPageState extends State<StorageTestPage> {
 
   Future<void> _delete() async {
     final key = _keyController.text.trim();
-    if (key.isEmpty) { _setMessage('Enter a key.', error: true); return; }
-    setState(() { _loading = true; _message = null; _fetchedValue = null; });
+    if (key.isEmpty) {
+      _setMessage('Enter a key.', error: true);
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _message = null;
+      _fetchedValue = null;
+    });
     try {
       await widget.storage.trash(key);
       if (!mounted) return;
@@ -104,8 +125,15 @@ class _StorageTestPageState extends State<StorageTestPage> {
 
   Future<void> _exists() async {
     final key = _keyController.text.trim();
-    if (key.isEmpty) { _setMessage('Enter a key.', error: true); return; }
-    setState(() { _loading = true; _message = null; _fetchedValue = null; });
+    if (key.isEmpty) {
+      _setMessage('Enter a key.', error: true);
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _message = null;
+      _fetchedValue = null;
+    });
     try {
       final found = await widget.storage.exists(key);
       if (!mounted) return;
@@ -121,7 +149,10 @@ class _StorageTestPageState extends State<StorageTestPage> {
 
   void _setMessage(String msg, {bool error = false}) {
     if (!mounted) return;
-    setState(() { _message = msg; _isError = error; });
+    setState(() {
+      _message = msg;
+      _isError = error;
+    });
   }
 
   String get _platformHint {
@@ -161,7 +192,10 @@ class _StorageTestPageState extends State<StorageTestPage> {
                         children: [
                           Text(widget.subtitle, style: tt.bodyMedium),
                           const SizedBox(height: 4),
-                          Text(_platformHint, style: tt.bodySmall?.copyWith(color: cs.outline)),
+                          Text(
+                            _platformHint,
+                            style: tt.bodySmall?.copyWith(color: cs.outline),
+                          ),
                         ],
                       ),
                     ),
@@ -199,7 +233,11 @@ class _StorageTestPageState extends State<StorageTestPage> {
                   child: FilledButton.icon(
                     onPressed: _loading ? null : _save,
                     icon: _loading
-                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
                         : const Icon(Icons.save, size: 18),
                     label: const Text('Save'),
                   ),
@@ -239,7 +277,9 @@ class _StorageTestPageState extends State<StorageTestPage> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: _isError ? cs.errorContainer : cs.surfaceContainerHighest,
+                  color: _isError
+                      ? cs.errorContainer
+                      : cs.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -264,14 +304,22 @@ class _StorageTestPageState extends State<StorageTestPage> {
                         children: [
                           Text('Stored value', style: tt.labelLarge),
                           IconButton(
-                            icon: Icon(_obscureFetched ? Icons.visibility : Icons.visibility_off),
-                            onPressed: () => setState(() => _obscureFetched = !_obscureFetched),
+                            icon: Icon(
+                              _obscureFetched
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                            ),
+                            onPressed: () => setState(
+                              () => _obscureFetched = !_obscureFetched,
+                            ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 4),
                       SelectableText(
-                        _obscureFetched ? '•' * _fetchedValue!.length : _fetchedValue!,
+                        _obscureFetched
+                            ? '•' * _fetchedValue!.length
+                            : _fetchedValue!,
                         style: tt.bodyMedium?.copyWith(fontFamily: 'monospace'),
                       ),
                     ],

@@ -41,14 +41,22 @@ enum SecurityProfile {
     switch (this) {
       case SecurityProfile.evenLocked:
         return Oubliette(
-          android: const AndroidSecretAccess.evenLocked(prefix: 'demo_el_', strongBox: false),
-          darwin: const DarwinSecretAccess.evenLocked(prefix: 'demo_el_', secureEnclave: false),
+          android: const AndroidSecretAccess.evenLocked(
+            prefix: 'demo_el_',
+            strongBox: false,
+            requireHardwareBacking: false,
+          ),
+          darwin: const DarwinSecretAccess.evenLocked(
+            prefix: 'demo_el_',
+            secureEnclave: false,
+          ),
         );
       case SecurityProfile.onlyUnlocked:
         return Oubliette(
           android: const AndroidSecretAccess.onlyUnlocked(
             prefix: 'demo_ou_',
             strongBox: false,
+            requireHardwareBacking: false,
           ),
           darwin: const DarwinSecretAccess.onlyUnlocked(
             prefix: 'demo_ou_',
@@ -60,6 +68,7 @@ enum SecurityProfile {
           android: const AndroidSecretAccess.authenticated(
             prefix: 'demo_auth_',
             strongBox: false,
+            requireHardwareBacking: false,
             promptTitle: 'Oubliette',
             promptSubtitle: 'Authenticate to access your secret',
           ),
@@ -74,6 +83,7 @@ enum SecurityProfile {
           android: const AndroidSecretAccess.authenticatedFatal(
             prefix: 'demo_af_',
             strongBox: false,
+            requireHardwareBacking: false,
             promptTitle: 'Oubliette',
             promptSubtitle: 'Authenticate to access your secret',
           ),
