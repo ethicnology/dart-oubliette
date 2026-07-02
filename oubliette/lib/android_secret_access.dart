@@ -26,6 +26,12 @@ const _reservedKeyAliases = [
 /// set is per-isolate (Dart has no cross-isolate shared state), so cross-
 /// isolate / cross-process alias collisions are still the caller's
 /// responsibility — documented on the `custom` constructor.
+///
+/// NOTE: the (alias, prefix) pair registry at the `AndroidOubliette` level
+/// (AND-2/DART-1) supersedes this for the common case — it catches both
+/// custom-custom and named-named alias collisions with different prefixes.
+/// This Set remains as a construction-time guard for `custom` specifically
+/// (catches the collision before the access is even wired to a backend).
 final Set<String> _customKeyAliases = <String>{};
 
 const _reservedPrefixes = [

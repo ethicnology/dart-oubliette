@@ -6,8 +6,11 @@ import 'package:oubliette/darwin_secret_access.dart';
 import 'package:oubliette/linux_oubliette.dart' show LinuxOubliette;
 import 'package:oubliette/linux_secret_access.dart';
 
+export 'android_oubliette.dart' show AndroidOubliette;
 export 'android_secret_access.dart';
+export 'darwin_oubliette.dart' show DarwinOubliette;
 export 'darwin_secret_access.dart';
+export 'linux_oubliette.dart' show LinuxOubliette;
 export 'linux_secret_access.dart';
 export 'src/passphrase_vault.dart' show PassphraseVault, Argon2idParams;
 export 'src/errors.dart'

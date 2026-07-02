@@ -471,8 +471,18 @@ final class PassphraseVault {
     try {
       return _gcm(false, derivedKey, nonce, aad, ct);
     } on InvalidCipherTextException catch (e) {
-      // Wrong passphrase, wrong key, or a tampered blob — all fail the GCM tag.
-      throw DecryptionFailedException(key: key, cause: e);
+      // DART-2: in passphrase mode the most likely cause of a GCM tag failure
+      // is a wrong passphrase — the single most common failure for a
+      // passphrase vault. Flag it so the caller can re-prompt the user before
+      // considering the data-destroying purge() the default
+      // DecryptionFailedException contract documents. Keyring-mode tag failures
+      // keep mayBeWrongPassphrase: false (the KEK is random, not user-typed —
+      // a tag failure there genuinely means corruption/tamper).
+      throw DecryptionFailedException(
+        key: key,
+        cause: e,
+        mayBeWrongPassphrase: _mode == _modePassphrase,
+      );
     } finally {
       _zero(derivedKey);
     }

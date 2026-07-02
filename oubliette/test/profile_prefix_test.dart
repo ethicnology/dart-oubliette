@@ -7,7 +7,10 @@ import 'package:oubliette/src/slot.dart';
 /// constructors must reject collisions with those reserved prefixes.
 void main() {
   group('Android default prefixes are distinct (#11)', () {
-    setUp(AndroidSecretAccess.resetCustomAliasRegistry);
+    setUp(() {
+      AndroidSecretAccess.resetCustomAliasRegistry();
+      AndroidOubliette.resetAliasPrefixRegistry();
+    });
 
     const profiles = <String, AndroidSecretAccess>{
       'evenLocked': AndroidSecretAccess.evenLocked(

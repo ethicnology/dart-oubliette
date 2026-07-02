@@ -2,14 +2,47 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:keystore/keystore.dart';
+import 'package:meta/meta.dart';
 import 'package:oubliette/oubliette.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'src/fetch.dart';
 import 'src/slot.dart';
 
+/// AND-2/DART-1: per-isolate registry of (keyAlias, prefix) pairs claimed by
+/// live `AndroidOubliette` instances. Two instances sharing a keyAlias but
+/// using different prefixes share Keystore key material — `purge()` of one
+/// deletes the shared key and permanently bricks the other's data. Two
+/// instances with the same (keyAlias, prefix) are idempotent (widget rebuild,
+/// DI re-resolution, hot reload) and re-claim cleanly. The registry is keyed
+/// by `"$keyAlias\0$prefix"` so both components must match.
+final Map<String, void> _claimedAliasPrefixPairs = {};
+
 class AndroidOubliette extends Oubliette with OublietteFetch {
-  AndroidOubliette({required this.access}) : super.internal();
+  AndroidOubliette({required this.access}) : super.internal() {
+    // AND-2: reject a keyAlias already claimed with a DIFFERENT prefix. Two
+    // instances on the same alias but different prefixes share one Keystore
+    // key; purge() of one deletes it and bricks the other's blobs. Same
+    // (alias, prefix) re-claims idempotently (DART-1) — a widget rebuild or
+    // hot reload constructing the same access must not throw.
+    final pairKey = '${access.keyAlias}\x00${access.prefix}';
+    if (!_claimedAliasPrefixPairs.containsKey(pairKey)) {
+      // Check whether this alias is already claimed under a different prefix.
+      for (final existing in _claimedAliasPrefixPairs.keys) {
+        if (existing.startsWith('${access.keyAlias}\x00') &&
+            existing != pairKey) {
+          throw StateError(
+            'AndroidOubliette keyAlias "${access.keyAlias}" is already in use '
+            'with a different prefix. Two profiles sharing a Keystore alias '
+            'share key material — purge() of one would delete the shared key '
+            'and brick the other. Use a distinct alias per security domain, '
+            'or the same prefix for re-construction of the same profile.',
+          );
+        }
+      }
+      _claimedAliasPrefixPairs[pairKey] = null;
+    }
+  }
 
   final Keystore _keystore = Keystore();
   final AndroidSecretAccess access;
@@ -421,4 +454,8 @@ class AndroidOubliette extends Oubliette with OublietteFetch {
       if (identical(_purges[gateKey], release.future)) _purges.remove(gateKey);
     }
   }
+
+  /// Clears the per-isolate (alias, prefix) registry. For testing only.
+  @visibleForTesting
+  static void resetAliasPrefixRegistry() => _claimedAliasPrefixPairs.clear();
 }

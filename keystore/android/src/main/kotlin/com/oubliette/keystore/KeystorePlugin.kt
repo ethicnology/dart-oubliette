@@ -417,7 +417,7 @@ class KeystorePlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
      * false positive only over-classifies as recoverable (the safe direction: a
      * caller retries instead of purging readable data); never the reverse.
      */
-    private fun isDeviceLocked(): Boolean {
+    internal fun isDeviceLocked(): Boolean {
         val keyguard = appContext.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
         return keyguard?.isDeviceLocked == true
     }

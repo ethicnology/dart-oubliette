@@ -36,6 +36,25 @@ extension Data {
   }
 }
 
+/// Byte-level prefix check — compares UTF-8 byte sequences, NOT Unicode
+/// canonical equivalence (DAR-3). Swift's `String.hasPrefix` compares under
+/// canonical equivalence, so two canonically-equivalent but differently-
+/// composed prefixes (NFC `café_` vs NFD `cafe\u{301}_`) would match each
+/// other's items in `purge()`/`keys()`, destroying a sibling profile's data.
+/// Every store/fetch/delete query on `kSecAttrAccount` is code-point-exact, so
+/// the enumeration filter must match at the same granularity — bytes, not
+/// grapheme clusters. Same rationale as `SecureEnclave.swift`'s NFC/NFD
+/// warning for SE key tags.
+func hasBytesPrefix(_ string: String, _ prefix: String) -> Bool {
+  let stringBytes = Array(string.utf8)
+  let prefixBytes = Array(prefix.utf8)
+  guard prefixBytes.count <= stringBytes.count else { return false }
+  for i in 0..<prefixBytes.count {
+    if stringBytes[i] != prefixBytes[i] { return false }
+  }
+  return true
+}
+
 // `@unchecked Sendable`: an immutable (all-`let`) value type carried into the
 // `serialQueue.async` workers. Every stored field is Sendable except
 // `accessibility`, a `CFString` that is always one of the immutable,
@@ -126,9 +145,14 @@ func keychainQuery(params: KeychainParams) -> [String: Any] {
     // iCloud restore.
     kSecAttrSynchronizable as String: kCFBooleanFalse as Any
   ]
-  if let service = params.service {
-    query[kSecAttrService as String] = service
-  }
+  // DAR-1: ALWAYS set kSecAttrService — even when nil. Without an explicit
+  // service, SecItemAdd stores under the default service but every read/delete/
+  // enumeration query matches ANY service, so a nil-service profile can fetch,
+  // trash, or purge a sibling service-scoped profile's items. Using an empty
+  // string as the nil sentinel makes writes and reads symmetric: nil-service
+  // profiles are scoped to "" and never match items stored under a real
+  // service name (and vice versa).
+  query[kSecAttrService as String] = service ?? ""
   if let group = params.accessGroup {
     query[kSecAttrAccessGroup as String] = group
   }
@@ -340,16 +364,17 @@ func secItemDeleteByPrefix(
   var deletedAny = false
   for entry in entries {
     guard let account = entry[kSecAttrAccount as String] as? String,
-          account.hasPrefix(prefix),
-          !excludePrefixes.contains(where: { account.hasPrefix($0) }) else { continue }
+          hasBytesPrefix(account, prefix),
+          !excludePrefixes.contains(where: { hasBytesPrefix(account, $0) }) else { continue }
     var deleteQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrAccount as String: account,
       kSecAttrSynchronizable as String: kCFBooleanFalse as Any
     ]
-    if let service = scope.service {
-      deleteQuery[kSecAttrService as String] = service
-    }
+    // DAR-1: always scope by service (nil → "" sentinel, same as the main
+    // query). Without this, the delete would match the account across ALL
+    // services, not just the profile's service domain.
+    deleteQuery[kSecAttrService as String] = scope.service ?? ""
     if let group = scope.accessGroup {
       deleteQuery[kSecAttrAccessGroup as String] = group
     }
@@ -409,8 +434,8 @@ func secItemListByPrefix(
   var accounts: [String] = []
   for entry in entries {
     guard let account = entry[kSecAttrAccount as String] as? String,
-          account.hasPrefix(prefix),
-          !excludePrefixes.contains(where: { account.hasPrefix($0) }) else { continue }
+          hasBytesPrefix(account, prefix),
+          !excludePrefixes.contains(where: { hasBytesPrefix(account, $0) }) else { continue }
     accounts.append(account)
   }
   return (errSecSuccess, accounts)

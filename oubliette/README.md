@@ -23,7 +23,10 @@ import 'dart:typed_data';
 import 'package:oubliette/oubliette.dart';
 
 final storage = Oubliette(
-  android: const AndroidSecretAccess.onlyUnlocked(strongBox: false),
+  android: const AndroidSecretAccess.onlyUnlocked(
+    strongBox: false,
+    requireHardwareBacking: false, // allow software keystores (emulators)
+  ),
   darwin: const DarwinSecretAccess.onlyUnlocked(secureEnclave: false),
 );
 

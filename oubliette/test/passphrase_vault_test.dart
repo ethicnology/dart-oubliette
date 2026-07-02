@@ -259,6 +259,53 @@ void main() {
       },
     );
 
+    // DART-2: a wrong passphrase in passphrase mode sets mayBeWrongPassphrase
+    // so the caller can re-prompt instead of purging. A tampered blob also
+    // sets it (the vault can't distinguish) — acceptable: the caller should
+    // re-prompt first, and only consider purge if the correct passphrase also
+    // fails. Keyring mode does NOT set it (the KEK is random, not user-typed).
+    test(
+      'DART-2: wrong passphrase sets mayBeWrongPassphrase in passphrase mode',
+      () async {
+        await vault(_bytes([1, 1, 1, 1])).store('k', _bytes([5, 5, 5]));
+        final wrong = vault(_bytes([2, 2, 2, 2]));
+        await expectLater(
+          wrong.useAndForget('k', (b) async => b),
+          throwsA(
+            isA<DecryptionFailedException>().having(
+              (e) => e.mayBeWrongPassphrase,
+              'mayBeWrongPassphrase',
+              true,
+            ),
+          ),
+          reason: 'passphrase-mode tag failure should re-prompt, not purge',
+        );
+      },
+    );
+
+    test(
+      'DART-2: keyring-mode tag failure does NOT set mayBeWrongPassphrase',
+      () async {
+        final backend = _FakeOubliette();
+        final v = PassphraseVault.keyring(inner: backend);
+        await v.store('k', _bytes([5, 5, 5]));
+        // Tamper the envelope — keyring mode has a random KEK, so a tag
+        // failure genuinely means corruption/tamper, not a wrong passphrase.
+        final raw = backend.store_['k']!;
+        raw[raw.length - 1] ^= 0xFF;
+        await expectLater(
+          v.useAndForget('k', (b) async => b),
+          throwsA(
+            isA<DecryptionFailedException>().having(
+              (e) => e.mayBeWrongPassphrase,
+              'mayBeWrongPassphrase',
+              false,
+            ),
+          ),
+        );
+      },
+    );
+
     test('a tampered ciphertext byte fails the GCM tag', () async {
       final v = vault();
       await v.store('k', _bytes([7, 7, 7, 7]));

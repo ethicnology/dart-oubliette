@@ -242,15 +242,15 @@ internal fun KeystorePlugin.handleAuthenticateDecrypt(call: MethodCall, result: 
       authenticators = scheme.keyAuthenticators(alias)
         ?: throw KeyAuthTypeUnknownException()
     } catch (e: Throwable) {
-      // No isDeviceLocked() reclassification here (unlike the plain
-      // handleDecrypt path): the authenticated profiles set BOTH
-      // unlockedDeviceRequired and userAuthenticationRequired with per-operation
-      // auth (timeout=0). Cipher.init for a per-op-auth key performs no crypto —
-      // it only binds the cipher to the CryptoObject — so it does not hit the
-      // UnlockedDeviceRequired gate; the actual decrypt (doFinal) runs only AFTER
-      // the BiometricPrompt, which itself unlocks the device. A locked device can
-      // therefore never surface as a fatal decrypt_failed on this path.
-      mainHandler.post { result.error(decryptErrorCode(e), e.message ?: e.toString(), null) }
+      // AND-1: Cipher.init on an AndroidKeyStore key issues keystore2 begin(),
+      // which enforces UNLOCKED_DEVICE_REQUIRED at begin time (not just at
+      // doFinal). Both authenticated profiles set unlockedDeviceRequired: true,
+      // so a fetch fired while the screen is locked throws here — and without
+      // this reclassification it collapses into the fatal decrypt_failed
+      // (whose documented remedy purges an intact secret). Probe the lock state
+      // and surface the recoverable device_locked, mirroring handleDecrypt.
+      val code = if (isDeviceLocked()) "device_locked" else decryptErrorCode(e)
+      mainHandler.post { result.error(code, e.message ?: e.toString(), null) }
       return@postCrypto
     }
     mainHandler.post {

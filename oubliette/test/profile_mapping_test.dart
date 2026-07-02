@@ -7,7 +7,10 @@ import 'package:oubliette/oubliette.dart';
 /// pinned explicitly — not just the prefix (covered in profile_prefix_test).
 void main() {
   group('AndroidSecretAccess profile → flags', () {
-    setUp(AndroidSecretAccess.resetCustomAliasRegistry);
+    setUp(() {
+      AndroidSecretAccess.resetCustomAliasRegistry();
+      AndroidOubliette.resetAliasPrefixRegistry();
+    });
 
     test('evenLocked', () {
       const a = AndroidSecretAccess.evenLocked(

@@ -182,6 +182,14 @@ final class KeyNotFoundException extends OublietteException {
 /// The key itself is intact (use [KeyInvalidatedException] / [KeyNotFoundException]
 /// for key-level problems); it is this specific blob that cannot be read. Not
 /// recoverable by retry.
+///
+/// When [mayBeWrongPassphrase] is `true`, the failure was on a
+/// `PassphraseVault` in passphrase mode — the most likely cause is a mistyped
+/// passphrase (not corruption or tampering). **Re-prompt the user for the
+/// passphrase before considering `purge()` or other data-destroying recovery.**
+/// The `recoverable` flag stays `false` because a retry with the *same*
+/// passphrase will not succeed — but a retry with the *correct* passphrase
+/// will, distinguishing this from a genuinely corrupted blob.
 final class DecryptionFailedException extends OublietteException {
   /// The logical key whose blob failed to decrypt.
   final String key;
@@ -189,7 +197,16 @@ final class DecryptionFailedException extends OublietteException {
   /// The underlying platform error, for diagnostics.
   final Object? cause;
 
-  const DecryptionFailedException({required this.key, this.cause});
+  /// `true` when the failure occurred in `PassphraseVault` passphrase mode,
+  /// where the most likely cause is a wrong passphrase (not corruption).
+  /// **Re-prompt the user before considering `purge()`.**
+  final bool mayBeWrongPassphrase;
+
+  const DecryptionFailedException({
+    required this.key,
+    this.cause,
+    this.mayBeWrongPassphrase = false,
+  });
 
   @override
   bool get recoverable => false;
@@ -198,6 +215,7 @@ final class DecryptionFailedException extends OublietteException {
   String toString() =>
       'DecryptionFailedException: the stored blob for key "$key" failed '
       'authenticated decryption (corruption, key mismatch, or tampering). '
+      '${mayBeWrongPassphrase ? "In passphrase mode this is most likely a wrong passphrase — re-prompt the user before considering purge(). " : ""}'
       'See the cause field for diagnostics.';
 }
 

@@ -1,7 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:keystore/keystore.dart';
-import 'package:oubliette/android_oubliette.dart';
 import 'package:oubliette/oubliette.dart';
 import 'package:oubliette/src/slot.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -101,6 +100,7 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     AndroidSecretAccess.resetCustomAliasRegistry();
+    AndroidOubliette.resetAliasPrefixRegistry();
     mock = _MockKeystore();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, mock.handle);
@@ -767,6 +767,43 @@ void main() {
         );
       },
     );
+
+    // AND-2: two named profiles with the same key alias (via prefix override)
+    // share one Keystore key — purge() of one deletes the shared key and
+    // bricks the other's blobs. The AndroidOubliette constructor catches this.
+    test(
+      'AND-2: two named profiles sharing a keyAlias with different prefixes throws',
+      () {
+        AndroidOubliette(
+          access: const AndroidSecretAccess.evenLocked(
+            prefix: 'tenantA_',
+            strongBox: false,
+            requireHardwareBacking: false,
+          ),
+        );
+        expect(
+          () => AndroidOubliette(
+            access: const AndroidSecretAccess.evenLocked(
+              prefix: 'tenantB_',
+              strongBox: false,
+              requireHardwareBacking: false,
+            ),
+          ),
+          throwsA(isA<StateError>()),
+        );
+      },
+    );
+
+    // DART-1: re-constructing the same access (widget rebuild, hot reload,
+    // DI re-resolution) must NOT throw — the (alias, prefix) pair is identical.
+    test('DART-1: re-constructing an identical access is idempotent', () {
+      const access = AndroidSecretAccess.onlyUnlocked(
+        strongBox: false,
+        requireHardwareBacking: false,
+      );
+      AndroidOubliette(access: access);
+      AndroidOubliette(access: access);
+    });
 
     test('unbricks a profile: purge then init mints a fresh key', () async {
       final s = storage();
