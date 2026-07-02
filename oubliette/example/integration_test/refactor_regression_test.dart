@@ -184,8 +184,12 @@ void main() {
     ) async {
       // The scheme `version` selects the decryptor AND is bound into the GCM
       // AAD (V1Scheme.versionedAad). A rewritten on-disk version can never
-      // silently decrypt — today it misses the append-only registry; once a v2
-      // that shares an alias exists, the GCM tag over `v{version}` rejects it.
+      // silently decrypt — today it misses the append-only registry and
+      // surfaces as `unsupported_version` (a blob written by a "newer" release
+      // — an app downgrade scenario); once a v2 that shares an alias exists,
+      // the GCM tag over `v{version}` rejects it. `unsupported_version` maps to
+      // the recoverable BackendUnavailableException (upgrade the app; never
+      // purge), NOT the fatal DecryptionFailedException.
       final storage = Oubliette(
         android: const AndroidSecretAccess.onlyUnlocked(
           prefix: 'reg_ver_',
@@ -213,7 +217,7 @@ void main() {
 
       await expectLater(
         storage.useAndForget<void>(key, (_) async {}),
-        throwsA(isA<DecryptionFailedException>()),
+        throwsA(isA<BackendUnavailableException>()),
       );
     });
   });

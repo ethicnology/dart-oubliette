@@ -501,6 +501,50 @@ void main() {
       },
     );
 
+    test(
+      'unsupported_version → BackendUnavailableException (RECOVERABLE, never purge)',
+      () async {
+        // L-8: the blob's scheme version is newer than this reader (app
+        // rollback / sideloaded downgrade). The data is intact and readable by
+        // the release that wrote it — upgrade the app; never purge. Must NOT
+        // land in the fatal DecryptionFailedException bucket whose documented
+        // remedy destroys a healthy slot.
+        final s = await seeded();
+        mock.decryptErrorCode = 'unsupported_version';
+        await expectLater(
+          s.fetch('k'),
+          throwsA(
+            isA<BackendUnavailableException>().having(
+              (e) => e.recoverable,
+              'recoverable',
+              true,
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'decrypt_interrupted → BackendUnavailableException (RECOVERABLE, never purge)',
+      () async {
+        // M-5: a keymaster operation pruned during the biometric prompt. Both
+        // key and blob are intact — retry; never purge. Must NOT land in the
+        // fatal decrypt_failed bucket.
+        final s = await seeded();
+        mock.decryptErrorCode = 'decrypt_interrupted';
+        await expectLater(
+          s.fetch('k'),
+          throwsA(
+            isA<BackendUnavailableException>().having(
+              (e) => e.recoverable,
+              'recoverable',
+              true,
+            ),
+          ),
+        );
+      },
+    );
+
     test('a malformed on-disk blob → PayloadCorruptException', () async {
       final s = await seeded();
       final prefs = await SharedPreferences.getInstance();

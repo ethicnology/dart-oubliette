@@ -214,6 +214,23 @@ class AndroidOubliette extends Oubliette with OublietteFetch {
         // on-disk blob failed to authenticate.)
         case 'encrypt_failed':
           throw BackendUnavailableException(cause: e);
+        // L-8: the blob's scheme version is newer than this reader (app
+        // rollback / sideloaded downgrade). The data is intact and readable by
+        // the release that wrote it — upgrade the app; never purge. Maps to the
+        // recoverable BackendUnavailableException, NOT the fatal
+        // DecryptionFailedException whose documented remedy destroys a healthy
+        // slot. (Emitted by KeystorePlugin.handleDecrypt /
+        // handleAuthenticateDecrypt for an unknown versionArgument.)
+        case 'unsupported_version':
+          throw BackendUnavailableException(cause: e);
+        // M-5: a keymaster operation opened before the unbounded biometric
+        // prompt was pruned system-wide while it waited on the user; the
+        // post-auth doFinal failed with a bare KeyStoreException. Both the key
+        // and the on-disk blob are intact — a fresh init + prompt succeeds.
+        // Recoverable (retry, never purge); same code on the encrypt path
+        // (postAuthEncryptErrorCode) for the identical failure mode there.
+        case 'decrypt_interrupted':
+          throw BackendUnavailableException(cause: e);
         // The plugin was detached from the engine mid-operation (the crypto
         // looper was torn down before the work ran — KeystorePlugin.postCrypto).
         // Nothing was encrypted/decrypted and no data was touched, so it is a
